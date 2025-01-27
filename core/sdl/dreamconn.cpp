@@ -224,6 +224,9 @@ public:
 				}
 			}
 
+			// Poll to ensure all the waiting serial data is in serial_read_buffer
+			io_context.poll();
+
 			// Clear out the read buffer before writing next command
 			serial_read_buffer.consume(serial_read_buffer.size());
 
@@ -487,7 +490,7 @@ bool DreamConnGamepad::isDreamcastController(int deviceIndex)
 {
 	char guid_str[33] {};
 	SDL_JoystickGetGUIDString(SDL_JoystickGetDeviceGUID(deviceIndex), guid_str, sizeof(guid_str));
-	INFO_LOG(INPUT, "GUID: %s VID:%c%c%c%c PID:%c%c%c%c", guid_str,
+	NOTICE_LOG(INPUT, "GUID: %s VID:%c%c%c%c PID:%c%c%c%c", guid_str,
 			guid_str[10], guid_str[11], guid_str[8], guid_str[9],
 			guid_str[18], guid_str[19], guid_str[16], guid_str[17]);
 
@@ -495,6 +498,7 @@ bool DreamConnGamepad::isDreamcastController(int deviceIndex)
 	// Dreamcast Controller USB VID:1209 PID:2f07
 	if (memcmp("5744000043440000", guid_str + 8, 16) == 0 || memcmp("09120000072f0000", guid_str + 8, 16) == 0)
 	{
+		NOTICE_LOG(INPUT, "Dreamcast controller found!");
 		return true;
 	}
 	return false;
