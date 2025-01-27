@@ -216,6 +216,9 @@ public:
 
 			// Wait for last write to complete
 			while (serial_write_in_progress){
+				if (!serial_handler.is_open()) {
+					return asio::error::not_connected;
+				}
 				if (io_context.stopped()){
 					return asio::error::shut_down;
 				}
@@ -225,10 +228,12 @@ public:
 			}
 
 			// Poll to ensure all the waiting serial data is in serial_read_buffer
-			io_context.poll();
+			io_context.poll_one();
 
 			// Clear out the read buffer before writing next command
-			serial_read_buffer.consume(serial_read_buffer.size());
+			if (serial_read_buffer.size() > 0) {
+				serial_read_buffer.consume(serial_read_buffer.size());
+			}
 
 			serial_write_in_progress = true;
 			serial_out_data = s.str();
@@ -239,7 +244,6 @@ public:
 					serial_handler.cancel();
 				}
 			});
-			io_context.run_one();
 		}
 
 		return ec;
@@ -415,6 +419,7 @@ private:
 				serial_read_buffer,
 				'\n',
 				[this](const asio::error_code& error, std::size_t size) -> void {
+					// Auto reload read - io_context will always have work to do
 					serialReadHandler(error, size);
 				}
 			);
