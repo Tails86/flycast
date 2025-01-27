@@ -321,7 +321,7 @@ public:
 			}
 
 			// I don't want to make this into dev - I just need to understand what is happening
-			NOTICE_LOG(INPUT, "Response: %s", response);
+			NOTICE_LOG(INPUT, "Response: %s", response.c_str());
 
 			sscanf(response.c_str(), "%hhx %hhx %hhx %hhx", &msg.command, &msg.destAP, &msg.originAP, &msg.size);
 
