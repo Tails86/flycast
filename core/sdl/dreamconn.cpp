@@ -444,10 +444,12 @@ void DreamConn::connect()
 	expansionDevs = 0;
 
 	std::optional<MapleMsg> msg = dreamcastControllerConnection->connect();
-	if (msg)
+	if (!msg)
 	{
-		expansionDevs = msg->originAP & 0x1f;
+		return;
 	}
+
+	expansionDevs = msg->originAP & 0x1f;
 
 	config::MapleExpansionDevices[bus][0] = hasVmu() ? MDT_SegaVMU : MDT_None;
 	config::MapleExpansionDevices[bus][1] = hasRumble() ? MDT_PurupuruPack : MDT_None;
