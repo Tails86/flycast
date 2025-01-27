@@ -152,6 +152,8 @@ public:
 		}
 		else if (dreamcastControllerType == TYPE_DREAMCASTCONTROLLERUSB)
 		{
+			io_context.stop();
+
 			if (serial_handler.is_open()) {
 				try
 				{
@@ -171,8 +173,6 @@ public:
 			{
 				// Ignore closing errors
 			}
-
-			io_context.stop();
 		}
 	}
 
@@ -223,6 +223,9 @@ public:
 					return asio::error::timed_out;
 				}
 			}
+
+			// Clear out the read buffer before writing next command
+			serial_read_buffer.consume(serial_read_buffer.size());
 
 			serial_write_in_progress = true;
 			serial_out_data = s.str();
