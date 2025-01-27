@@ -43,8 +43,9 @@ class DreamcastControllerConnection
 	const int dreamcastControllerType;
 	asio::ip::tcp::iostream iostream;
 	asio::io_context io_context;
+	std::string serial_out_data;
 	asio::serial_port serial_handler{io_context};
-	bool serial_write_complete = false;
+	bool serial_write_in_progress = false;
 	asio::streambuf serial_read_buffer;
 
 public:
@@ -92,6 +93,7 @@ public:
 #endif
 
 				serial_handler = asio::serial_port(io_context);
+				io_context.reset();
 
 				// select first available serial device
 				std::string serial_device = getFirstSerialDevice();
@@ -103,6 +105,8 @@ public:
 					disconnect();
 					return std::nullopt;
 				}
+
+				startSerialRead();
 
 				break;
 			}
@@ -172,7 +176,7 @@ public:
 		}
 	}
 
-	asio::error_code sendMsg(const MapleMsg& msg)
+	asio::error_code sendMsg(const MapleMsg& msg, std::chrono::milliseconds timeoutMs = std::chrono::milliseconds(5000))
 	{
 		std::ostringstream s;
 		s.fill('0');
@@ -204,24 +208,38 @@ public:
 		}
 		else if (dreamcastControllerType == TYPE_DREAMCASTCONTROLLERUSB)
 		{
-			io_context.run();
-			io_context.reset();
-
 			if (!serial_handler.is_open()) {
 				return asio::error::not_connected;
 			}
-			asio::async_write(serial_handler, asio::buffer(s.str()), asio::transfer_exactly(s.str().size()), [this](const asio::error_code& error, size_t bytes_transferred)
+
+			const std::chrono::steady_clock::time_point expiration = std::chrono::steady_clock::now() + timeoutMs;
+
+			// Wait for last write to complete
+			while (serial_write_in_progress){
+				if (io_context.stopped()){
+					return asio::error::shut_down;
+				}
+				else if (io_context.run_one_until(expiration) <= 0) {
+					return asio::error::timed_out;
+				}
+			}
+
+			serial_write_in_progress = true;
+			serial_out_data = s.str();
+			asio::async_write(serial_handler, asio::buffer(serial_out_data), asio::transfer_exactly(serial_out_data.size()), [this](const asio::error_code& error, size_t bytes_transferred)
 			{
+				serial_write_in_progress = false;
 				if (error) {
 					serial_handler.cancel();
 				}
 			});
+			io_context.run_one();
 		}
 
 		return ec;
 	}
 
-	bool receiveMsg(MapleMsg& msg)
+	bool receiveMsg(MapleMsg& msg, std::chrono::milliseconds timeoutMs = std::chrono::milliseconds(5000))
 	{
 		std::string response;
 
@@ -238,30 +256,68 @@ public:
 		}
 		else if (dreamcastControllerType == TYPE_DREAMCASTCONTROLLERUSB)
 		{
-			asio::error_code ec;
+			const std::chrono::steady_clock::time_point expiration = std::chrono::steady_clock::now() + timeoutMs;
 
-			char c;
 			for (int i = 0; i < 2; ++i)
 			{
 				// discard the first message as we are interested in the second only which returns the controller configuration
 				response = "";
-				while (serial_handler.read_some(asio::buffer(&c, 1), ec) > 0)
-				{
-					if (!serial_handler.is_open())
-						return false;
-					if (c == '\n')
-						break;
-					response += c;
+
+				// Keep pulling characters until this line is complete
+				char c = '\0';
+				do {
+					// Wait until data is received or timeout has expired
+					// serial_read_buffer is asynchronously filled by the serial_handler's io_context
+					while (serial_read_buffer.size() <= 0){
+						if (!serial_handler.is_open() || io_context.stopped() || io_context.run_one_until(expiration) <= 0){
+							// connection closed, io_context was stopped, or failed to receive anything before timeout
+							return false;
+						}
+					}
+
+					// Consume characters until buffers are empty or \n found
+					asio::const_buffers_1 data = serial_read_buffer.data();
+					std::size_t consumed = 0;
+					for (const asio::const_buffer& buff : data)
+					{
+						const char* buffDat = static_cast<const char*>(buff.data());
+						for (std::size_t i = 0; i < buff.size(); ++i)
+						{
+							c = *buffDat++;
+							++consumed;
+
+							if (c == '\n') {
+								// Stop reading now
+								break;
+							}
+
+							response += c;
+						}
+
+						if (c == '\n') {
+							// Stop reading now
+							break;
+						}
+					}
+
+					serial_read_buffer.consume(consumed);
+
+				} while (c != '\n');
+
+				// Remove carriage return if found
+				if (response.size() > 0 && response[response.size() - 1] == '\r') {
+					response.pop_back();
 				}
-				response.pop_back();
 			}
 
 			sscanf(response.c_str(), "%hhx %hhx %hhx %hhx", &msg.command, &msg.destAP, &msg.originAP, &msg.size);
 
-			if (!ec && serial_handler.is_open())
+			if (serial_handler.is_open()) {
 				return true;
-			else
+			}
+			else {
 				return false;
+			}
 		}
 
 		return false;
@@ -334,6 +390,29 @@ private:
 		}
 		return "";
 #endif
+	}
+
+	void startSerialRead()
+	{
+		serialReadHandler(asio::error_code(), 0);
+	}
+
+	void serialReadHandler(const asio::error_code& error, std::size_t size)
+	{
+		if (error) {
+			serial_handler.cancel();
+		}
+		else {
+			// Rearm the read
+			asio::async_read_until(
+				serial_handler,
+				serial_read_buffer,
+				'\n',
+				[this](const asio::error_code& error, std::size_t size) -> void {
+					serialReadHandler(error, size);
+				}
+			);
+		}
 	}
 };
 
