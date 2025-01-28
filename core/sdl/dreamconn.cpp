@@ -28,6 +28,7 @@
 #include <sstream>
 #include <optional>
 #include <thread>
+#include <list>
 
 #if defined(__linux__) || (defined(__APPLE__) && defined(TARGET_OS_MAC))
 #include <dirent.h>
@@ -112,8 +113,14 @@ protected:
 
 class DreamConnConnection : public DreamcastControllerConnection
 {
+	//! Base port of communication to DreamConn
+	static constexpr u16 BASE_PORT = 37393;
 	//! Stream to a DreamConn device
 	asio::ip::tcp::iostream iostream;
+
+public:
+	//! DreamConn VID:4457 PID:4443
+	static constexpr const char* VID_PID_GUID = "5744000043440000";
 
 public:
 	DreamConnConnection(const DreamConnConnection&) = delete;
@@ -131,7 +138,7 @@ public:
 		WARN_LOG(INPUT, "DreamcastController[%d] connection failed: DreamConn+ / DreamConn S Controller supported on Windows only", bus);
 		return false;
 #else
-		iostream = asio::ip::tcp::iostream("localhost", std::to_string(DreamConn::BASE_PORT + bus));
+		iostream = asio::ip::tcp::iostream("localhost", std::to_string(BASE_PORT + bus));
 		if (!iostream) {
 			WARN_LOG(INPUT, "DreamcastController[%d] connection failed: %s", bus, iostream.error().message().c_str());
 			disconnect();
@@ -211,6 +218,10 @@ class DreamcastControllerUsbPicoConnection : public DreamcastControllerConnectio
 	std::mutex read_cv_mutex;
 	//! Current timeout in milliseconds
 	std::chrono::milliseconds timeout_ms;
+
+public:
+	//! Dreamcast Controller USB VID:1209 PID:2f07
+	static constexpr const char* VID_PID_GUID = "09120000072f0000";
 
 public:
 	DreamcastControllerUsbPicoConnection(const DreamcastControllerUsbPicoConnection&) = delete;
@@ -605,7 +616,8 @@ bool DreamConnGamepad::isDreamcastController(int deviceIndex)
 
 	// DreamConn VID:4457 PID:4443
 	// Dreamcast Controller USB VID:1209 PID:2f07
-	if (memcmp("5744000043440000", guid_str + 8, 16) == 0 || memcmp("09120000072f0000", guid_str + 8, 16) == 0)
+	if (memcmp(DreamConnConnection::VID_PID_GUID, guid_str + 8, 16) == 0 ||
+		memcmp(DreamcastControllerUsbPicoConnection::VID_PID_GUID, guid_str + 8, 16) == 0)
 	{
 		NOTICE_LOG(INPUT, "Dreamcast controller found!");
 		return true;
@@ -622,12 +634,12 @@ DreamConnGamepad::DreamConnGamepad(int maple_port, int joystick_idx, SDL_Joystic
 
 	// DreamConn VID:4457 PID:4443
 	// Dreamcast Controller USB VID:1209 PID:2f07
-	if (memcmp("5744000043440000", guid_str + 8, 16) == 0)
+	if (memcmp(DreamConnConnection::VID_PID_GUID, guid_str + 8, 16) == 0)
 	{
 		dreamcastControllerType = TYPE_DREAMCONN;
 		_name = "DreamConn+ / DreamConn S Controller";
 	}
-	else if (memcmp("09120000072f0000", guid_str + 8, 16) == 0)
+	else if (memcmp(DreamcastControllerUsbPicoConnection::VID_PID_GUID, guid_str + 8, 16) == 0)
 	{
 		dreamcastControllerType = TYPE_DREAMCASTCONTROLLERUSB;
 		_name = "Dreamcast Controller USB";

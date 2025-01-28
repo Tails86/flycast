@@ -59,9 +59,6 @@ class DreamConn
 	u8 expansionDevs = 0;
 
 public:
-	static constexpr u16 BASE_PORT = 37393;
-
-public:
 	DreamConn(int bus, int dreamcastControllerType);
 
 	~DreamConn();
