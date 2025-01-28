@@ -313,7 +313,15 @@ public:
 		// Wait for last write to complete
 		std::unique_lock<std::mutex> lock(write_cv_mutex);
 		const std::chrono::steady_clock::time_point expiration = std::chrono::steady_clock::now() + timeout_ms;
-		write_cv.wait_until(lock, expiration, [this](){return !serial_write_in_progress;});
+		if (!write_cv.wait_until(lock, expiration, [this](){return (!serial_write_in_progress || !serial_handler.is_open());}))
+		{
+			return asio::error::timed_out;
+		}
+
+		// Check again before continuing
+		if (!serial_handler.is_open()) {
+			return asio::error::not_connected;
+		}
 
 		// Clear out the read buffer before writing next command
 		read_queue.clear();
@@ -325,7 +333,14 @@ public:
 		{
 			std::unique_lock<std::mutex> lock(write_cv_mutex);
 			if (error) {
-				serial_handler.cancel();
+				try
+				{
+					serial_handler.cancel();
+				}
+				catch(const asio::system_error&)
+				{
+					// Ignore cancel errors
+				}
 			}
 			serial_write_in_progress = false;
 			write_cv.notify_all();
@@ -341,7 +356,16 @@ public:
 		// Wait for at least 2 lines to be received (first line is echo back)
 		std::unique_lock<std::mutex> lock(read_cv_mutex);
 		const std::chrono::steady_clock::time_point expiration = std::chrono::steady_clock::now() + timeout_ms;
-		read_cv.wait_until(lock, expiration, [this](){return (read_queue.size() >= 2);});
+		if (!read_cv.wait_until(lock, expiration, [this](){return ((read_queue.size() >= 2) || !serial_handler.is_open());}))
+		{
+			// Timeout
+			return false;
+		}
+
+		if (read_queue.size() < 2) {
+			// Connection was closed before data could be received
+			return false;
+		}
 
 		// discard the first message as we are interested in the second only which returns the controller configuration
 		response = read_queue.back();
@@ -438,7 +462,16 @@ private:
 	void serialReadHandler(const asio::error_code& error, std::size_t size)
 	{
 		if (error) {
-			serial_handler.cancel();
+			std::lock_guard<std::mutex> lock(read_cv_mutex);
+			try
+			{
+				serial_handler.cancel();
+			}
+			catch(const asio::system_error&)
+			{
+				// Ignore cancel errors
+			}
+			read_cv.notify_all();
 		}
 		else {
 			// Rearm the read
