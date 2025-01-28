@@ -27,6 +27,7 @@
 #include <iomanip>
 #include <sstream>
 #include <optional>
+#include <thread>
 
 #if defined(__linux__) || (defined(__APPLE__) && defined(TARGET_OS_MAC))
 #include <dirent.h>
@@ -37,83 +38,24 @@
 #include <setupapi.h>
 #endif
 
+void createDreamConnDevices(std::shared_ptr<DreamConn> dreamconn, bool gameStart);
+
 class DreamcastControllerConnection
 {
+protected:
+	//! The maple bus index [0,3]
 	const int bus;
-	const int dreamcastControllerType;
-	asio::ip::tcp::iostream iostream;
-	asio::io_context io_context;
-	std::string serial_out_data;
-	asio::serial_port serial_handler{io_context};
-	bool serial_write_in_progress = false;
-	asio::streambuf serial_read_buffer;
 
 public:
 	DreamcastControllerConnection(const DreamcastControllerConnection&) = delete;
 	DreamcastControllerConnection() = delete;
 
-	explicit DreamcastControllerConnection(int bus, int dreamcastControllerType) :
-		bus(bus),
-		dreamcastControllerType(dreamcastControllerType)
+	explicit DreamcastControllerConnection(int bus) : bus(bus)
 	{}
 
-	~DreamcastControllerConnection()
-	{
-		disconnect();
-	}
-
-	std::optional<MapleMsg> connect()
-	{
-		asio::error_code ec;
-
-		switch (dreamcastControllerType) {
-			case TYPE_DREAMCONN:
-			{
-#if !defined(_WIN32)
-				WARN_LOG(INPUT, "DreamcastController[%d] connection failed: DreamConn+ / DreamConn S Controller supported on Windows only", bus);
-				return std::nullopt;
-#endif
-				iostream = asio::ip::tcp::iostream("localhost", std::to_string(DreamConn::BASE_PORT + bus));
-				if (!iostream) {
-					WARN_LOG(INPUT, "DreamcastController[%d] connection failed: %s", bus, iostream.error().message().c_str());
-					disconnect();
-					return std::nullopt;
-				}
-				iostream.expires_from_now(std::chrono::seconds(1));
-				break;
-			}
-			case TYPE_DREAMCASTCONTROLLERUSB:
-			{
-				// the serial port isn't ready at this point, so we need to sleep briefly
-				// we probably should have a better way to handle this
-#if defined(_WIN32)
-				Sleep(500);
-#elif defined(__linux__) || (defined(__APPLE__) && defined(TARGET_OS_MAC))
-				usleep(500000);
-#endif
-
-				serial_handler = asio::serial_port(io_context);
-				io_context.reset();
-
-				// select first available serial device
-				std::string serial_device = getFirstSerialDevice();
-
-				serial_handler.open(serial_device, ec);
-
-				if (ec || !serial_handler.is_open()) {
-					WARN_LOG(INPUT, "DreamcastController[%d] connection failed: %s", bus, ec.message().c_str());
-					disconnect();
-					return std::nullopt;
-				}
-
-				startSerialRead();
-
-				break;
-			}
-			default:
-			{
-				return std::nullopt;
-			}
+	std::optional<MapleMsg> connect(){
+		if (!establishConnection()) {
+			return std::nullopt;
 		}
 
 		// Now get the controller configuration
@@ -123,7 +65,7 @@ public:
 		msg.originAP = bus << 6;
 		msg.setData(MFID_0_Input);
 
-		ec = sendMsg(msg);
+		asio::error_code ec = sendMsg(msg);
 		if (ec)
 		{
 			WARN_LOG(INPUT, "DreamcastController[%d] connection failed: %s", bus, ec.message().c_str());
@@ -135,56 +77,24 @@ public:
 			disconnect();
 			return std::nullopt;
 		}
-		if (dreamcastControllerType == TYPE_DREAMCONN) {
-			iostream.expires_from_now(std::chrono::duration<u32>::max());	// don't use a 64-bit based duration to avoid overflow
-		}
+
+		onConnectComplete();
 
 		return msg;
 	}
 
-	void disconnect()
-	{
-		if (dreamcastControllerType == TYPE_DREAMCONN)
-		{
-			if (iostream) {
-				iostream.close();
-			}
-		}
-		else if (dreamcastControllerType == TYPE_DREAMCASTCONTROLLERUSB)
-		{
-			io_context.stop();
+	virtual void disconnect() = 0;
+	virtual asio::error_code sendMsg(const MapleMsg& msg) = 0;
+	virtual bool receiveMsg(MapleMsg& msg) = 0;
 
-			if (serial_handler.is_open()) {
-				try
-				{
-					serial_handler.cancel();
-				}
-				catch(const asio::system_error&)
-				{
-					// Ignore cancel errors
-				}
-			}
+protected:
+	virtual bool establishConnection() = 0;
+	virtual void onConnectComplete() = 0;
 
-			try
-			{
-				serial_handler.close();
-			}
-			catch(const asio::system_error&)
-			{
-				// Ignore closing errors
-			}
-		}
-	}
-
-	asio::error_code sendMsg(const MapleMsg& msg, std::chrono::milliseconds timeoutMs = std::chrono::milliseconds(5000))
+	std::string msgToString(const MapleMsg& msg, const std::string& delim = " ")
 	{
 		std::ostringstream s;
 		s.fill('0');
-		if (dreamcastControllerType == TYPE_DREAMCASTCONTROLLERUSB)
-		{
-			// Messages to Dreamcast Controller USB need to be prefixed to trigger the correct parser
-			s << "X ";
-		}
 
 		s << std::hex << std::uppercase
 			<< std::setw(2) << (u32)msg.command << " "
@@ -196,138 +106,242 @@ public:
 			s << " " << std::setw(2) << (u32)msg.data[i];
 		s << "\r\n";
 
+		return s.str();
+	}
+};
+
+class DreamConnConnection : public DreamcastControllerConnection
+{
+	//! Stream to a DreamConn device
+	asio::ip::tcp::iostream iostream;
+
+public:
+	DreamConnConnection(const DreamConnConnection&) = delete;
+	DreamConnConnection() = delete;
+
+	explicit DreamConnConnection(int bus) : DreamcastControllerConnection(bus)
+	{}
+
+	~DreamConnConnection() {
+		disconnect();
+	}
+
+	bool establishConnection() override {
+#if !defined(_WIN32)
+		WARN_LOG(INPUT, "DreamcastController[%d] connection failed: DreamConn+ / DreamConn S Controller supported on Windows only", bus);
+		return false;
+#else
+		iostream = asio::ip::tcp::iostream("localhost", std::to_string(DreamConn::BASE_PORT + bus));
+		if (!iostream) {
+			WARN_LOG(INPUT, "DreamcastController[%d] connection failed: %s", bus, iostream.error().message().c_str());
+			disconnect();
+			return false;
+		}
+		iostream.expires_from_now(std::chrono::seconds(1));
+		return true;
+#endif
+	}
+
+	void onConnectComplete() override {
+		iostream.expires_from_now(std::chrono::duration<u32>::max());	// don't use a 64-bit based duration to avoid overflow
+	}
+
+	void disconnect() override
+	{
+		if (iostream) {
+			iostream.close();
+		}
+	}
+
+	asio::error_code sendMsg(const MapleMsg& msg) override
+	{
+		const std::string msgStr = msgToString(msg);
 		asio::error_code ec;
 
-		if (dreamcastControllerType == TYPE_DREAMCONN)
-		{
-			if (!iostream) {
-				return asio::error::not_connected;
-			}
-			asio::ip::tcp::socket& sock = static_cast<asio::ip::tcp::socket&>(iostream.socket());
-			asio::write(sock, asio::buffer(s.str()), ec);
+		if (!iostream) {
+			return asio::error::not_connected;
 		}
-		else if (dreamcastControllerType == TYPE_DREAMCASTCONTROLLERUSB)
-		{
-			if (!serial_handler.is_open()) {
-				return asio::error::not_connected;
-			}
-
-			const std::chrono::steady_clock::time_point expiration = std::chrono::steady_clock::now() + timeoutMs;
-
-			// Wait for last write to complete
-			while (serial_write_in_progress){
-				if (!serial_handler.is_open()) {
-					return asio::error::not_connected;
-				}
-				if (io_context.stopped()){
-					return asio::error::shut_down;
-				}
-				else if (io_context.run_one_until(expiration) <= 0) {
-					return asio::error::timed_out;
-				}
-			}
-
-			// Poll to ensure all the waiting serial data is in serial_read_buffer
-			io_context.poll_one();
-
-			// Clear out the read buffer before writing next command
-			if (serial_read_buffer.size() > 0) {
-				serial_read_buffer.consume(serial_read_buffer.size());
-			}
-
-			serial_write_in_progress = true;
-			serial_out_data = s.str();
-			asio::async_write(serial_handler, asio::buffer(serial_out_data), asio::transfer_exactly(serial_out_data.size()), [this](const asio::error_code& error, size_t bytes_transferred)
-			{
-				serial_write_in_progress = false;
-				if (error) {
-					serial_handler.cancel();
-				}
-			});
-		}
+		asio::ip::tcp::socket& sock = static_cast<asio::ip::tcp::socket&>(iostream.socket());
+		asio::write(sock, asio::buffer(msgStr), ec);
 
 		return ec;
 	}
 
-	bool receiveMsg(MapleMsg& msg, std::chrono::milliseconds timeoutMs = std::chrono::milliseconds(5000))
+	bool receiveMsg(MapleMsg& msg) override
 	{
 		std::string response;
 
-		if (dreamcastControllerType == TYPE_DREAMCONN)
-		{
-			if (!std::getline(iostream, response))
-				return false;
-			sscanf(response.c_str(), "%hhx %hhx %hhx %hhx", &msg.command, &msg.destAP, &msg.originAP, &msg.size);
-			if ((msg.getDataSize() - 1) * 3 + 13 >= response.length())
-				return false;
-			for (unsigned i = 0; i < msg.getDataSize(); i++)
-				sscanf(&response[i * 3 + 12], "%hhx", &msg.data[i]);
-			return !iostream.fail();
+		if (!std::getline(iostream, response))
+			return false;
+		sscanf(response.c_str(), "%hhx %hhx %hhx %hhx", &msg.command, &msg.destAP, &msg.originAP, &msg.size);
+		if ((msg.getDataSize() - 1) * 3 + 13 >= response.length())
+			return false;
+		for (unsigned i = 0; i < msg.getDataSize(); i++)
+			sscanf(&response[i * 3 + 12], "%hhx", &msg.data[i]);
+		return !iostream.fail();
+
+		return false;
+	}
+};
+
+//! See: https://github.com/OrangeFox86/DreamcastControllerUsbPico
+class DreamcastControllerUsbPicoConnection : public DreamcastControllerConnection
+{
+	//! Asynchronous context for serial_handler
+	asio::io_context io_context;
+	//! Output buffer data for serial_handler
+	std::string serial_out_data;
+	//! Handles communication to DreamcastControllerUsbPico
+	asio::serial_port serial_handler{io_context};
+	//! Set to true while an async write is in progress with serial_handler
+	bool serial_write_in_progress = false;
+	//! Signaled when serial_write_in_progress transitions to false
+	std::condition_variable write_cv;
+	//! Mutex for write_cv and serializes access to serial_write_in_progress
+	std::mutex write_cv_mutex;
+	//! Input stream buffer from serial_handler
+	asio::streambuf serial_read_buffer;
+	//! Thread which runs the io_context
+	std::unique_ptr<std::thread> io_context_thread;
+	//! Contains queue of incoming lines from serial
+	std::list<std::string> read_queue;
+	//! Signaled when data is in read_queue
+	std::condition_variable read_cv;
+	//! Mutex for read_cv and serializes access to read_queue
+	std::mutex read_cv_mutex;
+	//! Current timeout in milliseconds
+	std::chrono::milliseconds timeout_ms;
+
+public:
+	DreamcastControllerUsbPicoConnection(const DreamcastControllerUsbPicoConnection&) = delete;
+	DreamcastControllerUsbPicoConnection() = delete;
+
+	explicit DreamcastControllerUsbPicoConnection(int bus) : DreamcastControllerConnection(bus)
+	{}
+
+	~DreamcastControllerUsbPicoConnection(){
+		disconnect();
+	}
+
+	bool establishConnection() override {
+		asio::error_code ec;
+
+		// Timeout is 1 second while establishing connection
+		timeout_ms = std::chrono::seconds(1);
+
+		// the serial port isn't ready at this point, so we need to sleep briefly
+		// we probably should have a better way to handle this
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+		serial_handler = asio::serial_port(io_context);
+		io_context.reset();
+
+		// select first available serial device
+		std::string serial_device = getFirstSerialDevice();
+
+		serial_handler.open(serial_device, ec);
+
+		if (ec || !serial_handler.is_open()) {
+			WARN_LOG(INPUT, "DreamcastController[%d] connection failed: %s", bus, ec.message().c_str());
+			disconnect();
+			return false;
 		}
-		else if (dreamcastControllerType == TYPE_DREAMCASTCONTROLLERUSB)
-		{
-			const std::chrono::steady_clock::time_point expiration = std::chrono::steady_clock::now() + timeoutMs;
 
-			for (int i = 0; i < 2; ++i)
+		// This must be done before the io_context is run because it will keep io_context from returning immediately
+		startSerialRead();
+
+		io_context_thread = std::make_unique<std::thread>([this](){contextThreadEnty();});
+
+		return true;
+	}
+
+	void onConnectComplete() override {
+		// Timeout is extended to 5 seconds for all other communication after connection
+		timeout_ms = std::chrono::seconds(5);
+	}
+
+	void disconnect() override
+	{
+		io_context.stop();
+
+		if (serial_handler.is_open()) {
+			try
 			{
-				// discard the first message as we are interested in the second only which returns the controller configuration
-				response = "";
-
-				// Keep pulling characters until this line is complete
-				char c = '\0';
-				do {
-					// Wait until data is received or timeout has expired
-					// serial_read_buffer is asynchronously filled by the serial_handler's io_context
-					while (serial_read_buffer.size() <= 0){
-						if (!serial_handler.is_open() || io_context.stopped() || io_context.run_one_until(expiration) <= 0){
-							// connection closed, io_context was stopped, or failed to receive anything before timeout
-							return false;
-						}
-					}
-
-					// Consume characters until buffers are empty or \n found
-					asio::const_buffers_1 data = serial_read_buffer.data();
-					std::size_t consumed = 0;
-					for (const asio::const_buffer& buff : data)
-					{
-						const char* buffDat = static_cast<const char*>(buff.data());
-						for (std::size_t i = 0; i < buff.size(); ++i)
-						{
-							c = *buffDat++;
-							++consumed;
-
-							if (c == '\n') {
-								// Stop reading now
-								break;
-							}
-
-							response += c;
-						}
-
-						if (c == '\n') {
-							// Stop reading now
-							break;
-						}
-					}
-
-					serial_read_buffer.consume(consumed);
-
-				} while (c != '\n');
-
-				// Remove carriage return if found
-				if (response.size() > 0 && response[response.size() - 1] == '\r') {
-					response.pop_back();
-				}
+				serial_handler.cancel();
 			}
-
-			sscanf(response.c_str(), "%hhx %hhx %hhx %hhx", &msg.command, &msg.destAP, &msg.originAP, &msg.size);
-
-			if (serial_handler.is_open()) {
-				return true;
+			catch(const asio::system_error&)
+			{
+				// Ignore cancel errors
 			}
-			else {
-				return false;
+		}
+
+		try
+		{
+			serial_handler.close();
+		}
+		catch(const asio::system_error&)
+		{
+			// Ignore closing errors
+		}
+	}
+
+	void contextThreadEnty()
+	{
+		// This context should never exit until disconnect due to read handler automatically rearming
+		io_context.run();
+	}
+
+	asio::error_code sendMsg(const MapleMsg& msg) override
+	{
+		asio::error_code ec;
+
+		if (!serial_handler.is_open()) {
+			return asio::error::not_connected;
+		}
+
+		// Wait for last write to complete
+		std::unique_lock<std::mutex> lock(write_cv_mutex);
+		const std::chrono::steady_clock::time_point expiration = std::chrono::steady_clock::now() + timeout_ms;
+		write_cv.wait_until(lock, expiration, [this](){return !serial_write_in_progress;});
+
+		// Clear out the read buffer before writing next command
+		read_queue.clear();
+
+		serial_write_in_progress = true;
+		// Messages to Dreamcast Controller USB need to be prefixed to trigger the correct parser
+		serial_out_data = std::string("X ") + msgToString(msg);
+		asio::async_write(serial_handler, asio::buffer(serial_out_data), asio::transfer_exactly(serial_out_data.size()), [this](const asio::error_code& error, size_t bytes_transferred)
+		{
+			std::unique_lock<std::mutex> lock(write_cv_mutex);
+			if (error) {
+				serial_handler.cancel();
 			}
+			serial_write_in_progress = false;
+			write_cv.notify_all();
+		});
+
+		return ec;
+	}
+
+	bool receiveMsg(MapleMsg& msg) override
+	{
+		std::string response;
+
+		// Wait for at least 2 lines to be received (first line is echo back)
+		std::unique_lock<std::mutex> lock(read_cv_mutex);
+		const std::chrono::steady_clock::time_point expiration = std::chrono::steady_clock::now() + timeout_ms;
+		read_cv.wait_until(lock, expiration, [this](){return (read_queue.size() >= 2);});
+
+		// discard the first message as we are interested in the second only which returns the controller configuration
+		response = read_queue.back();
+
+		sscanf(response.c_str(), "%hhx %hhx %hhx %hhx", &msg.command, &msg.destAP, &msg.originAP, &msg.size);
+
+		if (serial_handler.is_open()) {
+			return true;
+		}
+		else {
+			return false;
 		}
 
 		return false;
@@ -405,6 +419,9 @@ private:
 	void startSerialRead()
 	{
 		serialReadHandler(asio::error_code(), 0);
+		// Just to make sure initial data is cleared off of incoming buffer
+		io_context.poll_one();
+		read_queue.clear();
 	}
 
 	void serialReadHandler(const asio::error_code& error, std::size_t size)
@@ -419,18 +436,91 @@ private:
 				serial_read_buffer,
 				'\n',
 				[this](const asio::error_code& error, std::size_t size) -> void {
+					if (size > 0)
+					{
+						// Lock access to read_queue
+						std::lock_guard<std::mutex> lock(read_cv_mutex);
+						// Consume the received data
+						if (consumeReadBuffer() > 0)
+						{
+							// New lines available
+							read_cv.notify_all();
+						}
+					}
 					// Auto reload read - io_context will always have work to do
 					serialReadHandler(error, size);
 				}
 			);
 		}
 	}
+
+	int consumeReadBuffer() {
+		if (serial_read_buffer.size() <= 0) {
+			return 0;
+		}
+
+		int numberOfLines = 0;
+		while (true)
+		{
+			char c = '\0';
+			std::string line;
+
+			// Consume characters until buffers are empty or \n found
+			asio::const_buffers_1 data = serial_read_buffer.data();
+			std::size_t consumed = 0;
+			for (const asio::const_buffer& buff : data)
+			{
+				const char* buffDat = static_cast<const char*>(buff.data());
+				for (std::size_t i = 0; i < buff.size(); ++i)
+				{
+					c = *buffDat++;
+					++consumed;
+
+					if (c == '\n') {
+						// Stop reading now
+						break;
+					}
+
+					line += c;
+				}
+
+				if (c == '\n') {
+					// Stop reading now
+					break;
+				}
+			}
+
+			if (c == '\n') {
+				serial_read_buffer.consume(consumed);
+
+				// Remove carriage return if found and add this line to queue
+				if (line.size() > 0 && line[line.size() - 1] == '\r') {
+					line.pop_back();
+				}
+				read_queue.push_back(std::move(line));
+
+				++numberOfLines;
+			}
+			else {
+				// Ran out of data to consume
+				return numberOfLines;
+			}
+		}
+	}
 };
 
-void createDreamConnDevices(std::shared_ptr<DreamConn> dreamconn, bool gameStart);
-
 DreamConn::DreamConn(int bus, int dreamcastControllerType) : bus(bus), dreamcastControllerType(dreamcastControllerType) {
-	dreamcastControllerConnection = std::make_unique<DreamcastControllerConnection>(bus, dreamcastControllerType);
+	switch (dreamcastControllerType)
+	{
+		case TYPE_DREAMCONN:
+			dcConnection = std::make_unique<DreamConnConnection>(bus);
+			break;
+
+		case TYPE_DREAMCASTCONTROLLERUSB:
+			dcConnection = std::make_unique<DreamcastControllerUsbPicoConnection>(bus);
+			break;
+	}
+
 	connect();
 }
 
@@ -443,7 +533,11 @@ void DreamConn::connect()
 	maple_io_connected = false;
 	expansionDevs = 0;
 
-	std::optional<MapleMsg> msg = dreamcastControllerConnection->connect();
+	if (!dcConnection) {
+		return;
+	}
+
+	std::optional<MapleMsg> msg = dcConnection->connect();
 	if (!msg)
 	{
 		return;
@@ -469,7 +563,11 @@ void DreamConn::connect()
 
 void DreamConn::disconnect()
 {
-	dreamcastControllerConnection->disconnect();
+	if (!dcConnection) {
+		return;
+	}
+
+	dcConnection->disconnect();
 
 	maple_io_connected = false;
 
@@ -478,10 +576,14 @@ void DreamConn::disconnect()
 
 bool DreamConn::send(const MapleMsg& msg)
 {
+	if (!dcConnection) {
+		return false;
+	}
+
 	asio::error_code ec;
 
 	if (maple_io_connected)
-		ec = dreamcastControllerConnection->sendMsg(msg);
+		ec = dcConnection->sendMsg(msg);
 	else
 		return false;
 	if (ec) {

@@ -53,7 +53,7 @@ class DreamConn
 	const int bus;
 	const int dreamcastControllerType;
 #ifdef USE_DREAMCASTCONTROLLER
-	std::unique_ptr<class DreamcastControllerConnection> dreamcastControllerConnection;
+	std::unique_ptr<class DreamcastControllerConnection> dcConnection;
 #endif
 	bool maple_io_connected;
 	u8 expansionDevs = 0;
