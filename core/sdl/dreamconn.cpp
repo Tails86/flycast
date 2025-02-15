@@ -273,6 +273,11 @@ public:
 
 		serial_out_data = cmd;
 
+		if (!read_queue.empty()) {
+			NOTICE_LOG(INPUT, "<%s", read_queue.back().c_str());
+		}
+		NOTICE_LOG(INPUT, ">%s", cmd.c_str());
+
 		// Clear out the read buffer before writing next command
 		read_queue.clear();
 		serial_write_in_progress = true;
