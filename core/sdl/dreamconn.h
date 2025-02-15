@@ -65,6 +65,8 @@ public:
 
 	bool send(const MapleMsg& msg);
 
+	bool receive(MapleMsg& msg);
+
 	// When called, do teardown stuff like reset screen
 	void gameTermination();
 

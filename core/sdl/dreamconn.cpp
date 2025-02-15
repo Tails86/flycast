@@ -377,7 +377,59 @@ public:
 			return false;
 		}
 
+		std::vector<uint32_t> words;
+		bool valid = false;
+		const char* iter = response.c_str();
+		const char* eol = iter + response.size();
+
+		while (iter < eol)
+		{
+			uint32_t word = 0;
+			uint32_t i = 0;
+			while (i < 8 && iter < eol)
+			{
+				char v = *iter++;
+				uint_fast8_t value = 0;
+
+				if (v >= '0' && v <= '9')
+				{
+					value = v - '0';
+				}
+				else if (v >= 'a' && v <= 'f')
+				{
+					value = v - 'a' + 0xa;
+				}
+				else if (v >= 'A' && v <= 'F')
+				{
+					value = v - 'A' + 0xA;
+				}
+				else
+				{
+					// Ignore this character
+					continue;
+				}
+
+				// Apply value into current word
+				word |= (value << ((8 - i) * 4 - 4));
+				++i;
+			}
+
+			// Invalid if a partial word was given
+			valid = ((i == 8) || (i == 0));
+
+			if (i == 8)
+			{
+				words.push_back(word);
+			}
+		}
+
 		sscanf(response.c_str(), "%hhx %hhx %hhx %hhx", &msg.command, &msg.destAP, &msg.originAP, &msg.size);
+
+		for (uint32_t i = 1; i < words.size(); ++i)
+		{
+			uint32_t dat = ntohl(words[i]);
+			memcpy(&msg.data[(i-1)*4], &dat, sizeof(dat));
+		}
 
 		if (serial_handler.is_open()) {
 			return true;
@@ -943,6 +995,16 @@ bool DreamConn::send(const MapleMsg& msg)
 		return false;
 	}
 	return true;
+}
+
+bool DreamConn::receive(MapleMsg& msg)
+{
+	if (maple_io_connected && dcConnection) {
+		return dcConnection->receiveMsg(msg);
+	}
+	else {
+		return false;
+	}
 }
 
 void DreamConn::gameTermination()
