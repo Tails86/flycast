@@ -219,7 +219,7 @@ public:
 
 		// the serial port isn't ready at this point, so we need to sleep briefly
 		// we probably should have a better way to handle this
-		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		std::this_thread::sleep_for(std::chrono::milliseconds(350));
 
 		serial_handler = asio::serial_port(io_context);
 		io_context.reset();
@@ -276,7 +276,7 @@ public:
 		if (!read_queue.empty()) {
 			NOTICE_LOG(INPUT, "<%s", read_queue.back().c_str());
 		}
-		NOTICE_LOG(INPUT, ">%s", cmd.c_str());
+		//NOTICE_LOG(INPUT, ">%s", cmd.c_str());
 
 		// Clear out the read buffer before writing next command
 		read_queue.clear();
