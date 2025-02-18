@@ -2115,50 +2115,58 @@ std::shared_ptr<maple_device> maple_Create(MapleDeviceType type)
 struct DreamConnVmu : public maple_sega_vmu
 {
 	std::shared_ptr<DreamConn> dreamconn;
-	bool useRealVmu;  // Set this to true to use physical VMU, false for virtual
+	bool useRealVmu = false;
 	bool readIn = true;
 
 	DreamConnVmu(std::shared_ptr<DreamConn> dreamconn) : dreamconn(dreamconn) {
-		// Initialize useRealVmu with our config setting
-		useRealVmu = config::UsePhysicalVmuOnly;
 	}
 
+private:
+	std::atomic<bool> loadingComplete{ false };
+	std::thread loadingThread;
+
+	void loadBlocksAsync() {
+		for (u32 block = 0; block < 256; ++block) {
+			// Try up to 4 times to read
+			for (u32 i = 0; i < 4; ++i) {
+				MapleMsg msg;
+				msg.command = 0x0B;
+				msg.destAP = 1;
+				msg.originAP = 0;
+				msg.size = 2;
+				msg.data[0] = 0;
+				msg.data[1] = 0;
+				msg.data[2] = 0;
+				msg.data[3] = 0x02;
+				msg.data[4] = 0;
+				msg.data[5] = 0;
+				msg.data[6] = 0;
+				msg.data[7] = block;
+
+				dreamconn->send(msg);
+
+				if (dreamconn->receive(msg) && msg.size == 130) {
+					// Something read!
+					memcpy(&flash_data[block * 512], &msg.data[8], 4 * 128);
+					break;
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(5));
+			}
+		}
+		loadingComplete = true;
+	}
+
+public:
 	void OnSetup() override
 	{
-		// Update useRealVmu in case config changed
-		useRealVmu = config::UsePhysicalVmuOnly;
+		maple_sega_vmu::OnSetup();
 
 		if (readIn)
 		{
-			maple_sega_vmu::OnSetup();
-
 			readIn = false;
-			for (u32 block = 0; block < 256; ++block) {
-				// Try up to 2 times to read 
-				for (u32 i = 0; i < 2; ++i) {
-					MapleMsg msg;
-					msg.command = 0x0B;
-					msg.destAP = 1; // TODO: fix for port number
-					msg.originAP = 0; // TODO: fix for DreamConn (not needed for DreamPort)
-					msg.size = 2;
-					msg.data[0] = 0;
-					msg.data[1] = 0;
-					msg.data[2] = 0;
-					msg.data[3] = 0x02;
-					msg.data[4] = 0;
-					msg.data[5] = 0;
-					msg.data[6] = 0;
-					msg.data[7] = block;
-
-					dreamconn->send(msg);
-
-					if (dreamconn->receive(msg) && msg.size == 130) {
-						// Something read!
-						memcpy(&flash_data[block * 512], &msg.data[8], 4 * 128);
-						break;
-					}
-				}
-			}
+			// Start background loading
+			loadingThread = std::thread(&DreamConnVmu::loadBlocksAsync, this);
+			loadingThread.detach();  // Let it run independently
 		}
 		else
 		{
@@ -2166,12 +2174,23 @@ struct DreamConnVmu : public maple_sega_vmu
 		}
 	}
 
+	// Add this to check loading status
+	bool isLoadingComplete() const {
+		return loadingComplete;
+	}
+
+	// Add destructor to ensure clean shutdown
+	~DreamConnVmu() {
+		if (loadingThread.joinable())
+			loadingThread.join();
+	}
+
 	bool fullSave() override
 	{
 		if (useRealVmu)
 		{
-			// Skip virtual save when using physical VMU
-			//DEBUG_LOG(MAPLE, "Not saving because this is a real vmu");
+			// do nothing
+			DEBUG_LOG(MAPLE, "Not saving because this is a real vmu");
 			return true;
 		}
 		else
@@ -2182,65 +2201,75 @@ struct DreamConnVmu : public maple_sega_vmu
 
 	u32 dma(u32 cmd) override
 	{
-		if (useRealVmu)
+		if (dma_count_in >= 4)
 		{
-			// Physical VMU logic
-			if (dma_count_in >= 4)
+			const u32 functionId = *(u32*)dma_buffer_in;
+			const MapleMsg* msg = reinterpret_cast<const MapleMsg*>(dma_buffer_in - 4);
+
+			if (functionId == MFID_1_Storage)
 			{
-				const u32 functionId = *(u32*)dma_buffer_in;
-				const MapleMsg* msg = reinterpret_cast<const MapleMsg*>(dma_buffer_in - 4);
-
-				if (functionId == MFID_1_Storage)
+				switch (cmd)
 				{
-					switch (cmd)
-					{
-					case MDCF_GetMediaInfo:
-						//DEBUG_LOG(MAPLE, "VMU GetMediaInfo request");
-						dreamconn->send(*msg);
-						break;
-
-					case MDCF_GetLastError:
-						//NOTICE_LOG(MAPLE, "VMU GetLastError request");
-						dreamconn->send(*msg);
-						// Need to slow down writes so that flash has a chance to write (50MS is the lowest I can get with never failing -so far-)
-						std::this_thread::sleep_for(std::chrono::milliseconds(50));
-						break;
-
-					case MDCF_BlockWrite:
-					{
-						u32 bph = *(u32*)(dma_buffer_in + 4);
-						u32 Block = (SWAP32(bph)) & 0xffff;
-						u32 Phase = ((SWAP32(bph)) >> 16) & 0xff;
-						u32 write_adr = Block * 512 + Phase * (512 / 4);
-						u32 write_len = r_count();
-
-						//NOTICE_LOG(MAPLE, "VMU mirroring write - Block:%d Phase:%d Addr:%x Len:%d",
-							//Block, Phase, write_adr, write_len);
-
-						dreamconn->send(*msg);
-
-						std::this_thread::sleep_for(std::chrono::milliseconds(50));
-						break;
-					}
-
-					default:
-						//DEBUG_LOG(MAPLE, "VMU Storage cmd %02x", cmd);
-						dreamconn->send(*msg);
-						break;
-					}
-				}
-				else if (cmd == MDCF_BlockWrite && functionId == MFID_2_LCD)
-				{
+				case MDCF_GetMediaInfo:
+					DEBUG_LOG(MAPLE, "VMU GetMediaInfo request");
 					dreamconn->send(*msg);
-				}
-				else if (cmd == MDCF_SetCondition && functionId == MFID_3_Clock)
-				{
+					break;
+
+				case MDCF_GetLastError:
+					NOTICE_LOG(MAPLE, "VMU GetLastError request");
 					dreamconn->send(*msg);
+					// Need to slow down writes so that flash has a chance to write
+					std::this_thread::sleep_for(std::chrono::milliseconds(30));
+					break;
+
+				case MDCF_BlockWrite:
+				{
+					u32 bph = *(u32*)(dma_buffer_in + 4);
+					u32 Block = (SWAP32(bph)) & 0xffff;
+					u32 Phase = ((SWAP32(bph)) >> 16) & 0xff;
+					u32 write_adr = Block * 512 + Phase * (512 / 4);
+					u32 write_len = r_count();
+
+					NOTICE_LOG(MAPLE, "VMU mirroring write - Block:%d Phase:%d Addr:%x Len:%d",
+						Block, Phase, write_adr, write_len);
+
+					// Send exact same DreamConnVmu::DreamConnVmudata to physical VMU
+					dreamconn->send(*msg);
+
+					// Need to slow down writes so that flash has a chance to write
+					std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+					break;
 				}
+
+				// case MDCF_BlockRead:
+				{
+					DEBUG_LOG(MAPLE, "VMU Storage cmd %02x", cmd);
+					dreamconn->send(*msg);
+					break;
+				}
+
+				case MDC_DeviceRequest:
+					DEBUG_LOG(MAPLE, "VMU Device request");
+					dreamconn->send(*msg);
+					break;
+
+				default:
+					DEBUG_LOG(MAPLE, "VMU Storage cmd %02x", cmd);
+					dreamconn->send(*msg);
+					break;
+				}
+			}
+			else if (cmd == MDCF_BlockWrite && functionId == MFID_2_LCD)
+			{
+				dreamconn->send(*msg);
+			}
+			else if (cmd == MDCF_SetCondition && functionId == MFID_3_Clock)
+			{
+				dreamconn->send(*msg);
 			}
 		}
 
-		// Always call base virtual VMU implementation
 		return maple_sega_vmu::dma(cmd);
 	}
 
@@ -2254,13 +2283,10 @@ struct DreamConnVmu : public maple_sega_vmu
 
 	void copyOut(std::shared_ptr<maple_sega_vmu> other)
 	{
-		if (!useRealVmu)  // Only copy data if we're not using physical VMU
-		{
-			memcpy(other->flash_data, flash_data, sizeof(other->flash_data));
-			memcpy(other->lcd_data, lcd_data, sizeof(other->lcd_data));
-			memcpy(other->lcd_data_decoded, lcd_data_decoded, sizeof(other->lcd_data_decoded));
-			other->fullSaveNeeded = fullSaveNeeded;
-		}
+		memcpy(other->flash_data, flash_data, sizeof(other->flash_data));
+		memcpy(other->lcd_data, lcd_data, sizeof(other->lcd_data));
+		memcpy(other->lcd_data_decoded, lcd_data_decoded, sizeof(other->lcd_data_decoded));
+		other->fullSaveNeeded = fullSaveNeeded;
 	}
 
 	void updateScreen()
@@ -2270,8 +2296,8 @@ struct DreamConnVmu : public maple_sega_vmu
 		msg.destAP = maple_port;
 		msg.originAP = bus_id << 6;
 		msg.size = 2 + sizeof(lcd_data) / 4;
-		*(u32*)&msg.data[0] = MFID_2_LCD;
-		*(u32*)&msg.data[4] = 0;    // PT, phase, block#
+		*(u32 *)&msg.data[0] = MFID_2_LCD;
+		*(u32 *)&msg.data[4] = 0;	// PT, phase, block#
 		memcpy(&msg.data[8], lcd_data, sizeof(lcd_data));
 		dreamconn->send(msg);
 	}
@@ -2368,11 +2394,9 @@ void tearDownDreamConnDevices(std::shared_ptr<DreamConn> dreamconn)
 	{
 		if ((*iter)->dreamconn.get() == dreamconn.get())
 		{
-			DEBUG_LOG(MAPLE, "VMU teardown - Physical VMU: %s", (*iter)->useRealVmu ? "true" : "false");
 			std::shared_ptr<maple_device> dev = maple_Create(MDT_SegaVMU);
 			dev->Setup(bus, 0);
 			(*iter)->copyOut(std::static_pointer_cast<maple_sega_vmu>(dev));
-			DEBUG_LOG(MAPLE, "VMU teardown - Copy completed");
 			iter = dreamConnVmus.erase(iter);
 			break;
 		}
@@ -2380,7 +2404,7 @@ void tearDownDreamConnDevices(std::shared_ptr<DreamConn> dreamconn)
 		{
 			++iter;
 		}
-		}
+	}
 	for (std::list<std::shared_ptr<DreamConnPurupuru>>::const_iterator iter = dreamConnPurupurus.begin();
 		iter != dreamConnPurupurus.end();)
 	{
@@ -2396,6 +2420,37 @@ void tearDownDreamConnDevices(std::shared_ptr<DreamConn> dreamconn)
 			++iter;
 		}
 	}
+}
+
+void initDreamConnVmuAsync()
+{
+	static bool initStarted = false;
+	if (initStarted)
+		return;
+	initStarted = true;
+
+	std::thread([] {
+		// Wait for BIOS to start
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+		for (const auto& vmu : dreamConnVmus)
+		{
+			if (vmu && vmu->readIn)
+			{
+				vmu->OnSetup();
+			}
+		}
+		}).detach();
+}
+
+bool isDreamConnVmuReady()
+{
+	for (const auto& vmu : dreamConnVmus)
+	{
+		if (vmu && !vmu->isLoadingComplete())
+			return false;
+	}
+	return true;
 }
 
 #endif
