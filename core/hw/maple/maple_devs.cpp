@@ -2134,6 +2134,9 @@ struct DreamLinkVmu : public maple_sega_vmu
 			// Always reset the state when physical VMU is enabled
 			isRead = false;
 			
+			// Always reset the state when physical VMU is enabled
+			isRead = false;
+			
 			if (!isRead)
 			{
 				memset(flash_data, 0, sizeof(flash_data));
@@ -2182,6 +2185,7 @@ struct DreamLinkVmu : public maple_sega_vmu
 			// Skip virtual save when using physical VMU
 			//DEBUG_LOG(MAPLE, "Not saving because this is a real vmu");
 			NOTICE_LOG(MAPLE, "Saving to physical VMU");
+			
 			
 			return true;
 		}
@@ -2300,6 +2304,8 @@ struct DreamLinkVmu : public maple_sega_vmu
 
 	void copyOut(std::shared_ptr<maple_sega_vmu> other)
 	{
+		// Never copy data to virtual VMU if physical VMU is enabled
+		if (!config::UsePhysicalVmuOnly && !useRealVmu)
 		// Never copy data to virtual VMU if physical VMU is enabled
 		if (!config::UsePhysicalVmuOnly && !useRealVmu)
 		{
