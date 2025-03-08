@@ -18,6 +18,7 @@
  */
 #pragma once
 #include "dreamlink.h"
+#include "../cfg/option.h"
 
 #ifdef USE_DREAMCASTCONTROLLER
 
@@ -52,6 +53,16 @@ public:
 
 	bool hasVmu() const override {
 		return expansionDevs & 1;
+	}
+
+	bool hasSecondVmu() const override {
+		// If UsePhysicalVmuOnly is enabled, always try to use a VMU in the second slot
+		if (config::UsePhysicalVmuOnly)
+			return true;
+			
+		// Otherwise, check for either a dedicated VMU in slot 2 (bit 2, value 4) 
+		// or a rumble pack (bit 1, value 2) which also has storage capabilities
+		return (expansionDevs & 4) || (expansionDevs & 2);
 	}
 
 	bool hasRumble() const override {

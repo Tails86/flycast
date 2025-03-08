@@ -73,6 +73,8 @@ public:
 
 	virtual bool hasVmu() const override;
 
+	virtual bool hasSecondVmu() const override;
+
 	virtual bool hasRumble() const override;
 
 	virtual int getDefaultBus() const override;

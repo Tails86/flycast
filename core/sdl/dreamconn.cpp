@@ -147,12 +147,31 @@ void DreamConn::connect() {
 
 	expansionDevs = msg.originAP & 0x1f;
 
-	config::MapleExpansionDevices[bus][0] = hasVmu() ? MDT_SegaVMU : MDT_None;
-	config::MapleExpansionDevices[bus][1] = hasRumble() ? MDT_PurupuruPack : MDT_None;
-
-	if (hasVmu() || hasRumble())
+	// When UsePhysicalVmuOnly is enabled, always use VMUs for both slots
+	if (config::UsePhysicalVmuOnly)
 	{
-		NOTICE_LOG(INPUT, "Connected to DreamcastController[%d]: Type:%s, VMU:%d, Rumble Pack:%d", bus, getName().c_str(), hasVmu(), hasRumble());
+		config::MapleExpansionDevices[bus][0] = MDT_SegaVMU;
+		config::MapleExpansionDevices[bus][1] = MDT_SegaVMU;
+	}
+	else
+	{
+		config::MapleExpansionDevices[bus][0] = hasVmu() ? MDT_SegaVMU : MDT_None;
+		
+		// If we have a second VMU, use it, otherwise use rumble if available
+		if (hasSecondVmu())
+			config::MapleExpansionDevices[bus][1] = MDT_SegaVMU;
+		else
+			config::MapleExpansionDevices[bus][1] = hasRumble() ? MDT_PurupuruPack : MDT_None;
+	}
+
+	if (hasVmu() || hasRumble() || hasSecondVmu() || config::UsePhysicalVmuOnly)
+	{
+		if (config::UsePhysicalVmuOnly)
+			NOTICE_LOG(INPUT, "Connected to DreamcastController[%d]: Type:%s, Physical VMU Mode Enabled", 
+				bus, getName().c_str());
+		else
+			NOTICE_LOG(INPUT, "Connected to DreamcastController[%d]: Type:%s, VMU1:%d, VMU2:%d, Rumble Pack:%d", 
+				bus, getName().c_str(), hasVmu(), hasSecondVmu(), hasRumble());
 		maple_io_connected = true;
 	}
 	else

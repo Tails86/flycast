@@ -582,6 +582,16 @@ bool DreamPicoPort::hasVmu() const {
     return expansionDevs & 1;
 }
 
+bool DreamPicoPort::hasSecondVmu() const {
+    // If UsePhysicalVmuOnly is enabled, always try to use a VMU in the second slot
+    if (config::UsePhysicalVmuOnly)
+        return true;
+        
+    // Otherwise, check for either a dedicated VMU in slot 2 (bit 2, value 4) 
+    // or a rumble pack (bit 1, value 2) which also has storage capabilities
+    return (expansionDevs & 4) || (expansionDevs & 2);
+}
+
 bool DreamPicoPort::hasRumble() const {
     return expansionDevs & 2;
 }
@@ -661,12 +671,31 @@ void DreamPicoPort::connect() {
 
 	expansionDevs = msg.originAP & 0x1f;
 
-	config::MapleExpansionDevices[software_bus][0] = hasVmu() ? MDT_SegaVMU : MDT_None;
-	config::MapleExpansionDevices[software_bus][1] = hasRumble() ? MDT_PurupuruPack : MDT_None;
-
-	if (hasVmu() || hasRumble())
+	// When UsePhysicalVmuOnly is enabled, always use VMUs for both slots
+	if (config::UsePhysicalVmuOnly)
 	{
-		NOTICE_LOG(INPUT, "Connected to DreamcastController[%d]: Type:%s, VMU:%d, Rumble Pack:%d", software_bus, getName().c_str(), hasVmu(), hasRumble());
+		config::MapleExpansionDevices[software_bus][0] = MDT_SegaVMU;
+		config::MapleExpansionDevices[software_bus][1] = MDT_SegaVMU;
+	}
+	else
+	{
+		config::MapleExpansionDevices[software_bus][0] = hasVmu() ? MDT_SegaVMU : MDT_None;
+		
+		// If we have a second VMU, use it, otherwise use rumble if available
+		if (hasSecondVmu())
+			config::MapleExpansionDevices[software_bus][1] = MDT_SegaVMU;
+		else
+			config::MapleExpansionDevices[software_bus][1] = hasRumble() ? MDT_PurupuruPack : MDT_None;
+	}
+
+	if (hasVmu() || hasRumble() || hasSecondVmu() || config::UsePhysicalVmuOnly)
+	{
+		if (config::UsePhysicalVmuOnly)
+			NOTICE_LOG(INPUT, "Connected to DreamcastController[%d]: Type:%s, Physical VMU Mode Enabled", 
+				software_bus, getName().c_str());
+		else
+			NOTICE_LOG(INPUT, "Connected to DreamcastController[%d]: Type:%s, VMU1:%d, VMU2:%d, Rumble Pack:%d", 
+				software_bus, getName().c_str(), hasVmu(), hasSecondVmu(), hasRumble());
 	}
 	else
 	{

@@ -68,6 +68,9 @@ public:
 	virtual int getBus() const = 0;
 
 	virtual bool hasVmu() const = 0;
+	
+	// Check if there's a VMU in the second slot
+	virtual bool hasSecondVmu() const { return false; }
 
 	virtual bool hasRumble() const = 0;
 
