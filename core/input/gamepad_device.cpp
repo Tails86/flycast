@@ -56,6 +56,16 @@ std::mutex GamepadDevice::_gamepads_mutex;
 static FILE *record_input;
 #endif
 
+// Constructor is now defined only in the header file
+// GamepadDevice::GamepadDevice(int maple_port, const char *api_name, bool remappable)
+//  : _api_name(api_name), _maple_port(maple_port), _input_detected(nullptr), _remappable(remappable),
+//    digitalToAnalogState{}
+// {
+//  // Initialize our pressedButtons sets
+//  for (int i = 0; i < 4; i++)
+//      pressedButtons[i].clear();
+// }
+
 bool GamepadDevice::handleButtonInput(int port, DreamcastKey key, bool pressed)
 {
 	if (key == EMU_BTN_NONE)
@@ -155,29 +165,124 @@ bool GamepadDevice::handleButtonInput(int port, DreamcastKey key, bool pressed)
 
 bool GamepadDevice::gamepad_btn_input(u32 code, bool pressed)
 {
-	if (_input_detected != nullptr && _detecting_button
-			&& getTimeMs() >= _detection_start_time && pressed)
+	// When detecting input for button mapping
+	if (_input_detected != nullptr && _detecting_button 
+			&& getTimeMs() >= _detection_start_time)
 	{
-		_input_detected(code, false, false);
-		_input_detected = nullptr;
+		if (pressed) {
+			// Button pressed - add to mapping and tracking
+			_input_detected(code, false, false);
+			detectionButtons.insert(code);
+			
+			// If we're not in combo detection mode, stop detecting after first button
+			if (!_detecting_combo) {
+				_input_detected = nullptr;
+				detectionButtons.clear();
+			}
+		}
+		else if (_detecting_combo) {
+			// Button released - if this is a button we pressed during detection, end detection
+			if (detectionButtons.find(code) != detectionButtons.end()) {
+				_input_detected = nullptr;
+				detectionButtons.clear();
+				DEBUG_LOG(INPUT, "Ending combo detection on button release: %d", code);
+			}
+		}
+		
 		return true;
 	}
+	
 	if (!input_mapper || _maple_port > (int)std::size(kcode))
 		return false;
 
 	bool rc = false;
-	if (_maple_port == 4)
+
+	// Update button press tracking
+	int targetPort = (_maple_port == 4) ? 0 : _maple_port; // Use port 0 for all-ports mode as a base
+	
+	// Special handling for trigger buttons in SDL-based controllers
+	// Map common triggers to standard codes for combo detection
+	u32 normalizedCode = code;
+	bool isTrigger = false;
+	
+	// For common SDL trigger button codes (varies by controller)
+	if (code == 2 || code == 5 || code == 4 || code == 6 || code == 7)
 	{
-		for (int port = 0; port < 4; port++)
+		// Check if this is mapped to a trigger
+		DreamcastKey triggerKey = input_mapper->get_button_id(targetPort, code);
+		if (triggerKey == DC_AXIS_LT || triggerKey == DC_AXIS_RT ||
+			triggerKey == DC_AXIS_LT2 || triggerKey == DC_AXIS_RT2)
 		{
-			DreamcastKey key = input_mapper->get_button_id(port, code);
-			rc = handleButtonInput(port, key, pressed) || rc;
+			// This is a trigger - use the DreamcastKey value as the normalized code
+			// This makes it consistent across different controllers
+			normalizedCode = triggerKey;
+			isTrigger = true;
 		}
 	}
-	else
+	
+	// Track the pressed state for both the raw code and normalized code (for triggers)
+	if (pressed) {
+		pressedButtons[targetPort].insert(code);
+		if (isTrigger)
+			pressedButtons[targetPort].insert(normalizedCode);
+	}
+	else {
+		pressedButtons[targetPort].erase(code);
+		if (isTrigger)
+			pressedButtons[targetPort].erase(normalizedCode);
+	}
+		
+	// First handle individual button mapping (standard behavior)
+	DreamcastKey key = input_mapper->get_button_id(targetPort, code);
+	if (key != EMU_BTN_NONE)
 	{
-		DreamcastKey key = input_mapper->get_button_id(0, code);
-		rc = handleButtonInput(_maple_port, key, pressed);
+		if (_maple_port == 4)
+		{
+			for (int port = 0; port < 4; port++)
+				rc = handleButtonInput(port, key, pressed) || rc;
+		}
+		else
+		{
+			rc = handleButtonInput(_maple_port, key, pressed);
+		}
+	}
+	
+	// Process combinations for both button presses and releases
+	// Special handling for trigger buttons in SDL-based controllers moved up
+	
+	// Process button combinations
+	// We do this separately to ensure both individual buttons AND combinations work
+	for (const auto& pair : input_mapper->get_all_button_combinations(targetPort))
+	{
+		// We only care about combinations with more than one button
+		if (pair.second.buttons.size() <= 1)
+			continue;
+			
+		// Check if this button is part of this combination
+		// Use either the original code or normalized code for triggers
+		bool isInCombo = false;
+		for (u32 comboCode : pair.second.buttons) {
+			if (comboCode == code || (isTrigger && comboCode == normalizedCode)) {
+				isInCombo = true;
+				break;
+			}
+		}
+		if (!isInCombo)
+			continue;
+			
+		// Check if the combination state changed because of this button press/release
+		bool comboPressed = isButtonCombinationPressed(targetPort, pair.second);
+		
+		// Handle the combination state
+		if (_maple_port == 4)
+		{
+			for (int port = 0; port < 4; port++)
+				rc = handleButtonInput(port, pair.first, comboPressed) || rc;
+		}
+		else
+		{
+			rc = handleButtonInput(_maple_port, pair.first, comboPressed) || rc;
+		}
 	}
 
 	return rc;
@@ -214,11 +319,65 @@ bool GamepadDevice::gamepad_axis_input(u32 code, int value)
 			&& getTimeMs() >= _detection_start_time && std::abs(value) >= 16384)
 	{
 		_input_detected(code, true, positive);
+		
+		// If we're in combo detection mode, add this axis to tracking but don't end detection
+		if (_detecting_combo && _detecting_button) {
+			// Track this axis as a "button" for combo detection
+			detectionButtons.insert(code);
+			return true;
+		}
+		
 		_input_detected = nullptr;
 		return true;
 	}
+	// When in combo detection, track button releases for axes too
+	else if (_input_detected != NULL && _detecting_combo && _detecting_axis && _detecting_button 
+			&& getTimeMs() >= _detection_start_time && std::abs(value) < 8192)
+	{
+		// If this is an axis we previously detected as pressed, end detection
+		if (detectionButtons.find(code) != detectionButtons.end()) {
+			_input_detected = nullptr;
+			detectionButtons.clear();
+			DEBUG_LOG(INPUT, "Ending combo detection on axis release: %d", code);
+		}
+	}
+	
 	if (!input_mapper || _maple_port < 0 || _maple_port > 4)
 		return false;
+		
+	// Check if this axis is a trigger (common SDL trigger axes are 2, 3, and 5)
+	bool isTrigger = false;
+	u32 normalizedCode = code;
+	int targetPort = (_maple_port == 4) ? 0 : _maple_port; // Use port 0 for all-ports mode as a base
+	
+	// Axis values over threshold are considered "pressed"
+	bool axisPressed = std::abs(value) >= 16384;
+	
+	// For common SDL trigger axes
+	if (code == 2 || code == 3 || code == 5)
+	{
+		// Check what this axis is mapped to
+		DreamcastKey triggerKey = input_mapper->get_axis_id(targetPort, code, positive);
+		if (triggerKey == DC_AXIS_LT || triggerKey == DC_AXIS_RT ||
+			triggerKey == DC_AXIS_LT2 || triggerKey == DC_AXIS_RT2)
+		{
+			// This is a trigger axis - track both the raw code and the normalized DreamcastKey value
+			normalizedCode = triggerKey;
+			isTrigger = true;
+		}
+	}
+	
+	// Update button pressed tracking for axis (axes can be used in button combos)
+	if (axisPressed) {
+		pressedButtons[targetPort].insert(code);
+		if (isTrigger)
+			pressedButtons[targetPort].insert(normalizedCode);
+	}
+	else {
+		pressedButtons[targetPort].erase(code);
+		if (isTrigger)
+			pressedButtons[targetPort].erase(normalizedCode);
+	}
 
 	auto handle_axis = [&](u32 port, DreamcastKey key, int v)
 	{
@@ -369,6 +528,18 @@ bool GamepadDevice::gamepad_axis_input(u32 code, int value)
 		rc = handle_axis(_maple_port, key, value);
 	}
 
+	// Update axis press tracking for button combinations
+	// We consider an axis "pressed" if its value exceeds a threshold
+	if (std::abs(value) >= 16384) { // Use 50% deflection as "pressed" threshold
+		pressedButtons[targetPort].insert(code);
+		if (isTrigger) // Also insert normalized code for triggers
+			pressedButtons[targetPort].insert(normalizedCode);
+	} else if (std::abs(value) < 8192) { // Use 25% deflection as "released" threshold
+		pressedButtons[targetPort].erase(code);
+		if (isTrigger) // Also remove normalized code for triggers
+			pressedButtons[targetPort].erase(normalizedCode);
+	}
+
 	return rc;
 }
 
@@ -504,6 +675,7 @@ void GamepadDevice::detect_btn_input(input_detected_cb button_pressed)
 	_detecting_button = true;
 	_detecting_axis = false;
 	_detection_start_time = getTimeMs() + 200;
+	detectionButtons.clear();
 }
 
 void GamepadDevice::detect_axis_input(input_detected_cb axis_moved)
@@ -512,6 +684,7 @@ void GamepadDevice::detect_axis_input(input_detected_cb axis_moved)
 	_detecting_button = false;
 	_detecting_axis = true;
 	_detection_start_time = getTimeMs() + 200;
+	detectionButtons.clear();
 }
 
 void GamepadDevice::detectButtonOrAxisInput(input_detected_cb input_changed)
@@ -520,6 +693,8 @@ void GamepadDevice::detectButtonOrAxisInput(input_detected_cb input_changed)
 	_detecting_button = true;
 	_detecting_axis = true;
 	_detection_start_time = getTimeMs() + 200;
+	_detecting_combo = true;
+	detectionButtons.clear();
 }
 
 #ifdef TEST_AUTOMATION
@@ -704,3 +879,57 @@ void replay_input()
 	}
 }
 #endif
+
+bool GamepadDevice::isButtonCombinationPressed(int port, const InputMapping::ButtonCombination& combo)
+{
+	if (combo.buttons.empty())
+		return false;
+		
+	// For a single button, just check if it's pressed
+	if (combo.buttons.size() == 1)
+		return pressedButtons[port].find(combo.buttons[0]) != pressedButtons[port].end();
+		
+	// For combinations, all buttons must be pressed
+	for (u32 code : combo.buttons)
+	{
+		// First check with the actual code
+		if (pressedButtons[port].find(code) != pressedButtons[port].end())
+			continue;
+			
+		// If this is a trigger button, check with the normalized DreamcastKey value
+		if ((code == DC_AXIS_LT || code == DC_AXIS_RT || code == DC_AXIS_LT2 || code == DC_AXIS_RT2))
+		{
+			// Look for possible SDL trigger button codes for this trigger
+			bool found = false;
+			for (u32 possibleCode : {2, 5, 4, 6, 7})
+			{
+				// Check if this button is mapped to our trigger
+				DreamcastKey triggerKey = input_mapper->get_button_id(port, possibleCode);
+				if (triggerKey == code && pressedButtons[port].find(possibleCode) != pressedButtons[port].end())
+				{
+					found = true;
+					break;
+				}
+			}
+			
+			// Also check for SDL axes 3 and 5 (common triggers)
+			if (!found) {
+				for (u32 axisCode : {3, 5}) {
+					// If we have an axis mapping for this trigger, check if the axis is "pressed"
+					if (pressedButtons[port].find(axisCode) != pressedButtons[port].end()) {
+						found = true;
+						break;
+					}
+				}
+			}
+			
+			if (found)
+				continue;
+		}
+		
+		// Button not pressed in any form
+		return false;
+	}
+	
+	return true; // All buttons in the combination are pressed
+}

@@ -26,6 +26,7 @@
 #include <memory>
 #include <mutex>
 #include <vector>
+#include <set>
 
 class GamepadDevice
 {
@@ -46,6 +47,13 @@ public:
 	void detectButtonOrAxisInput(input_detected_cb input_changed);
 	void cancel_detect_input() {
 		_input_detected = nullptr;
+		_detecting_button = false;
+		_detecting_axis = false;
+		_detecting_combo = false;
+		detectionButtons.clear();
+	}
+	bool is_input_detecting() const {
+		return _input_detected != nullptr;
 	}
 	std::shared_ptr<InputMapping> get_input_mapping() { return input_mapper; }
 	void save_mapping(int system = settings.platform.system);
@@ -124,6 +132,9 @@ protected:
 		: _api_name(api_name), _maple_port(maple_port), _input_detected(nullptr), _remappable(remappable),
 		  digitalToAnalogState{}
 	{
+		// Initialize pressedButtons sets
+		for (int i = 0; i < 4; i++)
+			pressedButtons[i].clear();
 	}
 
 	void loadMapping() {
@@ -149,6 +160,12 @@ private:
 	virtual void registered() {}
 	bool handleButtonInput(int port, DreamcastKey key, bool pressed);
 	std::string make_mapping_filename(bool instance, int system, bool perGame = false);
+
+	// Track which buttons are currently pressed (for button combos)
+	std::set<u32> pressedButtons[4];
+	// Track buttons pressed during the current mapping session
+	std::set<u32> detectionButtons;
+	bool isButtonCombinationPressed(int port, const InputMapping::ButtonCombination& combo);
 
 	enum DigAnalog {
 		DIGANA_LEFT   = 1 << 0,
@@ -188,6 +205,7 @@ private:
 	int _maple_port;
 	bool _detecting_button = false;
 	bool _detecting_axis = false;
+	bool _detecting_combo = false;  // For button combination detection
 	u64 _detection_start_time = 0;
 	input_detected_cb _input_detected;
 	bool _remappable;
