@@ -1446,41 +1446,7 @@ struct maple_fishing_controller: maple_sega_controller
 
 	u16 getButtonState(const PlainJoystickState &pjs) override
 	{
-		// Analog to DPad handling
-		if (pjs.joy[PJAI_X1] < 0x30) {
-			analogToDPad &= ~DC_DPAD_LEFT;
-			analogToDPad |= DC_DPAD_RIGHT;
-		}
-		else if (pjs.joy[PJAI_X1] > 0xd0) {
-			analogToDPad &= ~DC_DPAD_RIGHT;
-			analogToDPad |= DC_DPAD_LEFT;
-		}
-		else
-		{
-			if (pjs.joy[PJAI_X1] >= 0x40)
-				analogToDPad |= DC_DPAD_LEFT;
-			if (pjs.joy[PJAI_X1] <= 0xc0)
-				analogToDPad |= DC_DPAD_RIGHT;
-		}
-		if (pjs.joy[PJAI_Y1] < 0x30) {
-			analogToDPad &= ~DC_DPAD_UP;
-			analogToDPad |= DC_DPAD_DOWN;
-		}
-		else if (pjs.joy[PJAI_Y1] > 0xd0) {
-			analogToDPad &= ~DC_DPAD_DOWN;
-			analogToDPad |= DC_DPAD_UP;
-		}
-		else
-		{
-			if (pjs.joy[PJAI_Y1] >= 0x40)
-				analogToDPad |= DC_DPAD_UP;
-			if (pjs.joy[PJAI_Y1] <= 0xc0)
-				analogToDPad |= DC_DPAD_DOWN;
-		}
-		u32 kcode = pjs.kcode & analogToDPad;
-		mutualExclusion(kcode, DC_DPAD_UP   | DC_DPAD_DOWN);
-		mutualExclusion(kcode, DC_DPAD_LEFT | DC_DPAD_RIGHT);
-		return kcode | 0xf901;		// mask off DPad2, D, Z, C;
+		return pjs.kcode;
 	}
 
 	MapleDeviceType get_device_type() override {
@@ -1489,31 +1455,20 @@ struct maple_fishing_controller: maple_sega_controller
 
 	u32 getAnalogAxis(int index, const PlainJoystickState &pjs) override
 	{
-		// In the XYZ axes, acceleration sensor outputs 80 ± 8H (home position)
-		//   in the static state (± 0G), F0h or greater for maximum force (+10G)
-		//   in the positive direction and 11h or less
-		//   for the maximum force (-10G) applied in the negative direction
-		// From the perspective of the player operating the controller:
-		//   X: Right is positive, left is negative
-		//   Y: Down is positive, up is negative
-		//   Z: Forward is positive, backward is negative
-		switch (index)
-		{
-		case 0:
-			return pjs.trigger[PJTI_R];		// A1: Reel handle output
-		case 1:
-			return pjs.joy[PJAI_X3];		// A2: acceleration sensor Z
-		case 2:
-			return pjs.joy[PJAI_X1];		// A3: analog stick X
-		case 3:
-			return pjs.joy[PJAI_Y1];		// A4: analog stick Y
-		case 4:
-			return pjs.joy[PJAI_X2];		// A5: acceleration sensor X
-		case 5:
-			return pjs.joy[PJAI_Y2];		// A6: acceleration sensor Y
-		default:
-			return 0x80;
-		}
+		if (index == 4)
+			return pjs.joy[PJAI_X2];
+		else if (index == 5)
+			return pjs.joy[PJAI_Y2];
+		if (index == 2)
+			return pjs.joy[PJAI_X1];
+		else if (index == 3)
+			return pjs.joy[PJAI_Y1];
+		else if (index == 0)
+			return pjs.trigger[PJTI_R];		// Right trigger
+		else if (index == 1)
+			return pjs.trigger[PJTI_L];		// Left trigger
+		else
+			return 0x80;					// unused
 	}
 
 	const char *get_device_name() override {
@@ -2574,11 +2529,37 @@ void createDreamLinkDevices(std::shared_ptr<DreamLink> dreamlink, bool gameStart
 {
 	const int bus = dreamlink->getBus();
 
-	for (int i = 0; i < 2; ++i)
+	for (int i = 0; i < 5; ++i)
 	{
 		std::shared_ptr<maple_device> dev = MapleDevices[bus][i];
 
-		if ((dreamlink->getFunctionCode(i + 1) & MFID_1_Storage))
+		if ((i == 1 || i == 4) && ((dreamlink->getFunctionCode(i + 1) & MFID_8_Vibration)))
+		{
+			bool rumbleFound = false;
+			std::shared_ptr<DreamLinkPurupuru> rumble;
+			for (const std::shared_ptr<DreamLinkPurupuru>& purupuru : dreamLinkPurupurus)
+			{
+				if (purupuru->dreamlink.get() == dreamlink.get())
+				{
+					rumbleFound = true;
+					rumble = purupuru;
+					break;
+				}
+			}
+
+			if (gameStart || stateLoaded || !rumbleFound)
+			{
+				if (!rumble)
+				{
+					rumble = std::make_shared<DreamLinkPurupuru>(dreamlink);
+				}
+
+				rumble->Setup(bus, i);
+
+				if (!rumbleFound) dreamLinkPurupurus.push_back(rumble);
+			}
+		}
+		else if ((dreamlink->getFunctionCode(i + 1) & MFID_1_Storage))
 		{
 			bool vmuFound = false;
 			std::shared_ptr<DreamLinkVmu> vmu;
@@ -2628,32 +2609,6 @@ void createDreamLinkDevices(std::shared_ptr<DreamLink> dreamlink, bool gameStart
 				if (!vmuFound) {
 					dreamLinkVmus[i].push_back(vmu);
 				}
-			}
-		}
-		else if (i == 1 && ((dreamlink->getFunctionCode(i + 1) & MFID_8_Vibration)))
-		{
-			bool rumbleFound = false;
-			std::shared_ptr<DreamLinkPurupuru> rumble;
-			for (const std::shared_ptr<DreamLinkPurupuru>& purupuru : dreamLinkPurupurus)
-			{
-				if (purupuru->dreamlink.get() == dreamlink.get())
-				{
-					rumbleFound = true;
-					rumble = purupuru;
-					break;
-				}
-			}
-
-			if (gameStart || stateLoaded || !rumbleFound)
-			{
-				if (!rumble)
-				{
-					rumble = std::make_shared<DreamLinkPurupuru>(dreamlink);
-				}
-
-				rumble->Setup(bus, i);
-
-				if (!rumbleFound) dreamLinkPurupurus.push_back(rumble);
 			}
 		}
 	}
