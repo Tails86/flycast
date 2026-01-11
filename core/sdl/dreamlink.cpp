@@ -122,6 +122,7 @@ DreamLinkGamepad::DreamLinkGamepad(int maple_port, int joystick_idx, SDL_Joystic
 	if (dreamlink) {
 		if (DreamLink::isValidPort(maple_port)) {
 			DreamLink::activeDreamLinks[maple_port] = dreamlink;
+			config::MapleMainDevices[maple_port] = MDT_External;
 		}
 
 		_name = dreamlink->getName();
@@ -145,6 +146,9 @@ DreamLinkGamepad::~DreamLinkGamepad() {
 		tearDownDreamLinkDevices(dreamlink);
 		dreamlink.reset();
 		DreamLink::activeDreamLinks[port] = nullptr;
+
+		// TODO: fall back to previously selected
+		config::MapleMainDevices[port] = MDT_SegaController;
 
 		// Make sure settings are open in case disconnection happened mid-game
 		if (!gui_is_open()) {
