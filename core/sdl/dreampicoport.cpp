@@ -1322,27 +1322,18 @@ public:
 		int vmuCount = 0;
 		int vibrationCount = 0;
 
-		if (software_bus >= 0 && static_cast<std::size_t>(software_bus) < config::MapleExpansionDevices.size()) {
+		if (software_bus >= 0 && software_bus < NUM_PORTS) {
 			u32 portOneFn = getFunctionCode(0);
 			if (portOneFn & MFID_1_Storage) {
-				config::MapleExpansionDevices[software_bus][0] = MDT_SegaVMU;
 				++vmuCount;
-			}
-			else {
-				config::MapleExpansionDevices[software_bus][0] = MDT_None;
 			}
 
 			u32 portTwoFn = getFunctionCode(1);
 			if (portTwoFn & MFID_8_Vibration) {
-				config::MapleExpansionDevices[software_bus][1] = MDT_PurupuruPack;
 				++vibrationCount;
 			}
 			else if (portTwoFn & MFID_1_Storage) {
-				config::MapleExpansionDevices[software_bus][1] = MDT_SegaVMU;
 				++vmuCount;
-			}
-			else {
-				config::MapleExpansionDevices[software_bus][1] = MDT_None;
 			}
 		}
 

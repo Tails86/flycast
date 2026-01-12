@@ -315,8 +315,8 @@ private:
 		}
 
 		u8 portFlags = msg.originAP & 0x1f;
-		config::MapleExpansionDevices[bus][0] = expansionDevs[0] = getDevice_no_lock(portFlags, 1 << 0);
-		config::MapleExpansionDevices[bus][1] = expansionDevs[1] = getDevice_no_lock(portFlags, 1 << 1);
+		expansionDevs[0] = getDevice_no_lock(portFlags, 1 << 0);
+		expansionDevs[1] = getDevice_no_lock(portFlags, 1 << 1);
 		return true;
 	}
 
