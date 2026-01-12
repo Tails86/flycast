@@ -22,6 +22,7 @@
 #include <array>
 #include <cmath>
 #include <type_traits>
+#include <initializer_list>
 #include "cfg.h"
 #include "hw/maple/maple_cfg.h"
 #ifdef LIBRETRO
@@ -104,9 +105,11 @@ private:
 template<typename T, bool PerGameOption = true>
 class Option : public BaseOption {
 public:
-	Option(const std::string& name, T defaultValue = T(), const std::string& section = "config")
-		: section(section), name(name), value(defaultValue), defaultValue(defaultValue),
-		  settings(Settings::instance())
+	Option(const std::string& name, T defaultValue = T(), const std::string& section = "config",
+		std::initializer_list<T> nonSavableValues = {}
+	)
+		: kNonSavableValues{nonSavableValues}, section(section), name(name), value(defaultValue),
+		  defaultValue(defaultValue), settings(Settings::instance())
 	{
 		settings.options.push_back(this);
 	}
@@ -130,7 +133,7 @@ public:
 	void save() const override
 	{
 		if (overridden) {
-			if (value == overriddenDefault)
+			if (valueToSave == overriddenDefault)
 				return;
 			if (!settings.hasPerGameConfig())
 				// overridden options can only be saved in per-game settings
@@ -138,7 +141,7 @@ public:
 		}
 		else if (PerGameOption && settings.hasPerGameConfig())
 		{
-			if (value == doLoad(section, name))
+			if (valueToSave == doLoad(section, name))
 			{
 				// delete existing per-game option if any
 				deleteEntry(settings.gameId, section + "." + name);
@@ -152,7 +155,18 @@ public:
 	}
 
 	T& get() { return value; }
-	void set(T v) { value = v; }
+	void set(T v)
+	{
+		value = v;
+		if (std::find(kNonSavableValues.begin(), kNonSavableValues.end(), v) == kNonSavableValues.end())
+			valueToSave = v;
+	}
+
+	//! Reverts value to the last-set "savable" value
+	void revertToSavable()
+	{
+		value = valueToSave;
+	}
 
 	void override(T v)
 	{
@@ -268,14 +282,14 @@ protected:
 	std::enable_if_t<std::is_same_v<U, bool>>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		saveBool(section, name, value);
+		saveBool(section, name, valueToSave);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same<U, int64_t>::value>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		saveInt64(section, name, value);
+		saveInt64(section, name, valueToSave);
 	}
 
 	template <typename U = T>
@@ -283,21 +297,21 @@ protected:
 		&& !std::is_same_v<U, bool> && !std::is_same_v<U, int64_t>>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		saveInt(section, name, (int)value);
+		saveInt(section, name, (int)valueToSave);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same_v<U, std::string>>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		saveStr(section, name, value);
+		saveStr(section, name, valueToSave);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same_v<float, U>>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		saveFloat(section, name, value);
+		saveFloat(section, name, valueToSave);
 	}
 
 	template <typename U = T>
@@ -305,7 +319,7 @@ protected:
 	doSave(const std::string& section, const std::string& name) const
 	{
 		std::string s;
-		for (const auto& v : value)
+		for (const auto& v : valueToSave)
 		{
 			if (!s.empty())
 				s += ';';
@@ -335,9 +349,13 @@ protected:
 		saveStr(section, name, s);
 	}
 
+	//! Vector of non-savable values
+	const std::vector<T> kNonSavableValues;
+
 	std::string section;
 	std::string name;
 	T value;
+	T valueToSave;
 	T defaultValue;
 	T overriddenDefault = T();
 	bool overridden = false;
@@ -549,7 +567,7 @@ extern Option<bool> OmxAudioHdmi;
 extern Option<int> MouseSensitivity;
 extern Option<int> VirtualGamepadVibration;
 extern Option<int> VirtualGamepadTransparency;
-extern std::array<Option<MapleDeviceType>, 4> MapleMainDevices;
+extern std::array<Option<MapleDeviceType, true>, 4> MapleMainDevices;
 extern std::array<std::array<Option<MapleDeviceType>, 2>, 4> MapleExpansionDevices;
 extern std::array<Option<bool>, 4> UseNetworkExpansionDevices;
 extern Option<bool> PerGameVmu;

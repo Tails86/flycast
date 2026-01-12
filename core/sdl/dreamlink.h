@@ -31,6 +31,7 @@
 #include <functional>
 #include <memory>
 #include <array>
+#include <string_view>
 
 struct MapleMsg
 {
@@ -141,7 +142,7 @@ public:
 	virtual void changeBus(int newBus) = 0;
 
 	//! @return the display name of the controller
-	virtual std::string getName() const = 0;
+	virtual const char* getName() const = 0;
 
 	//! Fetch the latest remote device configuration and return 'true' if it changed.
 	//! Caller is responsible for recreating the actual devices.

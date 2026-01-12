@@ -53,7 +53,6 @@ static char *maple_device_types[] =
 	Tnop("Racing Controller"),
 	Tnop("Densha de Go! Controller"),
 	Tnop("Panther DC/Full Controller"),
-	Tnop("External Device"),
 //	Tnop("Dreameye"),
 };
 
@@ -63,7 +62,7 @@ static char *maple_expansion_device_types[] =
 	Tnop("Sega VMU"),
 	Tnop("Vibration Pack"),
 	Tnop("Microphone"),
-	Tnop("External Device"),
+	Tnop("Network Mapped Dev"),
 };
 
 static const char *maple_device_name(MapleDeviceType type)
@@ -94,12 +93,8 @@ static const char *maple_device_name(MapleDeviceType type)
 		return maple_device_types[11];
 	case MDT_SegaControllerXL:
 		return maple_device_types[12];
-
-	case MDT_External:
-		return maple_device_types[13];
-
 	case MDT_Dreameye:
-//		return maple_device_types[14];
+//		return maple_device_types[13];
 	case MDT_None:
 	default:
 		return maple_device_types[0];
@@ -135,8 +130,6 @@ static MapleDeviceType maple_device_type_from_index(int idx)
 	case 12:
 		return MDT_SegaControllerXL;
 	case 13:
-		return MDT_External;
-	case 14:
 		return MDT_Dreameye;
 	case 0:
 	default:
@@ -1083,28 +1076,32 @@ void gui_settings_controls(bool& maple_devices_changed)
 		if (ImGui::BeginTable("dreamcastDevices", 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings,
 				ImVec2(0, 0), uiScaled(8)))
 		{
-			float mainComboWidth = calcComboWidth((const char **)maple_device_types, std::size(maple_device_types));
+			// DreamLink device names for main device
+			const char* dream_link_names[MAPLE_PORTS]{};
 			for (int bus = 0; bus < MAPLE_PORTS; bus++)
 			{
 				const std::shared_ptr<DreamLink>& dl = DreamLink::activeDreamLinks[bus];
-				if (dl)
-				{
-					mainComboWidth = std::max(mainComboWidth, ImGui::CalcTextSize(dl->getName().c_str()).x);
-				}
+				if (dl && dl->isForPhysicalController())
+					dream_link_names[bus] = dl->getName();
+				else
+					dream_link_names[bus] = "";
 			}
+
+			const float mainComboWidth = std::max(
+				calcComboWidth((const char **)maple_device_types, std::size(maple_device_types)),
+				calcComboWidth((const char **)dream_link_names, std::size(dream_link_names))
+			);
 			const float expComboWidth = calcComboWidth((const char **)maple_expansion_device_types, std::size(maple_expansion_device_types));
 
 			for (int bus = 0; bus < MAPLE_PORTS; bus++)
 			{
-				const char* selectedName = maple_device_name(config::MapleMainDevices[bus]);
-				std::string dlName;
-				const std::shared_ptr<DreamLink>& dl = DreamLink::activeDreamLinks[bus];
-				if (dl) dlName = dl->getName();
+				const bool has_dream_link = (*dream_link_names[bus] != '\0');
+				const char* selected_name = nullptr;
 
-				if (config::MapleMainDevices[bus] == MDT_External && !dlName.empty())
-				{
-					selectedName = dlName.c_str();
-				}
+				if (config::MapleMainDevices[bus] == MDT_External && has_dream_link)
+					selected_name = dream_link_names[bus];
+				else
+					selected_name = maple_device_name(config::MapleMainDevices[bus]);
 
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
@@ -1117,24 +1114,33 @@ void gui_settings_controls(bool& maple_devices_changed)
 				ImGui::PushItemWidth(w);
 				ImGui::SetNextItemWidth(mainComboWidth);
 
-				if (ImGui::BeginCombo(device_name, selectedName, ImGuiComboFlags_None))
+				if (ImGui::BeginCombo(device_name, selected_name, ImGuiComboFlags_None))
 				{
 					for (int i = 0; i < IM_ARRAYSIZE(maple_device_types); i++)
 					{
-						if (i != 13 || dl || config::MapleMainDevices[bus] == MDT_External)
+						bool is_selected = config::MapleMainDevices[bus] == maple_device_type_from_index(i);
+						if (ImGui::Selectable(maple_device_types[i], &is_selected))
 						{
-							const char* name = maple_device_types[i];
-							if (i == 13 && !dlName.empty()) name = dlName.c_str();
-							bool is_selected = config::MapleMainDevices[bus] == maple_device_type_from_index(i);
-							if (ImGui::Selectable(name, &is_selected))
-							{
-								config::MapleMainDevices[bus] = maple_device_type_from_index(i);
-								maple_devices_changed = true;
-							}
-							if (is_selected)
-								ImGui::SetItemDefaultFocus();
+							config::MapleMainDevices[bus] = maple_device_type_from_index(i);
+							maple_devices_changed = true;
 						}
+						if (is_selected)
+							ImGui::SetItemDefaultFocus();
 					}
+
+					// Add entry for DreamLink device if hardware is present
+					if (has_dream_link)
+					{
+						const bool is_selected = (config::MapleMainDevices[bus] == MDT_External);
+						if (ImGui::Selectable(dream_link_names[bus], &is_selected))
+						{
+							config::MapleMainDevices[bus] = MDT_External;
+							maple_devices_changed = true;
+						}
+						if (is_selected)
+							ImGui::SetItemDefaultFocus();
+					}
+
 					ImGui::EndCombo();
 				}
 				int port_count = 0;

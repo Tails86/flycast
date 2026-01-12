@@ -1093,12 +1093,15 @@ class DreamPicoPortImp : public DreamPicoPort
 
 	//! Hardware information determined on instantiation
 	const HardwareInfo hw_info;
+	//! Default name to return on getName()
+	const std::string default_name;
 
 public:
     DreamPicoPortImp(int bus, int joystick_idx, SDL_Joystick* sdl_joystick) :
 		DreamPicoPort(),
 		software_bus(bus),
-		hw_info(parseHardwareInfo(joystick_idx, sdl_joystick))
+		hw_info(parseHardwareInfo(joystick_idx, sdl_joystick)),
+		default_name(hw_info.getName())
 	{}
 
 	~DreamPicoPortImp() {
@@ -1250,8 +1253,8 @@ public:
 		}
 	}
 
-	std::string getName() const override {
-		return hw_info.getName();
+	const char* getName() const override {
+		return default_name.c_str();
 	}
 
 	bool needsRefresh() override {
@@ -1347,7 +1350,7 @@ public:
 			INPUT,
 			"Connected to DreamPicoPort[%d]: Type:%s, VMU:%d, Jump Pack:%d",
 			software_bus,
-			getName().c_str(),
+			getName(),
 			vmuCount,
 			vibrationCount
 		);

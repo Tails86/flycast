@@ -147,8 +147,8 @@ DreamLinkGamepad::~DreamLinkGamepad() {
 		dreamlink.reset();
 		DreamLink::activeDreamLinks[port] = nullptr;
 
-		// TODO: fall back to previously selected
-		config::MapleMainDevices[port] = MDT_SegaController;
+		// Reverts to the last item set by the user
+		config::MapleMainDevices[port].revertToSavable();
 
 		// Make sure settings are open in case disconnection happened mid-game
 		if (!gui_is_open()) {
@@ -184,6 +184,8 @@ void DreamLinkGamepad::set_maple_port(int port)
 		// Remove this dreamlink from 'oldPort' and repopulate with the dreamlink for a different gamepad, if any.
 		DreamLink::activeDreamLinks[oldPort] = nullptr;
 
+		bool revertSelectedDevice = true;
+
 		for (int i = 0; i < GamepadDevice::GetGamepadCount(); i++) {
 			DreamLinkGamepad* gamepad = dynamic_cast<DreamLinkGamepad*>(GamepadDevice::GetGamepad(i).get());
 			if (gamepad == nullptr || !gamepad->is_registered() || gamepad->maple_port() != oldPort)
@@ -193,7 +195,13 @@ void DreamLinkGamepad::set_maple_port(int port)
 			assert(gamepad != this);
 			DreamLink::activeDreamLinks[oldPort] = gamepad->dreamlink;
 			gamepad->dreamlink->connect();
+			revertSelectedDevice = false;
+
+			break;
 		}
+
+		if (revertSelectedDevice)
+			config::MapleMainDevices[oldPort].revertToSavable();
 	}
 
 	if (!DreamLink::isValidPort(port)) {
@@ -212,6 +220,7 @@ void DreamLinkGamepad::set_maple_port(int port)
 	}
 
 	DreamLink::activeDreamLinks[port] = dreamlink;
+	config::MapleMainDevices[port] = MDT_External;
 
 	if (is_registered()) {
 		dreamlink->connect();

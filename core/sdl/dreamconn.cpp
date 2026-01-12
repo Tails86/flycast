@@ -163,7 +163,7 @@ public:
 		}
 	}
 
-	std::string getName() const override {
+	const char* getName() const override {
 		return "DreamConn+ / DreamConn S Controller";
 	}
 
@@ -238,7 +238,7 @@ public:
 		iostream.expires_from_now(std::chrono::duration<u32>::max());	// don't use a 64-bit based duration to avoid overflow
 
 		// Remain connected even if no devices were found, so that connecting a device later will be detected
-		NOTICE_LOG(INPUT, "Connected to DreamcastController[%d]: Type:%s, Slot 1: %s, Slot 2: %s", bus, getName().c_str(), deviceDescription(expansionDevs[0]), deviceDescription(expansionDevs[1]));
+		NOTICE_LOG(INPUT, "Connected to DreamcastController[%d]: Type:%s, Slot 1: %s, Slot 2: %s", bus, getName(), deviceDescription(expansionDevs[0]), deviceDescription(expansionDevs[1]));
 	}
 
 	static const char* deviceDescription(MapleDeviceType deviceType) {
