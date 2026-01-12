@@ -109,7 +109,7 @@ public:
 		std::initializer_list<T> nonSavableValues = {}
 	)
 		: kNonSavableValues{nonSavableValues}, section(section), name(name), value(defaultValue),
-		  defaultValue(defaultValue), settings(Settings::instance())
+		  valueToSave(defaultValue), defaultValue(defaultValue), settings(Settings::instance())
 	{
 		settings.options.push_back(this);
 	}
@@ -121,10 +121,10 @@ public:
 
 	void load() override {
 		if (PerGameOption && settings.hasPerGameConfig())
-			set(doLoad(settings.gameId, section + "." + name));
+			loadAndSet(settings.gameId, section + "." + name);
 		else
 		{
-			set(doLoad(section, name));
+			loadAndSet(section, name);
 			if (isTransient(section, name))
 				override(value);
 		}
@@ -172,7 +172,7 @@ public:
 	{
 		overriddenDefault = v;
 		overridden = true;
-		value = v;
+		set(v);
 	}
 	bool isReadOnly() const {
 		return overridden && !settings.hasPerGameConfig();
@@ -183,6 +183,14 @@ public:
 	T& operator=(const T& v) { set(v); return value; }
 
 protected:
+	void loadAndSet(const std::string& section, const std::string& name)
+	{
+		const T loadedValue = doLoad(section, name);
+		// Only set the value if it is a savable value
+		if (std::find(kNonSavableValues.begin(), kNonSavableValues.end(), loadedValue) == kNonSavableValues.end())
+			set(loadedValue);
+	}
+
 	template <typename U = T>
 	std::enable_if_t<std::is_same_v<U, bool>, T>
 	doLoad(const std::string& section, const std::string& name) const
