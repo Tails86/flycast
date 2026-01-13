@@ -195,10 +195,10 @@ Option<int> VirtualGamepadVibration("VirtualGamepadVibration", 20, "input");
 Option<int> VirtualGamepadTransparency("VirtualGamepadTransparency", 37, "input");
 
 std::array<Option<MapleDeviceType, true>, 4> MapleMainDevices {
-	Option<MapleDeviceType, true>("device1", MDT_SegaController, "input", {MDT_External}),
-	Option<MapleDeviceType, true>("device2", MDT_None, "input", {MDT_External}),
-	Option<MapleDeviceType, true>("device3", MDT_None, "input", {MDT_External}),
-	Option<MapleDeviceType, true>("device4", MDT_None, "input", {MDT_External}),
+	Option<MapleDeviceType, true>("device1", MDT_SegaController, "input"),
+	Option<MapleDeviceType, true>("device2", MDT_None, "input"),
+	Option<MapleDeviceType, true>("device3", MDT_None, "input"),
+	Option<MapleDeviceType, true>("device4", MDT_None, "input"),
 };
 std::array<std::array<Option<MapleDeviceType>, 2>, 4> MapleExpansionDevices {{
 	{{Option<MapleDeviceType>("device1.1", MDT_SegaVMU, "input"),

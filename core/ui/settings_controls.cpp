@@ -1098,7 +1098,7 @@ void gui_settings_controls(bool& maple_devices_changed)
 				const bool has_dream_link = (*dream_link_names[bus] != '\0');
 				const char* selected_name = nullptr;
 
-				if (config::MapleMainDevices[bus] == MDT_External && has_dream_link)
+				if (has_dream_link)
 					selected_name = dream_link_names[bus];
 				else
 					selected_name = maple_device_name(config::MapleMainDevices[bus]);
@@ -1114,48 +1114,52 @@ void gui_settings_controls(bool& maple_devices_changed)
 				ImGui::PushItemWidth(w);
 				ImGui::SetNextItemWidth(mainComboWidth);
 
+				if (has_dream_link)
+				{
+					// Using real hardware for this - disable selection
+					ImGui::BeginDisabled();
+				}
+
 				if (ImGui::BeginCombo(device_name, selected_name, ImGuiComboFlags_None))
 				{
-					for (int i = 0; i < IM_ARRAYSIZE(maple_device_types); i++)
+					if (!has_dream_link)
 					{
-						bool is_selected = config::MapleMainDevices[bus] == maple_device_type_from_index(i);
-						if (ImGui::Selectable(maple_device_types[i], &is_selected))
+						for (int i = 0; i < IM_ARRAYSIZE(maple_device_types); i++)
 						{
-							config::MapleMainDevices[bus] = maple_device_type_from_index(i);
-							maple_devices_changed = true;
+							bool is_selected = config::MapleMainDevices[bus] == maple_device_type_from_index(i);
+							if (ImGui::Selectable(maple_device_types[i], &is_selected))
+							{
+								config::MapleMainDevices[bus] = maple_device_type_from_index(i);
+								maple_devices_changed = true;
+							}
+							if (is_selected)
+								ImGui::SetItemDefaultFocus();
 						}
-						if (is_selected)
-							ImGui::SetItemDefaultFocus();
-					}
-
-					// Add entry for DreamLink device if hardware is present
-					if (has_dream_link)
-					{
-						const bool is_selected = (config::MapleMainDevices[bus] == MDT_External);
-						if (ImGui::Selectable(dream_link_names[bus], &is_selected))
-						{
-							config::MapleMainDevices[bus] = MDT_External;
-							maple_devices_changed = true;
-						}
-						if (is_selected)
-							ImGui::SetItemDefaultFocus();
 					}
 
 					ImGui::EndCombo();
 				}
+
 				int port_count = 0;
-				switch (config::MapleMainDevices[bus]) {
-					case MDT_SegaController:
-					case MDT_SegaControllerXL:
-						port_count = 2;
-						break;
-					case MDT_LightGun:
-					case MDT_TwinStick:
-					case MDT_AsciiStick:
-					case MDT_RacingController:
-						port_count = 1;
-						break;
-					default: break;
+				if (has_dream_link)
+				{
+					ImGui::EndDisabled();
+				}
+				else
+				{
+					switch (config::MapleMainDevices[bus]) {
+						case MDT_SegaController:
+						case MDT_SegaControllerXL:
+							port_count = 2;
+							break;
+						case MDT_LightGun:
+						case MDT_TwinStick:
+						case MDT_AsciiStick:
+						case MDT_RacingController:
+							port_count = 1;
+							break;
+						default: break;
+					}
 				}
 				for (int port = 0; port < port_count; port++)
 				{

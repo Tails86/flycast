@@ -22,7 +22,6 @@
 #include <array>
 #include <cmath>
 #include <type_traits>
-#include <initializer_list>
 #include "cfg.h"
 #include "hw/maple/maple_cfg.h"
 #ifdef LIBRETRO
@@ -105,11 +104,9 @@ private:
 template<typename T, bool PerGameOption = true>
 class Option : public BaseOption {
 public:
-	Option(const std::string& name, T defaultValue = T(), const std::string& section = "config",
-		std::initializer_list<T> nonSavableValues = {}
-	)
-		: kNonSavableValues{nonSavableValues}, section(section), name(name), value(defaultValue),
-		  valueToSave(defaultValue), defaultValue(defaultValue), settings(Settings::instance())
+	Option(const std::string& name, T defaultValue = T(), const std::string& section = "config")
+		: section(section), name(name), value(defaultValue), defaultValue(defaultValue),
+		  settings(Settings::instance())
 	{
 		settings.options.push_back(this);
 	}
@@ -121,10 +118,10 @@ public:
 
 	void load() override {
 		if (PerGameOption && settings.hasPerGameConfig())
-			loadAndSet(settings.gameId, section + "." + name);
+			set(doLoad(settings.gameId, section + "." + name));
 		else
 		{
-			loadAndSet(section, name);
+			set(doLoad(section, name));
 			if (isTransient(section, name))
 				override(value);
 		}
@@ -133,7 +130,7 @@ public:
 	void save() const override
 	{
 		if (overridden) {
-			if (valueToSave == overriddenDefault)
+			if (value == overriddenDefault)
 				return;
 			if (!settings.hasPerGameConfig())
 				// overridden options can only be saved in per-game settings
@@ -141,7 +138,7 @@ public:
 		}
 		else if (PerGameOption && settings.hasPerGameConfig())
 		{
-			if (valueToSave == doLoad(section, name))
+			if (value == doLoad(section, name))
 			{
 				// delete existing per-game option if any
 				deleteEntry(settings.gameId, section + "." + name);
@@ -155,24 +152,13 @@ public:
 	}
 
 	T& get() { return value; }
-	void set(T v)
-	{
-		value = v;
-		if (std::find(kNonSavableValues.begin(), kNonSavableValues.end(), v) == kNonSavableValues.end())
-			valueToSave = v;
-	}
-
-	//! Reverts value to the last-set "savable" value
-	void revertToSavable()
-	{
-		value = valueToSave;
-	}
+	void set(T v) { value = v; }
 
 	void override(T v)
 	{
 		overriddenDefault = v;
 		overridden = true;
-		set(v);
+		value = v;
 	}
 	bool isReadOnly() const {
 		return overridden && !settings.hasPerGameConfig();
@@ -183,14 +169,6 @@ public:
 	T& operator=(const T& v) { set(v); return value; }
 
 protected:
-	void loadAndSet(const std::string& section, const std::string& name)
-	{
-		const T loadedValue = doLoad(section, name);
-		// Only set the value if it is a savable value
-		if (std::find(kNonSavableValues.begin(), kNonSavableValues.end(), loadedValue) == kNonSavableValues.end())
-			set(loadedValue);
-	}
-
 	template <typename U = T>
 	std::enable_if_t<std::is_same_v<U, bool>, T>
 	doLoad(const std::string& section, const std::string& name) const
@@ -290,14 +268,14 @@ protected:
 	std::enable_if_t<std::is_same_v<U, bool>>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		saveBool(section, name, valueToSave);
+		saveBool(section, name, value);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same<U, int64_t>::value>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		saveInt64(section, name, valueToSave);
+		saveInt64(section, name, value);
 	}
 
 	template <typename U = T>
@@ -305,21 +283,21 @@ protected:
 		&& !std::is_same_v<U, bool> && !std::is_same_v<U, int64_t>>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		saveInt(section, name, (int)valueToSave);
+		saveInt(section, name, (int)value);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same_v<U, std::string>>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		saveStr(section, name, valueToSave);
+		saveStr(section, name, value);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same_v<float, U>>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		saveFloat(section, name, valueToSave);
+		saveFloat(section, name, value);
 	}
 
 	template <typename U = T>
@@ -327,7 +305,7 @@ protected:
 	doSave(const std::string& section, const std::string& name) const
 	{
 		std::string s;
-		for (const auto& v : valueToSave)
+		for (const auto& v : value)
 		{
 			if (!s.empty())
 				s += ';';
@@ -357,13 +335,9 @@ protected:
 		saveStr(section, name, s);
 	}
 
-	//! Vector of non-savable values
-	const std::vector<T> kNonSavableValues;
-
 	std::string section;
 	std::string name;
 	T value;
-	T valueToSave;
 	T defaultValue;
 	T overriddenDefault = T();
 	bool overridden = false;
@@ -575,7 +549,7 @@ extern Option<bool> OmxAudioHdmi;
 extern Option<int> MouseSensitivity;
 extern Option<int> VirtualGamepadVibration;
 extern Option<int> VirtualGamepadTransparency;
-extern std::array<Option<MapleDeviceType, true>, 4> MapleMainDevices;
+extern std::array<Option<MapleDeviceType>, 4> MapleMainDevices;
 extern std::array<std::array<Option<MapleDeviceType>, 2>, 4> MapleExpansionDevices;
 extern std::array<Option<bool>, 4> UseNetworkExpansionDevices;
 extern Option<bool> PerGameVmu;
