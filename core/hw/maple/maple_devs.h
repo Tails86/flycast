@@ -318,6 +318,7 @@ struct maple_async_base: maple_device
 
 	std::future<std::vector<u32>> RawDma(u32* buffer_in, u32 buffer_in_len) override
 	{
+		inMsg = (const MapleMsg *)buffer_in;
 		dma_buffer_out.clear();
 
 		u32 command=buffer_in[0] &0xFF;
@@ -362,7 +363,11 @@ struct maple_base: maple_async_base
 	}
 
 	virtual u32 dma(u32 cmd) = 0;
+
+	bool relayMapleLink();
 };
+
+void createMapleLinkVmu(int bus, int port);
 
 class jvs_io_board;
 
