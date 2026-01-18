@@ -173,6 +173,12 @@ struct maple_device : public std::enable_shared_from_this<maple_device>
 	virtual void OnSetup() {};
 	virtual ~maple_device();
 
+	//! This allows for the device to be present in software but optionally reconnect over time
+	//! @return true iff currently connected
+	virtual bool connected() {
+		return true;
+	}
+
 	virtual std::future<std::vector<u32>> RawDma(u32* buffer_in, u32 buffer_in_len) = 0;
 
 	virtual void serialize(Serializer& ser) const {
@@ -333,14 +339,6 @@ struct maple_async_base: maple_device
 		return Dma(command, reci, send);
 	}
 
-	bool relayMapleLink();
-};
-
-/*
-	Synchronous base class with dma helpers and stuff
-*/
-struct maple_base: maple_async_base
-{
 	std::future<std::vector<u32>> output_to_future(std::vector<u32>&& output)
 	{
 		std::promise<std::vector<u32>> promiseOutput;
@@ -351,7 +349,15 @@ struct maple_base: maple_async_base
 		return futureOutput;
 	}
 
-	std::future<std::vector<u32>> Dma(u32 Command, u32 reci, u32 send) override final
+	bool relayMapleLink();
+};
+
+/*
+	Synchronous base class with dma helpers and stuff
+*/
+struct maple_base: maple_async_base
+{
+	std::future<std::vector<u32>> Dma(u32 Command, u32 reci, u32 send) override
 	{
 		u32 resp = dma(Command);
 
@@ -367,6 +373,8 @@ struct maple_base: maple_async_base
 	bool relayMapleLink();
 };
 
+void createMapleLinkController(int bus, int port);
+void createMapleLinkDevice(int bus, int port);
 void createMapleLinkVmu(int bus, int port);
 
 class jvs_io_board;

@@ -215,10 +215,16 @@ bool maple_atomiswave_coin_chute(int slot)
 static void mcfg_Create(MapleDeviceType type, u32 bus, u32 port, s32 player_num = -1)
 {
 	MapleDevices[bus][port].reset();
-	if (type == MDT_SegaVMU)
-	{
-		MapleLink::Ptr link = MapleLink::GetMapleLink(bus, port);
-		if (link != nullptr && link->storageEnabled()) {
+	MapleLink::Ptr link = MapleLink::GetMapleLink(bus, port);
+	if (link != nullptr) {
+		if (link->extendedSupportEnabled()) {
+			if (type == MDT_SegaController) {
+				createMapleLinkController(bus, port);
+			} else {
+				createMapleLinkDevice(bus, port);
+			}
+			return;
+		} else if (type == MDT_SegaVMU && link->storageEnabled()) {
 			createMapleLinkVmu(bus, port);
 			return;
 		}

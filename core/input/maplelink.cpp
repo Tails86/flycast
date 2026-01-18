@@ -18,7 +18,7 @@
 #include "cfg/option.h"
 #include "hw/maple/maple_if.h"
 
-std::array<std::array<MapleLink::Ptr, 2>, 4> MapleLink::Links;
+std::array<std::array<MapleLink::Ptr, 6>, 4> MapleLink::Links;
 std::mutex MapleLink::Mutex;
 
 namespace
@@ -78,8 +78,8 @@ bool MapleLink::StorageEnabled()
 	return false;
 }
 
-BaseMapleLink::BaseMapleLink(bool storageSupported)
-	: storageSupported(storageSupported)
+BaseMapleLink::BaseMapleLink(bool extensionsSupported, bool storageSupported)
+	: extensionsSupported(extensionsSupported), storageSupported(storageSupported)
 {
 	EventManager::listen(Event::LoadState, eventLoadState, this);
 	EventManager::listen(Event::Start, eventStart, this);
@@ -114,6 +114,11 @@ void BaseMapleLink::disableStorage()
 	vmuStorage = false;
 	if (isGameStarted())
 		emu.run(maple_ReconnectDevices);
+}
+
+bool BaseMapleLink::extendedSupportEnabled()
+{
+	return extensionsSupported;
 }
 
 bool BaseMapleLink::storageEnabled()

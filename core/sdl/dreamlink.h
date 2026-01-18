@@ -62,7 +62,7 @@ public:
 	virtual void disconnect() = 0;
 
 protected:
-	DreamLink(bool storageSupported = true);
+	DreamLink(bool extensionsSupported = true, bool storageSupported = true);
 	~DreamLink();
 
 private:

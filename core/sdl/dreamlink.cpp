@@ -45,8 +45,8 @@
 #include <setupapi.h>
 #endif
 
-DreamLink::DreamLink(bool storageSupported)
-	: BaseMapleLink(storageSupported)
+DreamLink::DreamLink(bool extensionsSupported, bool storageSupported)
+	: BaseMapleLink(extensionsSupported, storageSupported)
 {
 	EventManager::listen(Event::Terminate, DreamLink::eventTerminate, this);
 }

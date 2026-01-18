@@ -65,7 +65,7 @@ class DreamPotato : public BaseMapleLink
 
 public:
 	DreamPotato(int bus)
-		: BaseMapleLink(true), bus(bus)
+		: BaseMapleLink(true, true), bus(bus)
 	{}
 
 	bool send(const MapleMsg& msg) override;
@@ -79,6 +79,9 @@ public:
 	void disconnect();
 	void init();
 	void term();
+
+	u32 getFunctionCode(int forPort) const override;
+	std::array<u32, 3> getFunctionDefinitions(int forPort) const override;
 };
 
 static std::array<std::shared_ptr<DreamPotato>, 4> Potatoes;
@@ -169,6 +172,18 @@ bool DreamPotato::sendReceive(const MapleMsg& txMsg, MapleMsg& rxMsg)
 		return false;
 	}
 	return true;
+}
+
+u32 DreamPotato::getFunctionCode(int forPort) const
+{
+	return 0x0E000000;
+}
+
+
+std::array<u32, 3> DreamPotato::getFunctionDefinitions(int forPort) const
+{
+	// For clock, LCD, storage
+	return std::array<u32, 3>{0x403f7e7e, 0x00100500, 0x00410f00};
 }
 
 // Instantiate DreamPotato devices where needed and delete the others

@@ -21,6 +21,8 @@
 #include <array>
 #include <memory>
 #include <mutex>
+#include <future>
+#include <vector>
 
 // parent interface of DreamLink and DreamPotato for use by hw/maple
 class MapleLink : public std::enable_shared_from_this<MapleLink>
@@ -34,10 +36,18 @@ public:
 	virtual bool send(const MapleMsg& msg) = 0;
 	//! Sends a message to the controller and waits for a response
 	virtual bool sendReceive(const MapleMsg& txMsg, MapleMsg& rxMsg) = 0;
+	//! True if this maple link supports more than just VMU/purupuru
+	virtual bool extendedSupportEnabled() = 0;
 	//! True if VMU reads and writes should be sent to the device
 	virtual bool storageEnabled() = 0;
 	//! True if the link is operational
 	virtual bool isConnected() = 0;
+    //! @param[in] forPort The port number to get the function code of
+    //! @return the device type for the given port
+    virtual u32 getFunctionCode(int forPort) const = 0;
+    //! @param[in] forPort The port number to get the function definitions of
+	//! @return the 3 function definitions for the supported function codes
+    virtual std::array<u32, 3> getFunctionDefinitions(int forPort) const = 0;
 
 	//! Returns the maple link at the given location if any
 	static Ptr GetMapleLink(int bus, int port) {
@@ -55,22 +65,25 @@ protected:
 
 private:
 	static std::mutex Mutex;
-	static std::array<std::array<Ptr, 2>, 4> Links;
+	static std::array<std::array<Ptr, 6>, 4> Links;
 };
 
 class BaseMapleLink : public MapleLink
 {
 public:
 	~BaseMapleLink();
+	bool extendedSupportEnabled() override;
 	bool storageEnabled() override;
 
 protected:
-	BaseMapleLink(bool storageSupported);
+	BaseMapleLink() = delete;
+	BaseMapleLink(bool extensionsSupported, bool storageSupported);
 	void disableStorage(); // Disable VMU storage for this link
 
 	static void eventStart(Event event, void *p);
 	static void eventLoadState(Event event, void *p);
 
+	const bool extensionsSupported;
 	const bool storageSupported;
 	bool vmuStorage = false;
 };

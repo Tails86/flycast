@@ -251,7 +251,10 @@ static void maple_DoDma()
 			u32 port = getPort(reci);
 			u32 bus = reci >> 6;
 
-			if (MapleDevices[bus][5] && MapleDevices[bus][port])
+			if (
+				MapleDevices[bus][5] && MapleDevices[bus][5]->connected() &&
+				MapleDevices[bus][port] && MapleDevices[bus][port]->connected()
+			)
 			{
 				if (swap_msb)
 				{

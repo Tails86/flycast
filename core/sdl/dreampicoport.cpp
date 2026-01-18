@@ -1035,8 +1035,9 @@ public:
 			return false;
 		}
 		rxMsg.command = rx.packet[0];
-		rxMsg.destAP = rx.packet[1];
-		rxMsg.originAP = rx.packet[2];
+		// Need to convert back to local software bus
+		rxMsg.destAP = (software_bus << 6) | (rx.packet[1] & 0x3F);
+		rxMsg.originAP = (software_bus << 6) | (rx.packet[2] & 0x3F);
 		rxMsg.size = rx.packet[3];
 		if (rx.packet.size() > 4) {
 			memcpy(rxMsg.data, &rx.packet[4], (std::min)(rx.packet.size() - 4, sizeof(rxMsg.data)));
@@ -1160,7 +1161,7 @@ public:
 		}
 	}
 
-    u32 getFunctionCode(int forPort) const {
+    u32 getFunctionCode(int forPort) const override {
 		forPort = fcPortToDppPort(forPort);
 		u32 mask = 0;
 		if ((int)peripherals.size() > forPort) {
@@ -1201,8 +1202,8 @@ public:
 	void changeBus(int newBus) override {
 		if (software_bus == newBus)
 			return;
-		unregisterLink(software_bus, 0);
-		unregisterLink(software_bus, 1);
+		for (int i = 0; i < 6; ++i)
+			unregisterLink(software_bus, i);
 		software_bus = newBus;
 		setMapleDevices();
 		if (dpp_comms) {
@@ -1222,11 +1223,13 @@ public:
 		if (portCount == 0)
 			return;
 
+		for (int i = 0; i < 6; ++i)
+			registerLink(software_bus, i);
+
 		bool needReconnect = false;
 		u32 portOneFn = getFunctionCode(0);
 		if (portOneFn & MFID_1_Storage) {
 			config::MapleExpansionDevices[software_bus][0] = MDT_SegaVMU;
-			registerLink(software_bus, 0);
 			if (storageEnabled()) {
 				sendGameId(0);
 				needReconnect = true;
@@ -1241,11 +1244,9 @@ public:
 			u32 portTwoFn = getFunctionCode(1);
 			if (portTwoFn & MFID_8_Vibration) {
 				config::MapleExpansionDevices[software_bus][1] = MDT_PurupuruPack;
-				registerLink(software_bus, 1);
 			}
 			else if (portTwoFn & MFID_1_Storage) {
 				config::MapleExpansionDevices[software_bus][1] = MDT_SegaVMU;
-				registerLink(software_bus, 1);
 				if (storageEnabled()) {
 					sendGameId(1);
 					needReconnect = true;
@@ -1330,8 +1331,8 @@ public:
 
 	void disconnect() override {
 		dpp_comms.reset();
-		unregisterLink(software_bus, 0);
-		unregisterLink(software_bus, 1);
+		for (int i = 0; i < 6; ++i)
+			unregisterLink(software_bus, i);
 		disableStorage();
 	}
 

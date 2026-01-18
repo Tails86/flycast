@@ -2130,6 +2130,176 @@ std::shared_ptr<maple_device> maple_Create(MapleDeviceType type)
 	return nullptr;
 }
 
+struct MapleLinkDevice : public maple_async_base
+{
+	//! The supported functions mask for this device
+	const u32 supportedFns;
+	//! The last time write was performed
+	std::chrono::steady_clock::time_point lastWriteTime;
+	//! Mutex serializing write operations
+	std::mutex writeMutex;
+
+	//! Constructor
+	//! @param[in] supportedFns Supported functions mask (default: any function)
+	MapleLinkDevice(u32 supportedFns = std::numeric_limits<u32>::max()) : supportedFns(supportedFns)
+	{}
+
+	virtual bool connected() const {
+		auto link = MapleLink::GetMapleLink(bus_id, bus_port);
+		return (
+			link &&
+			link->isConnected() &&
+			((link->getFunctionCode(bus_port) & supportedFns) != 0)
+		);
+	}
+
+	MapleDeviceType get_device_type() override
+	{
+		// This is mainly used by the serializer, so it's ok if it's not completely correct
+
+		auto link = MapleLink::GetMapleLink(bus_id, bus_port);
+		if (!link)
+			return MDT_None;
+
+		u32 fn = link->getFunctionCode(bus_port);
+		if (fn | MFID_0_Input)
+			return MDT_SegaController;
+		else if (fn | (MFID_1_Storage & MFID_2_LCD & MFID_3_Clock))
+			return MDT_SegaVMU;
+		else if (fn | MFID_4_Mic)
+			return MDT_Microphone;
+		else if (fn | (MFID_5_ARGun & MFID_7_LightGun))
+			return MDT_LightGun;
+		else if (fn | MFID_6_Keyboard)
+			return MDT_Keyboard;
+		else if (fn | MFID_8_Vibration)
+			return MDT_PurupuruPack;
+		else if (fn | MFID_9_Mouse)
+			return MDT_Mouse;
+		else if (fn | MFID_11_Camera)
+			return MDT_Dreameye;
+
+		return MDT_None;
+	}
+
+	std::future<std::vector<u32>> Dma(u32 Command, u32 reci, u32 send) override
+	{
+		// Asynchronous action
+		return std::async(
+			std::launch::async,
+			[this, txMsg = *inMsg, Command]() -> std::vector<u32>
+			{
+				std::unique_lock<std::mutex> lock(writeMutex, std::defer_lock);
+
+				// If doing write operation, serialize operation and delay 10 ms between writes
+				const bool isWriteOp = (Command == MDCF_BlockWrite || Command == MDCF_GetLastError);
+				if (isWriteOp) {
+					lock.lock();
+					std::this_thread::sleep_until(lastWriteTime + std::chrono::milliseconds(10));
+				}
+
+				auto link = MapleLink::GetMapleLink(bus_id, bus_port);
+
+				MapleMsg rxMsg;
+				std::vector<u32> output;
+				if (link && link->sendReceive(txMsg, rxMsg)) {
+					// If this message came from a main peripheral, ensure its sub-peripheral flags match locally-known
+					if (rxMsg.originAP & 0x20)
+						rxMsg.originAP = (rxMsg.originAP & 0xE0) | maple_GetAttachedDevices(bus_id);
+
+					// Note: since this is done asynchronously, cannot use w8(), w16(), w32(), or pack_*()
+					output.reserve(rxMsg.size + 1);
+					output.push_back(frame(rxMsg.command, rxMsg.destAP, rxMsg.originAP, rxMsg.getDataSize()));
+					for (u16 i = 0; i < rxMsg.size; ++i) {
+						output.push_back(
+							u32(rxMsg.data[i*4]) |
+							u32(rxMsg.data[i*4+1]) << 8 |
+							u32(rxMsg.data[i*4+2]) << 16 |
+							u32(rxMsg.data[i*4+3]) << 24
+						);
+					}
+				} else {
+					u32 frame = (u32(MDRS_JVSNone) << 0 | u32(inMsg->originAP) << 8 | u32(inMsg->destAP) << 16);
+					output.reserve(1);
+					output.push_back(frame);
+				}
+
+				// If doing write operation, save time at this point
+				if (isWriteOp) {
+					lastWriteTime = std::chrono::steady_clock::now();
+					lock.unlock();
+				}
+
+				return output;
+			}
+		);
+	}
+};
+
+struct MapleLinkController : public MapleLinkDevice
+{
+	//! Constructor
+	//! Only input devices are currently supported here - even lightguns and DreamEye implement MFID_0_Input
+	//! This should support everything except for keyboard & mouse
+	MapleLinkController() : MapleLinkDevice(MFID_0_Input) {}
+
+	MapleDeviceType get_device_type() override
+	{
+		// This is mainly used by the serializer
+		return MDT_SegaController;
+	}
+
+	std::future<std::vector<u32>> Dma(u32 Command, u32 reci, u32 send) override
+	{
+		// Since MDCF_GetCondition gets called very often and is very well defined, handle it here
+		if (Command == MDCF_GetCondition)
+		{
+			std::vector<u32> output;
+
+			PlainJoystickState pjs;
+			config->GetInput(&pjs);
+
+			auto link = MapleLink::GetMapleLink(bus_id, bus_port);
+			if (!link || !link->isConnected())
+			{
+				// Not connected
+				pack_frame(output, MDRS_JVSNone, send, reci);
+			}
+			else
+			{
+				// Function definition is analog/button mask
+				// byte 0: 0  0  0  0  0  0  0  0
+				// byte 1: 0  0  a5 a4 a3 a2 a1 a0
+				// byte 2: R2 L2 D2 U2 D  X  Y  Z
+				// byte 3: R  L  D  U  St A  B  C
+				const u32 fnDef = link->getFunctionDefinitions(bus_port)[0]; // MFID_0_Input def is always at [0]
+
+				// Function
+				w32(MFID_0_Input);
+
+				// state data
+				// 2 key code
+				w16(pjs.kcode | ~(((fnDef >> 8) & 0xFF00) | ((fnDef >> 24) & 0xFF))); // 0==pressed
+
+				// analog axes
+				w8(((fnDef & 0x0100) != 0) ? pjs.trigger[PJTI_R] : 0x80);
+				w8(((fnDef & 0x0200) != 0) ? pjs.trigger[PJTI_L] : 0x80);
+				w8(((fnDef & 0x0400) != 0) ? pjs.joy[PJAI_X1] : 0x80);
+				w8(((fnDef & 0x0800) != 0) ? pjs.joy[PJAI_Y1] : 0x80);
+				w8(((fnDef & 0x1000) != 0) ? pjs.joy[PJAI_X2] : 0x80);
+				w8(((fnDef & 0x2000) != 0) ? pjs.joy[PJAI_Y2] : 0x80);
+
+				pack_frame(output, MDRS_DataTransfer, send, reci);
+				pack_payload(output);
+			}
+
+			return output_to_future(std::move(output));
+		}
+
+		return MapleLinkDevice::Dma(Command, reci, send);
+	}
+};
+
 struct MapleLinkVmu : public maple_sega_vmu
 {
 	bool cachedBlocks[256]; //!< Set to true for block that has been loaded/written
@@ -2253,6 +2423,20 @@ struct MapleLinkVmu : public maple_sega_vmu
 	}
 
 };
+
+void createMapleLinkController(int bus, int port)
+{
+	INFO_LOG(MAPLE, "MapleLinkController created on %d,%d", bus, port);
+	auto ctrlr = std::make_shared<MapleLinkController>();
+	ctrlr->Setup(bus, port);
+}
+
+void createMapleLinkDevice(int bus, int port)
+{
+	INFO_LOG(MAPLE, "MapleLinkDevice created on %d,%d", bus, port);
+	auto dev = std::make_shared<MapleLinkDevice>();
+	dev->Setup(bus, port);
+}
 
 void createMapleLinkVmu(int bus, int port)
 {
