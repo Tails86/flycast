@@ -28,6 +28,7 @@
 #include <SDL.h>
 #include <iomanip>
 #include <sstream>
+#include <locale>
 #include <mutex>
 
 #if defined(__linux__) || (defined(__APPLE__) && defined(TARGET_OS_MAC))
@@ -37,6 +38,7 @@
 static asio::error_code sendMsg(const MapleMsg& msg, asio::ip::tcp::iostream& stream)
 {
 	std::ostringstream s;
+	s.imbue(std::locale::classic());
 	s.fill('0');
 	s << std::hex << std::uppercase
 		<< std::setw(2) << (u32)msg.command << " "
@@ -161,7 +163,7 @@ public:
 		}
 	}
 
-	std::string getName() const override {
+	const char* getName() const override {
 		return "DreamConn+ / DreamConn S Controller";
 	}
 
@@ -236,7 +238,7 @@ public:
 		iostream.expires_from_now(std::chrono::duration<u32>::max());	// don't use a 64-bit based duration to avoid overflow
 
 		// Remain connected even if no devices were found, so that connecting a device later will be detected
-		NOTICE_LOG(INPUT, "Connected to DreamcastController[%d]: Type:%s, Slot 1: %s, Slot 2: %s", bus, getName().c_str(), deviceDescription(expansionDevs[0]), deviceDescription(expansionDevs[1]));
+		NOTICE_LOG(INPUT, "Connected to DreamcastController[%d]: Type:%s, Slot 1: %s, Slot 2: %s", bus, getName(), deviceDescription(expansionDevs[0]), deviceDescription(expansionDevs[1]));
 	}
 
 	static const char* deviceDescription(MapleDeviceType deviceType) {
@@ -313,8 +315,8 @@ private:
 		}
 
 		u8 portFlags = msg.originAP & 0x1f;
-		config::MapleExpansionDevices[bus][0] = expansionDevs[0] = getDevice_no_lock(portFlags, 1 << 0);
-		config::MapleExpansionDevices[bus][1] = expansionDevs[1] = getDevice_no_lock(portFlags, 1 << 1);
+		expansionDevs[0] = getDevice_no_lock(portFlags, 1 << 0);
+		expansionDevs[1] = getDevice_no_lock(portFlags, 1 << 1);
 		return true;
 	}
 

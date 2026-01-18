@@ -189,6 +189,8 @@ void DreamLinkGamepad::set_maple_port(int port)
 			assert(gamepad != this);
 			DreamLink::activeDreamLinks[oldPort] = gamepad->dreamlink;
 			gamepad->dreamlink->connect();
+
+			break;
 		}
 	}
 

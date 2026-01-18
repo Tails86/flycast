@@ -26,8 +26,8 @@
 #include "vgamepad.h"
 #include "oslib/storage.h"
 
-#if defined(USE_SDL)
-#include "sdl/dreamlink.h" // For USE_DREAMCASTCONTROLLER
+#if defined(USE_DREAMLINK_DEVICES)
+#include "sdl/dreamlink.h"
 #endif
 
 static float calcComboWidth(const char *labels[], size_t size)
@@ -62,6 +62,7 @@ static char *maple_expansion_device_types[] =
 	Tnop("Sega VMU"),
 	Tnop("Vibration Pack"),
 	Tnop("Microphone"),
+	Tnop("Network Mapped Dev"),
 };
 
 static const char *maple_device_name(MapleDeviceType type)
@@ -146,6 +147,8 @@ static const char *maple_expansion_device_name(MapleDeviceType type)
 		return maple_expansion_device_types[2];
 	case MDT_Microphone:
 		return maple_expansion_device_types[3];
+	case MDT_External:
+		return maple_expansion_device_types[4];
 	case MDT_None:
 	default:
 		return maple_expansion_device_types[0];
@@ -300,6 +303,8 @@ static MapleDeviceType maple_expansion_device_type_from_index(int idx)
 		return MDT_PurupuruPack;
 	case 3:
 		return MDT_Microphone;
+	case 4:
+		return MDT_External;
 	case 0:
 	default:
 		return MDT_None;
@@ -732,7 +737,7 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 
 		char key_id[32];
 
-		ImGui::BeginChild(ImGui::GetID("buttons"), ImVec2(0, 0), ImGuiChildFlags_FrameStyle, ImGuiWindowFlags_DragScrolling | ImGuiWindowFlags_NavFlattened);
+		ImGui::BeginChild(ImGui::GetID("buttons"), ImVec2(0, 0), ImGuiChildFlags_FrameStyle, ImGuiWindowFlags_DragScrolling | ImGuiChildFlags_NavFlattened);
 
 		for (; systemMapping->name != nullptr; systemMapping++)
 		{
@@ -1071,11 +1076,33 @@ void gui_settings_controls(bool& maple_devices_changed)
 		if (ImGui::BeginTable("dreamcastDevices", 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings,
 				ImVec2(0, 0), uiScaled(8)))
 		{
-			const float mainComboWidth = calcComboWidth((const char **)maple_device_types, std::size(maple_device_types));
+			// DreamLink device names for main device
+			const char* dream_link_names[MAPLE_PORTS]{};
+			for (int bus = 0; bus < MAPLE_PORTS; bus++)
+			{
+				const std::shared_ptr<DreamLink>& dl = DreamLink::activeDreamLinks[bus];
+				if (dl && dl->isForPhysicalController())
+					dream_link_names[bus] = dl->getName();
+				else
+					dream_link_names[bus] = "";
+			}
+
+			const float mainComboWidth = std::max(
+				calcComboWidth((const char **)maple_device_types, std::size(maple_device_types)),
+				calcComboWidth((const char **)dream_link_names, std::size(dream_link_names))
+			);
 			const float expComboWidth = calcComboWidth((const char **)maple_expansion_device_types, std::size(maple_expansion_device_types));
 
 			for (int bus = 0; bus < MAPLE_PORTS; bus++)
 			{
+				const bool has_dream_link = (*dream_link_names[bus] != '\0');
+				const char* selected_name = nullptr;
+
+				if (has_dream_link)
+					selected_name = dream_link_names[bus];
+				else
+					selected_name = maple_device_name(config::MapleMainDevices[bus]);
+
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
 				ImGui::Text(T("Port %c"), bus + 'A');
@@ -1086,34 +1113,53 @@ void gui_settings_controls(bool& maple_devices_changed)
 				float w = ImGui::CalcItemWidth() / 3;
 				ImGui::PushItemWidth(w);
 				ImGui::SetNextItemWidth(mainComboWidth);
-				if (ImGui::BeginCombo(device_name, maple_device_name(config::MapleMainDevices[bus]), ImGuiComboFlags_None))
+
+				if (has_dream_link)
 				{
-					for (int i = 0; i < IM_ARRAYSIZE(maple_device_types); i++)
+					// Using real hardware for this - disable selection
+					ImGui::BeginDisabled();
+				}
+
+				if (ImGui::BeginCombo(device_name, selected_name, ImGuiComboFlags_None))
+				{
+					if (!has_dream_link)
 					{
-						bool is_selected = config::MapleMainDevices[bus] == maple_device_type_from_index(i);
-						if (ImGui::Selectable(maple_device_types[i], &is_selected))
+						for (int i = 0; i < IM_ARRAYSIZE(maple_device_types); i++)
 						{
-							config::MapleMainDevices[bus] = maple_device_type_from_index(i);
-							maple_devices_changed = true;
+							bool is_selected = config::MapleMainDevices[bus] == maple_device_type_from_index(i);
+							if (ImGui::Selectable(maple_device_types[i], &is_selected))
+							{
+								config::MapleMainDevices[bus] = maple_device_type_from_index(i);
+								maple_devices_changed = true;
+							}
+							if (is_selected)
+								ImGui::SetItemDefaultFocus();
 						}
-						if (is_selected)
-							ImGui::SetItemDefaultFocus();
 					}
+
 					ImGui::EndCombo();
 				}
+
 				int port_count = 0;
-				switch (config::MapleMainDevices[bus]) {
-					case MDT_SegaController:
-					case MDT_SegaControllerXL:
-						port_count = 2;
-						break;
-					case MDT_LightGun:
-					case MDT_TwinStick:
-					case MDT_AsciiStick:
-					case MDT_RacingController:
-						port_count = 1;
-						break;
-					default: break;
+				if (has_dream_link)
+				{
+					ImGui::EndDisabled();
+				}
+				else
+				{
+					switch (config::MapleMainDevices[bus]) {
+						case MDT_SegaController:
+						case MDT_SegaControllerXL:
+							port_count = 2;
+							break;
+						case MDT_LightGun:
+						case MDT_TwinStick:
+						case MDT_AsciiStick:
+						case MDT_RacingController:
+							port_count = 1;
+							break;
+						default: break;
+					}
 				}
 				for (int port = 0; port < port_count; port++)
 				{
@@ -1172,19 +1218,7 @@ void gui_settings_controls(bool& maple_devices_changed)
 					is_there_any_xhair |= enabled;
 				}
 
-#ifdef USE_DREAMLINK_DEVICES
-				if (port_count > 0)
-				{
-					ImGui::SameLine();
-					ImGui::PushID(bus);
-					bool pressed = OptionCheckbox(T("Use Network Expansion Devices"), config::UseNetworkExpansionDevices[bus],
-							T("Connect to expansion devices such as VMUs over local TCP."));
-					ImGui::PopID();
 
-					if (pressed)
-						maple_devices_changed = true;
-				}
-#endif
 
 				ImGui::PopItemWidth();
 			}

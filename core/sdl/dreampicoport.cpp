@@ -533,6 +533,7 @@ private:
 		u8 hwOriginAP = (hardware_bus << 6) | (msg.originAP & 0x3F);
 
 		std::ostringstream s;
+		s.imbue(std::locale::classic());
 		s << "X "; // 'X' prefix triggers flycast command parser
 		s.fill('0');
 		s << std::hex << std::uppercase
@@ -794,6 +795,7 @@ public:
 							}
 							uint32_t value;
 							std::stringstream ss;
+							ss.imbue(std::locale::classic());
 							ss << std::hex << number;
 							ss >> value;
 							if (idx < 2) {
@@ -874,6 +876,7 @@ public:
 	void sendPort(std::chrono::milliseconds timeout_ms) override {
 		// This will update the displayed port letter on the screen
 		std::ostringstream s;
+		s.imbue(std::locale::classic());
 		s << "XP "; // XP is flycast "set port" command
 		s << hardware_bus << " " << software_bus << "\n";
 		serial->sendCmd(s.str(), timeout_ms);
@@ -1090,12 +1093,15 @@ class DreamPicoPortImp : public DreamPicoPort
 
 	//! Hardware information determined on instantiation
 	const HardwareInfo hw_info;
+	//! Default name to return on getName()
+	const std::string default_name;
 
 public:
     DreamPicoPortImp(int bus, int joystick_idx, SDL_Joystick* sdl_joystick) :
 		DreamPicoPort(),
 		software_bus(bus),
-		hw_info(parseHardwareInfo(joystick_idx, sdl_joystick))
+		hw_info(parseHardwareInfo(joystick_idx, sdl_joystick)),
+		default_name(hw_info.getName())
 	{}
 
 	~DreamPicoPortImp() {
@@ -1247,8 +1253,8 @@ public:
 		}
 	}
 
-	std::string getName() const override {
-		return hw_info.getName();
+	const char* getName() const override {
+		return default_name.c_str();
 	}
 
 	bool needsRefresh() override {
@@ -1316,27 +1322,18 @@ public:
 		int vmuCount = 0;
 		int vibrationCount = 0;
 
-		if (software_bus >= 0 && static_cast<std::size_t>(software_bus) < config::MapleExpansionDevices.size()) {
+		if (software_bus >= 0 && software_bus < NUM_PORTS) {
 			u32 portOneFn = getFunctionCode(0);
 			if (portOneFn & MFID_1_Storage) {
-				config::MapleExpansionDevices[software_bus][0] = MDT_SegaVMU;
 				++vmuCount;
-			}
-			else {
-				config::MapleExpansionDevices[software_bus][0] = MDT_None;
 			}
 
 			u32 portTwoFn = getFunctionCode(1);
 			if (portTwoFn & MFID_8_Vibration) {
-				config::MapleExpansionDevices[software_bus][1] = MDT_PurupuruPack;
 				++vibrationCount;
 			}
 			else if (portTwoFn & MFID_1_Storage) {
-				config::MapleExpansionDevices[software_bus][1] = MDT_SegaVMU;
 				++vmuCount;
-			}
-			else {
-				config::MapleExpansionDevices[software_bus][1] = MDT_None;
 			}
 		}
 
@@ -1344,7 +1341,7 @@ public:
 			INPUT,
 			"Connected to DreamPicoPort[%d]: Type:%s, VMU:%d, Jump Pack:%d",
 			software_bus,
-			getName().c_str(),
+			getName(),
 			vmuCount,
 			vibrationCount
 		);

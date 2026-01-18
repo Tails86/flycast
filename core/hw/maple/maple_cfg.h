@@ -24,6 +24,7 @@ enum MapleDeviceType
 	MDT_DenshaDeGoController = 16,
 	MDT_Dreameye             = 17,
 	MDT_SegaControllerXL     = 18,
+	MDT_External             = 19,
 	MDT_Count
 };
 
