@@ -48,7 +48,6 @@
 #include "hw/maple/maple_if.h"
 #if defined(USE_SDL)
 #include "sdl/sdl.h"
-#include "sdl/dreamlink.h"
 #endif
 #include "vgamepad.h"
 #include "settings.h"
@@ -693,10 +692,6 @@ void gui_stop_game(const std::string& message)
 	}
 }
 
-static bool savestateAllowed() {
-	return !settings.content.path.empty() && !settings.network.online && !settings.naomi.multiboard;
-}
-
 static void appendVectorData(void *context, void *data, int size)
 {
 	std::vector<u8>& v = *(std::vector<u8> *)context;
@@ -817,56 +812,6 @@ static void gui_display_commands()
 				card_reader::barcodeSetCard(cardBuf);
 		}
 
-#if defined(USE_DREAMLINK_DEVICES)
-		// DreamLink connection status
-		bool hasAnyDreamLinks = false;
-		bool hasDisconnectedDreamLink = false;
-		for (auto& dreamlink : DreamLink::activeDreamLinks)
-		{
-			if (dreamlink && !dreamlink->isForPhysicalController())
-			{
-				hasAnyDreamLinks = true;
-				if (!dreamlink->isConnected())
-					hasDisconnectedDreamLink = true;
-			}
-
-			if (hasAnyDreamLinks && hasDisconnectedDreamLink)
-				break;
-		}
-
-		if (hasAnyDreamLinks)
-		{
-			if (hasDisconnectedDreamLink)
-			{
-				if (ImGui::Button(T("Connect DreamLink"), ScaledVec2(buttonWidth, 50)))
-				{
-					if (reconnectDreamLinks())
-						maple_ReconnectDevices();
-				}
-			}
-			else
-			{
-				if (ImGui::Button(T("Disconnect\nDreamLink"), ScaledVec2(buttonWidth, 50)))
-				{
-					for (auto& dreamlink : DreamLink::activeDreamLinks)
-					{
-						if (dreamlink)
-							dreamlink->disconnect();
-					}
-				}
-			}
-
-			for (int i = 0; i < 4; i++)
-			{
-				auto dreamlink = DreamLink::activeDreamLinks[i];
-				if (dreamlink)
-				{
-					ImGui::Text("%s %c: %s", T("Port"), 'A' + i, dreamlink->isConnected() ? T("Connected") : T("Disconnected"));
-				}
-			}
-		}
-#endif
-
 		ImGui::NextColumn();
 
 		// Insert/Eject Disk
@@ -891,14 +836,14 @@ static void gui_display_commands()
 
 		ImGui::NextColumn();
 		{
-			DisabledScope _{!savestateAllowed()};
+			DisabledScope _{!dc_savestateAllowed()};
 			ImguiStateTexture savestatePic;
 			time_t savestateDate = dc_getStateCreationDate(config::SavestateSlot);
 
 			// Load State
 			{
 				DisabledScope _{settings.raHardcoreMode || savestateDate == 0};
-				if (IconButton(ICON_FA_CLOCK_ROTATE_LEFT, T("Load State"), ScaledVec2(buttonWidth, 50)).realize() && savestateAllowed())
+				if (IconButton(ICON_FA_CLOCK_ROTATE_LEFT, T("Load State"), ScaledVec2(buttonWidth, 50)).realize() && dc_savestateAllowed())
 				{
 					gui_setState(GuiState::Closed);
 					dc_loadstate(config::SavestateSlot);
@@ -906,7 +851,7 @@ static void gui_display_commands()
 			}
 
 			// Save State
-			if (IconButton(ICON_FA_DOWNLOAD, T("Save State"), ScaledVec2(buttonWidth, 50)).realize() && savestateAllowed())
+			if (IconButton(ICON_FA_DOWNLOAD, T("Save State"), ScaledVec2(buttonWidth, 50)).realize() && dc_savestateAllowed())
 			{
 				gui_setState(GuiState::Closed);
 				savestate();
@@ -1800,7 +1745,7 @@ void gui_error(const std::string& what) {
 void gui_loadState()
 {
 	const LockGuard lock(guiMutex);
-	if (gui_state == GuiState::Closed && savestateAllowed())
+	if (gui_state == GuiState::Closed && dc_savestateAllowed())
 	{
 		try {
 			emu.stop();
@@ -1815,7 +1760,7 @@ void gui_loadState()
 void gui_saveState(bool stopRestart)
 {
 	const LockGuard lock(guiMutex);
-	if ((gui_state == GuiState::Closed || !stopRestart) && savestateAllowed())
+	if ((gui_state == GuiState::Closed || !stopRestart) && dc_savestateAllowed())
 	{
 		try {
 			if (stopRestart)
