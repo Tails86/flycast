@@ -37,7 +37,7 @@ class DreamLink : public BaseMapleLink
 {
 public:
 	//! Number of physical dreamcast ports
-	static constexpr int NUM_PORTS = 4;
+	static constexpr int NUM_PORTS = MAPLE_PORTS;
 
 	//! Check if a given port is valid
 	//! @param[in] port The dreamcast port index to test
