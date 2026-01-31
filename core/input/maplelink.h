@@ -46,6 +46,10 @@ public:
 	//! @return number of active links made for this MapleLink on the given bus
 	std::size_t activeLinkCount(int bus) const;
 
+	//! Create the maple device needed to interface this device to the emulator
+	//! @param[in] type The user-selected device type
+	virtual std::shared_ptr<maple_device> createMapleDevice(MapleDeviceType type) = 0;
+
 	//! Returns the maple link at the given location if any
 	static Ptr GetMapleLink(int bus, int port) {
 		std::lock_guard<std::mutex> _(Mutex);
@@ -85,6 +89,8 @@ protected:
 	virtual void gameStarted();
 	//! When called, do teardown stuff (vmu screen reset is handled by maple_sega_vmu)
 	virtual void gameTermination() {}
+
+	std::shared_ptr<maple_device> createMapleDevice(MapleDeviceType type) override;
 
 	const bool storageSupported;
 	bool vmuStorage = false;
