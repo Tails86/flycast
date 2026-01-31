@@ -216,15 +216,18 @@ static void mcfg_Create(MapleDeviceType type, u32 bus, u32 port, s32 player_num 
 {
 	if (MapleDevices[bus][port] != nullptr)
 		return;
-	if (type == MDT_SegaVMU)
+
+	std::shared_ptr<maple_device> dev;
+	MapleLink::Ptr link = MapleLink::GetMapleLink(bus, port);
+	if (link)
 	{
-		MapleLink::Ptr link = MapleLink::GetMapleLink(bus, port);
-		if (link != nullptr && link->storageEnabled()) {
-			createMapleLinkVmu(bus, port);
-			return;
-		}
+		INFO_LOG(MAPLE, "MapleLinkVmu created on %d,%d", bus, port);
+		dev = link->createMapleDevice(type);
 	}
-	std::shared_ptr<maple_device> dev = maple_Create(type);
+	else
+	{
+		dev = maple_Create(type);
+	}
 	dev->Setup(bus, port, player_num);
 }
 
