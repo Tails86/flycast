@@ -26,8 +26,9 @@
 #include "vgamepad.h"
 #include "oslib/storage.h"
 
-#if defined(USE_SDL)
-#include "sdl/dreamlink.h" // For USE_DREAMCASTCONTROLLER
+#include "input/maplelinkregistry.h"
+#if defined(USE_DREAMLINK_DEVICES)
+#include "sdl/dreamlink/dreamlinkgamepad.h"
 #endif
 
 static float calcComboWidth(const char *labels[], size_t size)
@@ -58,6 +59,7 @@ static char *maple_device_types[] =
 };
 
 constexpr int MDT_DreamPotato = 100;
+constexpr int MDT_DreamLink = 101;
 
 static char *maple_expansion_device_types[] =
 {
@@ -66,6 +68,7 @@ static char *maple_expansion_device_types[] =
 	Tnop("Vibration Pack"),
 	Tnop("Microphone"),
 	Tnop("DreamPotato"),
+	Tnop("DreamLink"), // not shown unless a DreamLink controller is present
 };
 
 static const char *maple_device_name(MapleDeviceType type)
@@ -156,6 +159,8 @@ static const char *maple_expansion_device_name(MapleDeviceType type)
 		return maple_expansion_device_types[3];
 	case MDT_DreamPotato:
 		return maple_expansion_device_types[4];
+	case MDT_DreamLink:
+		return maple_expansion_device_types[5];
 	case MDT_None:
 	default:
 		return maple_expansion_device_types[0];
@@ -316,6 +321,8 @@ static MapleDeviceType maple_expansion_device_type_from_index(int idx)
 		return MDT_Microphone;
 	case 4:
 		return (MapleDeviceType)MDT_DreamPotato;
+	case 5:
+		return (MapleDeviceType)MDT_DreamLink;
 	case 0:
 	default:
 		return MDT_None;
@@ -1073,11 +1080,33 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 		if (ImGui::BeginTable("dreamcastDevices", 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings,
 				ImVec2(0, 0), uiScaled(8)))
 		{
-			const float mainComboWidth = calcComboWidth((const char **)maple_device_types, std::size(maple_device_types));
+			// DreamLink device names for main device
+			const char* dream_link_names[MAPLE_PORTS]{};
+			for (int bus = 0; bus < MAPLE_PORTS; bus++)
+			{
+				auto link = MapleLinkRegistry::GetMapleLink(bus, MAPLE_MAIN_DEV_IDX); // Registered controller, if any
+				if (link)
+					dream_link_names[bus] = link->dreamlink->getName();
+				else
+					dream_link_names[bus] = "";
+			}
+
+			const float mainComboWidth = std::max(
+				calcComboWidth((const char **)maple_device_types, std::size(maple_device_types)),
+				calcComboWidth((const char **)dream_link_names, std::size(dream_link_names))
+			);
 			const float expComboWidth = calcComboWidth((const char **)maple_expansion_device_types, std::size(maple_expansion_device_types));
 
 			for (int bus = 0; bus < MAPLE_PORTS; bus++)
 			{
+				const bool has_dream_link = (*dream_link_names[bus] != '\0');
+				const char* selected_name = nullptr;
+
+				if (has_dream_link)
+					selected_name = dream_link_names[bus];
+				else
+					selected_name = maple_device_name(config::MapleMainDevices[bus]);
+
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
 				ImGui::Text(T("Port %c"), bus + 'A');
@@ -1088,7 +1117,14 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 				float w = ImGui::CalcItemWidth() / 3;
 				ImGui::PushItemWidth(w);
 				ImGui::SetNextItemWidth(mainComboWidth);
-				if (ImGui::BeginCombo(device_name, maple_device_name(config::MapleMainDevices[bus]), ImGuiComboFlags_None))
+
+				if (has_dream_link)
+				{
+					// Using real hardware for this - disable selection
+					ImGui::BeginDisabled();
+				}
+
+				if (ImGui::BeginCombo(device_name, selected_name, ImGuiComboFlags_None))
 				{
 					for (int i = 0; i < IM_ARRAYSIZE(maple_device_types); i++)
 					{
@@ -1103,30 +1139,61 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 					}
 					ImGui::EndCombo();
 				}
-				int port_count = maple_getPortCount(config::MapleMainDevices[bus]);
+
+				int port_count = 0;
+				int port_type_count = 0;
+				if (has_dream_link)
+				{
+					ImGui::EndDisabled();
+					port_count = 2;
+					port_type_count = IM_ARRAYSIZE(maple_expansion_device_types);
+				}
+				else
+				{
+					port_count = maple_getPortCount(config::MapleMainDevices[bus]);
+					// Remove DreamLink as an option
+					port_type_count = IM_ARRAYSIZE(maple_expansion_device_types) - 1;
+				}
+
 				for (int port = 0; port < port_count; port++)
 				{
+					const bool port_has_dream_link = has_dream_link && (MapleLinkRegistry::GetMapleLink(bus, port) != std::nullopt);
+
 					ImGui::TableSetColumnIndex(2 + port);
 					snprintf(device_name, sizeof(device_name), "##device%d.%d", bus, port + 1);
 					ImguiID _(device_name);
 					ImGui::SetNextItemWidth(expComboWidth);
 					int subtype = config::MapleExpansionDevices[bus][port];
-					if (subtype == MDT_SegaVMU && config::NetworkExpansionDevices[bus][port] == 1)
+					if (subtype == MDT_SegaVMU && config::NetworkExpansionDevices[bus][port] == 1) {
 						subtype = MDT_DreamPotato;
+					}
+					else if (port_has_dream_link && (config::DreamLinkSelect[bus][port])) {
+						subtype = MDT_DreamLink;
+					}
+
 					if (ImGui::BeginCombo(device_name, maple_expansion_device_name((MapleDeviceType)subtype), ImGuiComboFlags_None))
 					{
-						for (int i = 0; i < IM_ARRAYSIZE(maple_expansion_device_types); i++)
+						for (int i = 0; i < port_type_count; i++)
 						{
 							bool is_selected = subtype == maple_expansion_device_type_from_index(i);
 							if (ImGui::Selectable(maple_expansion_device_types[i], &is_selected))
 							{
 								subtype = maple_expansion_device_type_from_index(i);
+								if (subtype == MDT_DreamLink) {
+									config::DreamLinkSelect[bus][port] = true;
+								}
+								else if (port_has_dream_link) {
+									config::DreamLinkSelect[bus][port] = false;
+								}
+
 								if (subtype == MDT_DreamPotato) {
 									config::MapleExpansionDevices[bus][port] = MDT_SegaVMU;
 									config::NetworkExpansionDevices[bus][port] = 1;
 								}
 								else {
-									config::MapleExpansionDevices[bus][port] = (MapleDeviceType)subtype;
+									if (subtype != MDT_DreamLink) {
+										config::MapleExpansionDevices[bus][port] = (MapleDeviceType)subtype;
+									}
 									config::NetworkExpansionDevices[bus][port] = 0;
 								}
 								expDevicesChanges[bus][port] = true;

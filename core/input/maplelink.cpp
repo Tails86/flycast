@@ -15,164 +15,95 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "maplelink.h"
+#include "maplelinkregistry.h"
 #include "cfg/option.h"
 #include "hw/maple/maple_if.h"
+#include "hw/maple/maple_devs.h"
+#include "oslib/oslib.h"
 
-std::array<std::array<std::list<MapleLink::Ptr>, 2>, 4> MapleLink::Links;
-std::mutex MapleLink::Mutex;
+#include <memory>
 
-namespace
+MapleLink::MapleLink(const DreamLink::Ptr& dreamlink, u32 bus, u32 port) :
+	dreamlink(dreamlink),
+	bus(bus),
+	port(port)
+{}
+
+MapleLink::MapleLink(DreamLink::Ptr&& dreamlink, u32 bus, u32 port) :
+	dreamlink(std::move(dreamlink)),
+	bus(bus),
+	port(port)
+{}
+
+bool MapleLink::send(const MapleMsg& msg)
 {
-struct GameState
-{
-	GameState()
-	{
-		EventManager::listen(Event::Start, [](Event, void*) {
-			started = true;
-		});
-		EventManager::listen(Event::Terminate, [](Event, void*) {
-			started = false;
-		});
-	}
-	static bool started;
-	static GameState instance;
-};
-bool GameState::started;
-GameState GameState::instance;
+	return dreamlink->send(msg);
 }
 
-std::size_t MapleLink::activeLinkCount(int bus) const
+bool MapleLink::sendReceive(const MapleMsg& txMsg, MapleMsg& rxMsg)
 {
-	std::size_t count = 0;
-	if (bus >= 0 && bus < (int)Links.size())
-	{
-		std::lock_guard<std::mutex> _(Mutex);
-		for (const std::list<MapleLink::Ptr>& list : Links[bus]) {
-			if (!list.empty() && list.front().get() == this)
-				++count;
-		}
-	}
-	return count;
+	return dreamlink->sendReceive(txMsg, rxMsg);
 }
 
-bool MapleLink::isGameStarted() const {
-	return GameState::started;
+bool MapleLink::storageEnabled()
+{
+	return dreamlink->storageEnabled();
 }
 
-void MapleLink::registerLink(int bus, int port)
+bool MapleLink::isConnected()
 {
-	if (bus >= 0 && bus < (int)Links.size()
-			&& port >= 0 && port < (int)Links[0].size())
-	{
-		if (this->bus != bus) {
-			this->bus = bus;
-			this->ports = 0;
-		}
-		this->ports |= 1 << port;
-		std::lock_guard<std::mutex> _(Mutex);
-		Links[bus][port].push_front(shared_from_this());
-	}
-}
-void MapleLink::unregisterLink(int bus, int port)
-{
-	if (bus >= 0 && bus < (int)Links.size()
-			&& port >= 0 && port < (int)Links[0].size())
-	{
-		if (this->bus != bus) {
-			this->bus = -1;
-			this->ports = 0;
-		}
-		else {
-			this->ports &= ~(1 << port);
-		}
-		std::lock_guard<std::mutex> _(Mutex);
-		Links[bus][port].remove_if([this](const Ptr& item) { return item.get() == this; });
-	}
+	return dreamlink->isConnected();
 }
 
-bool MapleLink::StorageEnabled()
+std::shared_ptr<maple_device> MapleLink::createMapleDevice()
 {
-	std::lock_guard<std::mutex> _(Mutex);
-	for (const auto& ports : Links)
-	{
-		for (const std::list<MapleLink::Ptr>& list : ports)
-			if (!list.empty() && list.front()->storageEnabled())
-				return true;
-	}
-	return false;
+	return dreamlink->createMapleDevice(bus, port);
 }
 
-BaseMapleLink::BaseMapleLink(bool storageSupported)
-	: storageSupported(storageSupported)
+static bool relayMapleLink(u8 bus, u8 port, const MapleMsg& msg)
 {
-	EventManager::listen(Event::LoadState, eventHandler, this);
-	EventManager::listen(Event::Start, eventHandler, this);
-	EventManager::listen(Event::Terminate, eventHandler, this);
-	if (isGameStarted())
-		vmuStorage = storageSupported && config::UsePhysicalVmuMemory;
-}
-
-BaseMapleLink::~BaseMapleLink()
-{
-	EventManager::unlisten(Event::LoadState, eventHandler, this);
-	EventManager::unlisten(Event::Start, eventHandler, this);
-	EventManager::unlisten(Event::Terminate, eventHandler, this);
-}
-
-void BaseMapleLink::gameStarted() {
-	vmuStorage = storageSupported && config::UsePhysicalVmuMemory && isConnected();
-}
-
-void BaseMapleLink::eventHandler(Event event, void *p)
-{
-	BaseMapleLink *self = (BaseMapleLink *)p;
-	switch (event)
-	{
-	case Event::Start:
-		self->gameStarted();
-		break;
-	case Event::Terminate:
-		self->gameTermination();
-		break;
-	case Event::LoadState:
-		if (self->vmuStorage) {
-			WARN_LOG(INPUT, "State loaded but VMU has storage enabled");
-			self->disableStorage();
-		}
-		break;
-	default:
-		break;
-	}
-}
-
-void BaseMapleLink::disableStorage()
-{
-	if (!vmuStorage)
-		return;
-	vmuStorage = false;
-	if (isGameStarted())
-	{
-		emu.run([bus=this->bus, ports=this->ports]() {
-			if (bus != -1 && (ports & 1))
-				maple_ReconnectDevice(bus, 0);
-			if (bus != -1 && (ports & 2))
-				maple_ReconnectDevice(bus, 1);
-		});
-	}
-}
-
-bool BaseMapleLink::storageEnabled()
-{
-	if (!isConnected())
-		return false;
-	if (!isGameStarted())
-		return storageSupported && config::UsePhysicalVmuMemory;
+	auto link = MapleLinkRegistry::GetMapleLink(bus, port);
+	if (!link)
+		return true;
 	else
-		return vmuStorage;
+		return link->send(msg);
 }
 
-bool BaseMapleLink::handleGetLastError(const MapleMsg&)
+u32 MapleLinkVmu::dma(u32 cmd)
 {
-	// Just acknowledge by default
-	return true;
+	auto link = MapleLinkRegistry::GetMapleLink(bus_id, bus_port);
+	return dma(link, cmd);
+}
+
+u32 MapleLinkVmu::dma(std::optional<MapleLink>& link, u32 cmd)
+{
+	u32 rv = maple_sega_vmu::dma(cmd);
+	if (link && inMsg && inMsg->size > 0)
+	{
+		u32 function = inMsg->readData<u32>(0);
+		if ((cmd == MDCF_BlockWrite && function == MFID_2_LCD) || cmd == MDCF_SetCondition)
+		{
+			link->send(*inMsg);
+		}
+	}
+	return rv;
+}
+
+u32 MapleLinkPuruPuru::dma(u32 cmd)
+{
+	auto link = MapleLinkRegistry::GetMapleLink(bus_id, bus_port);
+	return dma(link, cmd);
+}
+
+u32 MapleLinkPuruPuru::dma(std::optional<MapleLink>& link, u32 cmd)
+{
+	u32 rv = maple_sega_purupuru::dma(cmd);
+	if (link && inMsg)
+	{
+		if (cmd == MDCF_BlockWrite || cmd == MDCF_SetCondition)
+		{
+			link->send(*inMsg);
+		}
+	}
+	return rv;
 }
