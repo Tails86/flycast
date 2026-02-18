@@ -48,25 +48,16 @@ public:
 	//! Static retrieval function for the designated MapleLink at the given bus/port
 	//! @param[in] bus Dreamcast bus index [0,3]
 	//! @param[in] port Peripheral port index [0,5]
+	//! @param[in] linkBusOffset The bus index offset to use for lookup but not install
 	//! @return the MapleLink at the given bus/port if one is installed
 	//! @return nullptr otherwise
-	static inline std::optional<MapleLink> GetMapleLink(int bus, int port) {
-		return Get().getMapleLink(bus, port);
-	}
-
-	//! Static retrieval function for storage enabled flag
-	//! @return true if storage is enabled on any active maple link
-	static inline bool StorageEnabled() {
-		return Get().storageEnabled();
+	static inline std::optional<MapleLink> GetMapleLink(int bus, int port, int linkBusOffset = 0) {
+		return Get().getMapleLink(bus, port, linkBusOffset);
 	}
 
     //! Non-static retrieval function for the designated MapleLink at the given bus/port
 	//! @see GetMapleLink
-    std::optional<MapleLink> getMapleLink(int bus, int port);
-
-	//! Non-static retrieval function for storage enabled flag
-	//! @see  StorageEnabled
-	bool storageEnabled();
+    std::optional<MapleLink> getMapleLink(int bus, int port, int linkBusOffset = 0);
 
 private:
     //! Called by a BaseDreamLink in order to register it in this registry

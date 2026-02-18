@@ -68,6 +68,10 @@ public:
 	virtual void disconnect() = 0;
 	//! @return true iff the link is operational
 	virtual bool isConnected() = 0;
+	//! This should be overridden by the child in order to report fatal errors preventing all operations
+	//! @return nullptr if no issue exists
+	//! @return pointer to the issue description string; no operation is expected to succeed in this case
+	virtual const char* getIssueDescription() const = 0;
 	//! Do termination cleanup
 	//! @post the object may be in an invalid state and is no longer intended for use
 	virtual void term() = 0;
@@ -139,13 +143,13 @@ public:
 	bool storageEnabled() override;
 	//! @return true iff a game has been started
 	bool isGameRunning() const;
+	//! Child may override this if it needs to report fatal errors
+	const char* getIssueDescription() const override;
 	//! Do termination cleanup
 	//! @post the object may be in an invalid state and is no longer intended for use
 	void term() override;
 
 protected:
-    //! Disable VMU storage for this link
-	void disableStorage();
 	//! Called when a game has started
 	virtual void onGameStarted();
 	//! Called when a game has terminated
@@ -189,9 +193,6 @@ protected:
     const bool storageSupported;
 
 private:
-    //! Runtime storage enable flag
-	bool vmuStorage = false;
-
     //! Currently linked bus
     int linkedBus = -1;
     //! All available ports

@@ -56,7 +56,7 @@ public:
 	bool sendReceive(const MapleMsg& txMsg, MapleMsg& rxMsg);
 
 	//! True if VMU reads and writes should be sent to the device
-	bool storageEnabled();
+	bool storageEnabled() const;
 
 	//! True if the link is operational
 	bool isConnected();
@@ -80,46 +80,141 @@ public:
  *   subsequent deserialize will handle the incoming data
 */
 
-//! Virtual class which all maple link devices must inheirt from
+//! Virtual class which describes additional interfaces for a MapleLinkDevice
 struct MapleLinkDevice
 {
-	//! @return true iff there is a current link to external storage
-	virtual bool usingExternalStorage() const = 0;
-
 	//! This is called by the deserialization process to relay what deserialization virtual device type
 	//! @param[in] type The type that should be assumed for subsequent deserialize
 	//! @return true iff this MapleLink is setup to accept this type
 	virtual bool deserializingFor(MapleDeviceType type) = 0;
+
+protected:
+	//! Deserializes VMU data for a MapleLinkDevice
+	//! @param[in] deser The deserializer to pull data from
+	//! @param[in] link The MapleLink to communicate with during deserialization
+	//! @param[in] dev The device that the DreamLink created
+	//! @param[in] vmu The vmu device used for deserialization (may or may not be the same as dev)
+	//! @param[in] usingExternalMemory When true, do checks that external memory matches deserialized data
+	static void deserializeVmu(
+		Deserializer& deser,
+		MapleLink& link,
+		maple_base& dev,
+		maple_sega_vmu& vmu,
+		bool usingExternalMemory
+	);
+
+	//! Send a read request to the external VMU memory
+	//! @param[in] link The MapleLink to communicate with
+	//! @param[in] dest Destination address
+	//! @param[in] origin Origin address
+	//! @param[in] block Block index
+	//! @return std::nullopt if execution failed
+	//! @return the received response from the external VMU
+	static std::optional<MapleMsg> sendRead(MapleLink& link, u8 dest, u8 origin, u8 block);
+
+	//! Mirrors the LCD data from VMU data to a MapleLink device
+	//! @param[in] link The MapleLink to send LCD data to
+	//! @param[in] dev The device that the DreamLink created
+	//! @param[in] vmu The VMU containing LCD data (may or may not be the same as dev)
+	static void mirrorLcd(MapleLink& link, maple_base& dev, maple_sega_vmu& vmu);
+};
+
+//! Base class all maple link devices must inherit from
+//! @tparam MapleDeviceBase The maple_base class to inherit functionality from
+template <
+	typename MapleDeviceBase,
+	typename std::enable_if_t<std::is_base_of_v<maple_base, MapleDeviceBase>>* = nullptr
+>
+struct MapleLinkDeviceBase: public MapleDeviceBase, public MapleLinkDevice
+{
+	//! The linked device
+	MapleLink link;
+
+	//! Default constructor (deleted)
+	MapleLinkDeviceBase() = delete;
+
+	//! Constructor
+	//! @param[in] link The link to set
+	explicit inline MapleLinkDeviceBase(const MapleLink& link) : link(link) {}
+
+protected:
+	//! Deserializes VMU data for a MapleLinkDevice, defined when the MapleDeviceBase is a maple_sega_vmu
+	//! @param deser The deserializer to pull data from
+	//! @param usingExternalMemory When true, do checks that external memory matches deserialized data
+	template<
+		typename U = MapleDeviceBase,
+		typename std::enable_if<std::is_same<U, maple_sega_vmu>::value>::type* = nullptr
+	>
+	inline void deserializeVmu(Deserializer& deser, bool usingExternalMemory)
+	{
+		MapleLinkDevice::deserializeVmu(deser, link, *this, *this, usingExternalMemory);
+	}
+
+	//! Deserializes VMU data for a MapleLinkDevice
+	//! @param deser The deserializer to pull data from
+	//! @param vmu The vmu device used for deserialization
+	//! @param usingExternalMemory When true, do checks that external memory matches deserialized data
+	inline void deserializeVmu(Deserializer& deser, maple_sega_vmu& vmu, bool usingExternalMemory)
+	{
+		MapleLinkDevice::deserializeVmu(deser, link, *this, vmu, usingExternalMemory);
+	}
+
+	//! Mirrors the LCD data from VMU data to a MapleLink device, defined when the MapleDeviceBase is a maple_sega_vmu
+	template<
+		typename U = MapleDeviceBase,
+		typename std::enable_if<std::is_same<U, maple_sega_vmu>::value>::type* = nullptr
+	>
+	inline void mirrorLcd()
+	{
+		MapleLinkDevice::mirrorLcd(link, *this, *this);
+	}
+
+	//! Mirrors the LCD data from VMU data to a MapleLink device
+	//! @param vmu The VMU containing LCD data
+	inline void mirrorLcd(maple_sega_vmu& vmu)
+	{
+		MapleLinkDevice::mirrorLcd(link, *this, vmu);
+	}
 };
 
 //! Basic maple link VMU device which relays only screen and timer data to the MapleLink
-struct MapleLinkVmu : maple_sega_vmu, MapleLinkDevice
+struct MapleLinkVmu : MapleLinkDeviceBase<maple_sega_vmu>
 {
+	MapleLinkVmu() = delete;
+	MapleLinkVmu(const MapleLink& link);
+
+	void OnSetup() override;
+	bool fullSave() override;
 	u32 dma(u32 cmd) override;
-	u32 dma(std::optional<MapleLink>& link, u32 cmd);
-	inline bool usingExternalStorage() const override
-	{
-		return false;
-	}
 	inline bool deserializingFor(MapleDeviceType type) override
 	{
 		return (type == MDT_SegaVMU);
 	}
 
-	// Can safely use serialization from maple_sega_vmu
+	// Can safely use maple_sega_vmu::serialize()
 	using maple_sega_vmu::serialize;
-	using maple_sega_vmu::deserialize;
+	//! Performs deserialization and writes deserialized LCD
+	void deserialize(Deserializer& deser) override;
+
+	//! Send a read request to the external VMU memory
+	//! @param[in] dest Destination address
+	//! @param[in] origin Origin address
+	//! @param[in] block Block index
+	//! @return std::nullopt if execution failed
+	//! @return the received response from the external VMU
+	inline std::optional<MapleMsg> sendRead(u8 dest, u8 origin, u8 block)
+	{
+		return MapleLinkDevice::sendRead(link, dest, origin, block);
+	}
 };
 
 //! Basic maple link VMU device which relays only screen and timer data to the MapleLink
-struct MapleLinkPuruPuru : maple_sega_purupuru, MapleLinkDevice
+struct MapleLinkPuruPuru : MapleLinkDeviceBase<maple_sega_purupuru>
 {
+	MapleLinkPuruPuru() = delete;
+	MapleLinkPuruPuru(const MapleLink& link);
+
 	u32 dma(u32 cmd) override;
-	u32 dma(std::optional<MapleLink>& link, u32 cmd);
-	inline bool usingExternalStorage() const override
-	{
-		return false;
-	}
 	inline bool deserializingFor(MapleDeviceType type) override
 	{
 		return (type == MDT_PurupuruPack);
@@ -132,12 +227,13 @@ struct MapleLinkPuruPuru : maple_sega_purupuru, MapleLinkDevice
 
 //! Stub class which may be used as a placeholder device when no function is needed. This is used to reserve a space
 //! in maple devices array so that a lower priority DreamLink can't install itself there.
-struct MapleLinkStub : maple_base, MapleLinkDevice
+struct MapleLinkStub : MapleLinkDeviceBase<maple_base>
 {
+	inline MapleLinkStub() : MapleLinkDeviceBase<maple_base>(MapleLink(nullptr, 0, 0)) {}
+
 	inline MapleDeviceType get_device_type() override { return MapleDeviceType::MDT_None; }
 	inline u32 dma(u32 cmd) override { return MDRS_JVSNone; }
 	inline bool linkStatus() override { return false; }
-	inline bool usingExternalStorage() const { return false; }
 	inline bool deserializingFor(MapleDeviceType type) override { return false; }
 	inline void serialize(Serializer& ser) const override
 	{

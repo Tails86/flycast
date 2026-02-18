@@ -27,6 +27,7 @@
 #include "ui/gui.h"
 #include "cfg/option.h"
 #include "oslib/i18n.h"
+#include "oslib/oslib.h"
 #include "log/Log.h"
 
 #include "DreamPicoPortApi.hpp"
@@ -61,36 +62,94 @@
 namespace dream_pico_port
 {
 
+//! A Sega VMU with an optional file back-end
+struct DppVirtualVmu : public maple_sega_vmu
+{
+	//! When true, the VMU is backed by a file on the file system
+	const bool fileBacked;
+
+	//! Default constructor (deleted)
+	DppVirtualVmu() = delete;
+
+	//! Constructor
+	//! @param[in] fileBacked When true, VMU memory will be backed by a file; false for volatile memory only
+	//! @param[in] primaryDev The primary device to mirror data from
+	DppVirtualVmu(bool fileBacked, maple_device* primaryDev) :
+		fileBacked(fileBacked)
+	{
+		maple_port = primaryDev->maple_port;
+		bus_port = primaryDev->bus_port;
+		bus_id = primaryDev->bus_id;
+		memcpy(&logical_port[0], &primaryDev->logical_port[0], sizeof(logical_port));
+		player_num = primaryDev->player_num;
+		config = primaryDev->config;
+	}
+
+	virtual ~DppVirtualVmu()
+	{
+		// Need to nullify the config here to avoid double delete
+		config->ResetImage();
+		config = nullptr;
+	}
+
+	//! Called when this device is setup for use
+	void OnSetup() override
+	{
+		if (fileBacked)
+		{
+			// Just use base's setup procedure
+			maple_sega_vmu::OnSetup();
+			return;
+		}
+
+		// Nullify the file and zero out all data under maple_sega_vmu
+		file = nullptr;
+		initializeVmu(); // Start with a valid VMU memory state
+		memset(lcd_data, 0, sizeof(lcd_data));
+		accessed_blocks_valid = true;
+		memset(accessed_blocks, 0, sizeof(accessed_blocks));
+		last_write_tick = 0;
+		loaded_us_since_write = std::numeric_limits<u64>::max();
+		fullSaveNeeded = false;
+	}
+};
+
 //! Generically handles any MapleLink device when supported
-struct DppMapleLinkDevice : public maple_base, public MapleLinkDevice
+struct DppMapleLinkDevice : public MapleLinkDeviceBase<maple_base>
 {
 	//! The supported functions mask for this device
 	const u32 supportedFns;
+	//! The linked DreamPicoPort
+	std::shared_ptr<class DreamPicoPort> linkedDpp;
 	//! The last time write was performed
 	std::chrono::steady_clock::time_point lastWriteTime;
 	//! Mutex serializing write operations
 	std::mutex writeMutex;
-	//! Virtual VMU used when physical memory should not be used
-	std::unique_ptr<maple_sega_vmu> virtualVmu;
-	//! Switched to true on first memory read/write command
-	bool storageLinked = false;
+	//! Virtual VMU used to display a virtual screen and optionally save to file
+	std::unique_ptr<DppVirtualVmu> virtualVmu;
 	//! The last returned value from get_device_type()
 	MapleDeviceType serializingType = MDT_None;
 	//! The device type currently deserializing for
 	MapleDeviceType deserializingType = MDT_None;
 
+	//! Magic number used on serialize()
+	static constexpr const u8 vmuSerializeMagic[4] = {0x04, 0x3d, 0x8b, 0xde};
+
 	//! Constructor
 	//! @param[in] supportedFns Supported functions mask (default: any function)
-	DppMapleLinkDevice(u32 supportedFns = std::numeric_limits<u32>::max());
+	DppMapleLinkDevice(const MapleLink& link, u32 supportedFns = std::numeric_limits<u32>::max());
 	virtual ~DppMapleLinkDevice();
-	std::shared_ptr<class DreamPicoPort> getDreamPicoPort() const;
+	void OnSetup() override;
 	bool linkStatus() override;
+	void requestReconnect() override;
 	MapleDeviceType get_device_type() override;
+	static MapleDeviceType fnCodeToMapleDeviceType(u32 fnCodeMask);
+	void establishVirtualDevice(MapleDeviceType dev);
 	void establishVirtualVmu();
 	u32 virtualVmuDma(u32 cmd);
 	u32 dma(u32 cmd) override;
 
-	bool usingExternalStorage() const override;
+	bool usingExternalStorage() const;
 
 	bool deserializingFor(MapleDeviceType type) override;
 	void serialize(Serializer& ser) const override;
@@ -103,849 +162,12 @@ struct MapleLinkMainDevice : public DppMapleLinkDevice
 	//! Constructor
 	//! Only input devices are currently supported here - even lightguns and DreamEye implement MFID_0_Input
 	//! This should support everything except for keyboard & mouse
-	MapleLinkMainDevice();
+	MapleLinkMainDevice(const MapleLink& link);
 	MapleDeviceType get_device_type() override;
 	u32 dma(u32 cmd) override;
 };
 
-//! Interface class for different DreamPicoPort communications interface
-class DreamPicoPortComms
-{
-public:
-	DreamPicoPortComms() = default;
-	virtual ~DreamPicoPortComms() = default;
-	virtual void changeSoftwareBus(int software_bus) = 0;
-	virtual bool isConnected() = 0;
-	virtual bool initialize(std::chrono::milliseconds timeout_ms) = 0;
-	virtual std::optional<std::vector<std::vector<std::array<uint32_t, 2>>>> getPeripherals(
-		std::chrono::milliseconds timeout_ms
-	) = 0;
-	virtual bool send(const MapleMsg& msg, std::chrono::milliseconds timeout_ms) = 0;
-    virtual bool send(const MapleMsg& txMsg, MapleMsg& rxMsg, std::chrono::milliseconds timeout_ms) = 0;
-	virtual void sendPort(std::chrono::milliseconds timeout_ms) = 0;
-};
-
-// asio::serial_port is not accessible for UWP. DreamPicoPort-API may be used in UWP.
-#ifndef TARGET_UWP
-
-class DreamPicoPortSerialHandler
-{
-	//! Asynchronous context for serial_handler
-	asio::io_context io_context;
-	//! Output buffer data for serial_handler
-	std::string serial_out_data;
-	//! Handles communication to DreamPicoPort
-	asio::serial_port serial_handler{io_context};
-	//! Set to true while an async write is in progress with serial_handler
-	bool serial_write_in_progress = false;
-	//! Set to true while an async read is in progress with serial_handler
-	std::atomic<bool> serial_read_in_progress = false;
-	//! Signaled when serial_write_in_progress transitions to false
-	std::condition_variable write_cv;
-	//! Mutex for write_cv and serializes access to serial_write_in_progress
-	std::mutex write_cv_mutex;
-	//! Input stream buffer from serial_handler
-	char serial_read_buffer[1024];
-	//! Holds on to partially parsed line
-	std::string read_line_buffer;
-	//! Thread which runs the io_context
-	std::unique_ptr<std::thread> io_context_thread;
-	//! Contains queue of incoming lines from serial
-	std::list<std::string> read_queue;
-	//! Signaled when data is in read_queue
-	std::condition_variable read_cv;
-	//! Mutex for read_cv and serializes access to read_queue
-	std::mutex read_cv_mutex;
-
-	//! When >= 0, parsing binary input and signifies total number parsed in this set
-	//! When < 0, not parsing binary input
-	int32_t num_binary_parsed = -1;
-	//! Number of binary bytes left to parse
-	uint16_t stored_binary_size = 0;
-	//! Number of binary bytes left to parse in current set
-	uint16_t num_binary_left = 0;
-
-	//! Serializes send calls, making them thread-safe
-	std::mutex send_mutex;
-
-public:
-	DreamPicoPortSerialHandler() {
-
-		// the serial port isn't ready at this point, so we need to sleep briefly
-		// we probably should have a better way to handle this
-		std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-		serial_handler = asio::serial_port(io_context);
-		io_context.reset();
-
-		std::string serial_device = "";
-
-		// use user-configured serial device if available, fallback to first available
-		serial_device = config::loadStr("input", "DreamPicoPortSerialDevice");
-		if (!serial_device.empty())
-		{
-			NOTICE_LOG(INPUT, "DreamPicoPort connecting to user-configured serial device: %s", serial_device.c_str());
-		} else {
-			serial_device = getFirstSerialDevice();
-			NOTICE_LOG(INPUT, "DreamPicoPort connecting to autoselected serial device: %s", serial_device.c_str());
-		}
-
-		asio::error_code ec;
-		if (!serial_device.empty()) {
-			serial_handler.open(serial_device, ec);
-		}
-
-		if (ec || !serial_handler.is_open()) {
-			WARN_LOG(INPUT, "DreamPicoPort serial connection failed: %s", ec.message().c_str());
-			disconnect();
-			return;
-		}
-
-		NOTICE_LOG(INPUT, "DreamPicoPort serial connection successful!");
-
-		// This must be done before the io_context is run because it will keep io_context from returning immediately
-		startSerialRead();
-
-		io_context_thread = std::make_unique<std::thread>([this](){contextThreadEnty();});
-	}
-
-	~DreamPicoPortSerialHandler()
-	{
-		disconnect();
-		if (io_context_thread != nullptr)
-			io_context_thread->join();
-	}
-
-	bool is_open() const {
-		return serial_handler.is_open();
-	}
-
-	asio::error_code sendCmd(
-		const std::string& cmd,
-		std::string& response,
-		std::chrono::milliseconds timeout_ms
-	) {
-		const std::chrono::steady_clock::time_point expiration = std::chrono::steady_clock::now() + timeout_ms;
-
-		std::lock_guard<std::mutex> lock(send_mutex); // Ensure thread safety for send operations
-
-		asio::error_code ec = transmit(cmd, true, expiration);
-
-		if (!ec) {
-			ec = receive(response, expiration);
-		}
-
-		return ec;
-	}
-
-	asio::error_code sendCmd(
-		const std::string& cmd,
-		std::chrono::milliseconds timeout_ms
-	) {
-		const std::chrono::steady_clock::time_point expiration = std::chrono::steady_clock::now() + timeout_ms;
-
-		std::lock_guard<std::mutex> lock(send_mutex); // Ensure thread safety for send operations
-
-		return transmit(cmd, false, expiration);
-	}
-
-	asio::error_code sendMsg(
-		const MapleMsg& msg,
-		int hardware_bus,
-		MapleMsg& response,
-		std::chrono::milliseconds timeout_ms)
-	{
-		const std::chrono::steady_clock::time_point expiration = std::chrono::steady_clock::now() + timeout_ms;
-
-		std::lock_guard<std::mutex> lock(send_mutex); // Ensure thread safety for send operations
-
-		std::string cmd = msgToStr(msg, hardware_bus);
-		asio::error_code ec = transmit(cmd, true, expiration);
-
-		if (!ec) {
-			ec = receive(response, expiration);
-		}
-
-		return ec;
-	}
-
-	asio::error_code sendMsg(
-		const MapleMsg& msg,
-		int hardware_bus,
-		std::chrono::milliseconds timeout_ms)
-	{
-		const std::chrono::steady_clock::time_point expiration = std::chrono::steady_clock::now() + timeout_ms;
-
-		std::lock_guard<std::mutex> lock(send_mutex); // Ensure thread safety for send operations
-
-		std::string cmd = msgToStr(msg, hardware_bus);
-		return transmit(cmd, false, expiration);
-	}
-
-private:
-	void disconnect()
-	{
-		io_context.stop();
-
-		if (serial_handler.is_open()) {
-			try
-			{
-				serial_handler.cancel();
-			}
-			catch(const asio::system_error&)
-			{
-				// Ignore cancel errors
-			}
-		}
-
-		try
-		{
-			serial_handler.close();
-		}
-		catch(const asio::system_error&)
-		{
-			// Ignore closing errors
-		}
-	}
-
-	void contextThreadEnty()
-	{
-		// This context should never exit until disconnect due to read handler automatically rearming
-		io_context.run();
-	}
-
-	static std::string getFirstSerialDevice() {
-
-		// On Windows, we get the first serial device matching our VID/PID
-		// (getFirstSerialDevice() not compatible with UWP)
-#if defined(_WIN32)
-		HDEVINFO deviceInfoSet = SetupDiGetClassDevs(NULL, "USB", NULL, DIGCF_PRESENT | DIGCF_ALLCLASSES);
-		if (deviceInfoSet == INVALID_HANDLE_VALUE) {
-			return "";
-		}
-
-		SP_DEVINFO_DATA deviceInfoData;
-		deviceInfoData.cbSize = sizeof(SP_DEVINFO_DATA);
-
-		for (DWORD i = 0; SetupDiEnumDeviceInfo(deviceInfoSet, i, &deviceInfoData); ++i) {
-			DWORD dataType, bufferSize = 0;
-			SetupDiGetDeviceRegistryProperty(deviceInfoSet, &deviceInfoData, SPDRP_HARDWAREID, &dataType, NULL, 0, &bufferSize);
-
-			if (bufferSize > 0) {
-				std::vector<char> buffer(bufferSize);
-				if (SetupDiGetDeviceRegistryProperty(deviceInfoSet, &deviceInfoData, SPDRP_HARDWAREID, &dataType, (PBYTE)buffer.data(), bufferSize, NULL)) {
-					std::string hardwareId(buffer.begin(), buffer.end());
-					if (hardwareId.find("VID_1209") != std::string::npos && hardwareId.find("PID_2F07") != std::string::npos) {
-						HKEY deviceKey = SetupDiOpenDevRegKey(deviceInfoSet, &deviceInfoData, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ);
-						if (deviceKey != INVALID_HANDLE_VALUE) {
-							char portName[256];
-							DWORD portNameSize = sizeof(portName);
-							if (RegQueryValueEx(deviceKey, "PortName", NULL, NULL, (LPBYTE)portName, &portNameSize) == ERROR_SUCCESS) {
-								RegCloseKey(deviceKey);
-								SetupDiDestroyDeviceInfoList(deviceInfoSet);
-								return std::string(portName);
-							}
-							RegCloseKey(deviceKey);
-						}
-					}
-				}
-			}
-		}
-
-		SetupDiDestroyDeviceInfoList(deviceInfoSet);
-#endif
-
-#if defined(__linux__) || (defined(__APPLE__) && defined(TARGET_OS_MAC))
-	// On MacOS/Linux, we get the first serial device matching the device prefix
-	std::string device_prefix = "";
-
-#if defined(__linux__)
-		device_prefix = "ttyACM";
-#elif (defined(__APPLE__) && defined(TARGET_OS_MAC))
-		device_prefix = "tty.usbmodem";
-#endif
-
-		std::string path = "/dev/";
-		DIR *dir;
-		struct dirent *ent;
-		if ((dir = opendir(path.c_str())) != NULL) {
-			while ((ent = readdir(dir)) != NULL) {
-				std::string device = ent->d_name;
-				if (device.find(device_prefix) != std::string::npos) {
-					closedir(dir);
-					return path + device;
-				}
-			}
-			closedir(dir);
-		}
-#endif
-		return "";
-	}
-
-	asio::error_code transmit(
-		const std::string& cmd,
-		bool receive_expected,
-		const std::chrono::steady_clock::time_point& expiration
-	) {
-		asio::error_code ec;
-
-		if (!serial_handler.is_open()) {
-			return asio::error::not_connected;
-		}
-
-		if (receive_expected && serial_read_in_progress) {
-			// Wait up to 30 ms for read to complete before writing to help ensure expected command order.
-			// Continue regardless of result.
-			std::string rx;
-
-			std::chrono::steady_clock::time_point rxExpiration =
-				std::chrono::steady_clock::now() + std::chrono::milliseconds(30);
-
-			if (rxExpiration > expiration) {
-				rxExpiration = expiration;
-			}
-
-			(void)receive(rx, rxExpiration);
-		} else {
-			// Just clear out the read queue before continuing
-			std::unique_lock<std::mutex> lock(read_cv_mutex);
-			read_queue.clear();
-		}
-
-		// Wait for last write to complete
-		std::unique_lock<std::mutex> lock(write_cv_mutex);
-		if (!write_cv.wait_until(lock, expiration, [this](){return (!serial_write_in_progress || !serial_handler.is_open());}))
-		{
-			return asio::error::timed_out;
-		}
-
-		// Check again before continuing
-		if (!serial_handler.is_open()) {
-			return asio::error::not_connected;
-		}
-
-		serial_out_data = cmd;
-
-		// Clear out the read buffer before writing next command
-		serial_write_in_progress = true;
-		serial_read_in_progress = true;
-		asio::async_write(
-			serial_handler,
-			asio::buffer(serial_out_data),
-			asio::transfer_exactly(serial_out_data.size()),
-			[this](const asio::error_code& error, size_t bytes_transferred)
-			{
-				std::unique_lock<std::mutex> lock(write_cv_mutex);
-				if (error) {
-					try
-					{
-						serial_handler.cancel();
-					}
-					catch(const asio::system_error&)
-					{
-						// Ignore cancel errors
-					}
-				}
-				serial_write_in_progress = false;
-				write_cv.notify_all();
-			}
-		);
-
-		return ec;
-	}
-
-	asio::error_code receive(std::string& cmd, const std::chrono::steady_clock::time_point& expiration)
-	{
-		asio::error_code ec;
-
-		// Wait for at least 2 lines to be received (first line is echo back)
-		std::unique_lock<std::mutex> lock(read_cv_mutex);
-		if (!read_cv.wait_until(lock, expiration, [this](){return ((read_queue.size() >= 2) || !serial_handler.is_open());}))
-		{
-			// Timeout
-			return asio::error::timed_out;
-		}
-
-		if (read_queue.size() < 2) {
-			// Connection was closed before data could be received
-			return asio::error::connection_aborted;
-		}
-
-		// discard the first message as we are interested in the second only which returns the controller configuration
-		cmd = std::move(read_queue.back());
-		read_queue.clear();
-		serial_read_in_progress = false;
-		return ec;
-	}
-
-	asio::error_code receive(MapleMsg& msg, const std::chrono::steady_clock::time_point& expiration)
-	{
-		asio::error_code ec;
-		std::string response;
-
-		ec = receive(response, expiration);
-		if (ec) {
-			return ec;
-		}
-
-		std::vector<uint32_t> words;
-		const char* iter = response.c_str();
-		const char* eol = iter + response.size();
-
-		if (*iter == '*')
-		{
-			// Asterisk indicates the write or read operation failed
-			return asio::error::no_data;
-		}
-		else if (*iter == '\5') // binary parsing
-		{
-			// binary
-			++iter;
-			while (iter < eol)
-			{
-				uint32_t word = 0;
-				uint32_t i = 0;
-				while (i < 4 && iter < eol)
-				{
-					const u8* pu8 = reinterpret_cast<const u8*>(iter++);
-					// Apply value into current word
-					word |= (*pu8 << ((4 - i) * 8 - 8));
-					++i;
-				}
-
-				// Invalid if a partial word was given
-				if (i == 4)
-					words.push_back(word);
-			}
-		}
-		else
-		{
-			while (iter < eol)
-			{
-				uint32_t word = 0;
-				uint32_t i = 0;
-				while (i < 8 && iter < eol)
-				{
-					char v = *iter++;
-					uint_fast8_t value = 0;
-
-					if (v >= '0' && v <= '9')
-					{
-						value = v - '0';
-					}
-					else if (v >= 'a' && v <= 'f')
-					{
-						value = v - 'a' + 0xa;
-					}
-					else if (v >= 'A' && v <= 'F')
-					{
-						value = v - 'A' + 0xA;
-					}
-					else
-					{
-						// Ignore this character
-						continue;
-					}
-
-					// Apply value into current word
-					word |= (value << ((8 - i) * 4 - 4));
-					++i;
-				}
-
-				// Invalid if a partial word was given
-				if (i == 8)
-					words.push_back(word);
-			}
-		}
-
-		if (words.size() > 0)
-		{
-			msg.command = (words[0] >> 24) & 0xFF;
-			msg.destAP = (words[0] >> 16) & 0xFF;
-			msg.originAP = (words[0] >> 8) & 0xFF;
-			msg.size = words[0] & 0xFF;
-
-			for (uint32_t i = 1; i < words.size(); ++i)
-			{
-				uint32_t dat = ntohl(words[i]);
-				memcpy(&msg.data[(i-1)*4], &dat, sizeof(dat));
-			}
-		}
-		else
-		{
-			return asio::error::message_size;
-		}
-
-		if (!serial_handler.is_open()) {
-			return asio::error::not_connected;
-		}
-
-		return ec;
-	}
-
-	std::string msgToStr(const MapleMsg& msg, int hardware_bus) {
-		// Build serial_out_data string
-		// Need to message the hardware bus instead of the software bus
-		u8 hwDestAP = (hardware_bus << 6) | (msg.destAP & 0x3F);
-		u8 hwOriginAP = (hardware_bus << 6) | (msg.originAP & 0x3F);
-
-		std::ostringstream s;
-		s.imbue(std::locale::classic());
-		s << "X "; // 'X' prefix triggers flycast command parser
-		s.fill('0');
-		s << std::hex << std::uppercase
-			<< std::setw(2) << (u32)msg.command
-			<< std::setw(2) << (u32)hwDestAP // override dest
-			<< std::setw(2) << (u32)hwOriginAP // override origin
-			<< std::setw(2) << (u32)msg.size;
-		const u32 sz = msg.getDataSize();
-		for (u32 i = 0; i < sz; i++) {
-			s << std::setw(2) << (u32)msg.data[i];
-		}
-		s << "\n";
-
-		return s.str();
-	}
-
-	void startSerialRead()
-	{
-		serialReadHandler();
-		// Just to make sure initial data is cleared off of incoming buffer
-		io_context.poll_one();
-		read_queue.clear();
-	}
-
-	void serialReadHandler()
-	{
-		// Arm or rearm the read
-		serial_handler.async_read_some(
-			asio::buffer(serial_read_buffer, sizeof(serial_read_buffer)),
-			[this](const asio::error_code& error, std::size_t size) -> void {
-				std::lock_guard<std::mutex> lock(read_cv_mutex);
-				if (error) {
-					try
-					{
-						serial_handler.cancel();
-					}
-					catch(const asio::system_error&)
-					{
-						// Ignore cancel errors
-					}
-					read_cv.notify_all();
-				} else {
-					if (size > 0) {
-						// Consume the received data
-						if (consumeReadBuffer(size) > 0)
-						{
-							// New lines available
-							read_cv.notify_all();
-						}
-					}
-					// Auto reload read - io_context will always have work to do
-					serialReadHandler();
-				}
-			}
-		);
-	}
-
-	int consumeReadBuffer(std::size_t size) {
-		if (size <= 0) {
-			return 0;
-		}
-
-		int numberOfLines = 0;
-		const char* iter = serial_read_buffer;
-		while (size-- > 0)
-		{
-			char c = *iter++;
-
-			if (num_binary_parsed >= 0)
-			{
-				++num_binary_parsed;
-				--num_binary_left;
-
-				if (num_binary_parsed == 1)
-				{
-					stored_binary_size = (c << 8);
-				}
-				else if (num_binary_parsed == 2)
-				{
-					stored_binary_size |= c;
-					num_binary_left = stored_binary_size;
-					read_line_buffer.reserve(1 + stored_binary_size);
-				}
-				else
-				{
-					read_line_buffer += c;
-				}
-
-				if (num_binary_left == 0)
-				{
-					num_binary_parsed = -1;
-				}
-			}
-			else if (c == '\5') // binary start character
-			{
-				read_line_buffer += c;
-				num_binary_parsed = 0;
-				stored_binary_size = 0;
-				num_binary_left = 2; // Parse size
-			}
-			else if (c == '\n')
-			{
-				// Remove carriage return if found and add this line to queue
-				if (read_line_buffer.size() > 0 && read_line_buffer[read_line_buffer.size() - 1] == '\r') {
-					read_line_buffer.pop_back();
-				}
-				read_queue.push_back(read_line_buffer);
-				read_line_buffer.clear();
-
-				++numberOfLines;
-			}
-			else
-			{
-				read_line_buffer += c;
-			}
-		}
-
-		return numberOfLines;
-	}
-};
-
-class SerialDreamPicoPortComms : public DreamPicoPortComms
-{
-	//! The one and only serial port
-	static std::unique_ptr<DreamPicoPortSerialHandler> serial;
-	//! Number of devices using the above serial
-	static std::atomic<std::uint32_t> connected_dev_count;
-
-	//! The bus ID dictated by flycast
-	int software_bus = -1;
-	//! The bus index of the hardware connection which will differ from the software bus
-	int hardware_bus = -1;
-    //! The queried interface version
-	double interface_version = 0.0;
-	//! Flags which specifies which subperipherals are connected
-	u8 expansion_devs = 0;
-
-public:
-	SerialDreamPicoPortComms() = delete;
-
-	SerialDreamPicoPortComms(int software_bus, int hardware_bus) :
-		software_bus(software_bus),
-		hardware_bus(hardware_bus)
-	{
-		++connected_dev_count;
-		if (!serial) {
-			serial = std::make_unique<DreamPicoPortSerialHandler>();
-		}
-	}
-
-	virtual ~SerialDreamPicoPortComms() {
-		if (--connected_dev_count == 0) {
-			// serial is no longer needed
-			serial.reset();
-		}
-	}
-
-	void changeSoftwareBus(int software_bus) override {
-		this->software_bus = software_bus;
-	}
-
-	bool isConnected() override {
-		return (serial && serial->is_open());
-	}
-
-	bool initialize(std::chrono::milliseconds timeout_ms) override {
-		interface_version = 0.0;
-
-		if (!isConnected()) {
-			return false;
-		}
-
-		std::string buffer;
-		asio::error_code error = serial->sendCmd("XV\n", buffer, timeout_ms);
-		if (error) {
-			WARN_LOG(INPUT, "DreamPicoPort[%d] send(XV) failed: %s", software_bus, error.message().c_str());
-			return false;
-		}
-
-		if (0 == strncmp("*failed", buffer.c_str(), 7) || 0 == strncmp("0: failed", buffer.c_str(), 9)) {
-			// Using a version of firmware before "XV" was available
-			interface_version = 0.0;
-		} else {
-			try {
-				interface_version = std::stod(buffer);
-			}
-			catch(const std::exception&) {
-				WARN_LOG(
-					INPUT,
-					"DreamPicoPort[%d] command XV received invalid response: %s",
-					software_bus,
-					buffer.c_str()
-				);
-				return false;
-			}
-		}
-
-		return true;
-	}
-
-	std::optional<std::vector<std::vector<std::array<uint32_t, 2>>>> getPeripherals(
-		std::chrono::milliseconds timeout_ms
-	) override {
-		expansion_devs = 0;
-
-		if (!isConnected()) {
-			return std::nullopt;
-		}
-
-		std::vector<std::vector<std::array<uint32_t, 2>>> peripherals;
-
-		MapleMsg msg;
-		msg.command = MDCF_GetCondition;
-		msg.destAP = (hardware_bus << 6) | 0x20;
-		msg.originAP = hardware_bus << 6;
-		msg.pushData(MFID_0_Input);
-
-		asio::error_code error = serial->sendMsg(msg, hardware_bus, msg, timeout_ms);
-		if (error)
-		{
-			WARN_LOG(INPUT, "DreamPicoPort[%d] send(condition) failed: %s", software_bus, error.message().c_str());
-			return peripherals; // assume simply controller not connected yet
-		}
-
-		expansion_devs = msg.originAP & 0x1f;
-
-		if (interface_version >= 1.0) {
-			// Can just use X?
-			std::string buffer;
-			error = serial->sendCmd("X?" + std::to_string(hardware_bus) + "\n", buffer, timeout_ms);
-			if (error) {
-				WARN_LOG(INPUT, "DreamPicoPort[%d] send(X?) failed: %s", software_bus, error.message().c_str());
-				return std::nullopt;
-			}
-
-			{
-				std::istringstream stream(buffer);
-				stream.imbue(std::locale::classic());
-
-				std::string outerGroup;
-				while (std::getline(stream, outerGroup, ';')) {
-					if (outerGroup.empty() || outerGroup == ",") continue;
-					std::vector<std::array<uint32_t, 2>> outerList;
-					std::istringstream outerStream(outerGroup.substr(1)); // Skip the leading '{'
-					outerStream.imbue(std::locale::classic());
-					std::string innerGroup;
-
-					while (std::getline(outerStream, innerGroup, '}')) {
-						if (innerGroup.empty() || innerGroup == ",") continue;
-						std::array<uint32_t, 2> innerList = {{0, 0}};
-						std::istringstream innerStream(innerGroup.substr(1)); // Skip the leading '{'
-						innerStream.imbue(std::locale::classic());
-						std::string number;
-						std::size_t idx = 0;
-
-						while (std::getline(innerStream, number, ',')) {
-							if (!number.empty() && number[0] == '{') {
-								number = number.substr(1);
-							}
-							uint32_t value;
-							std::stringstream ss;
-							ss.imbue(std::locale::classic());
-							ss << std::hex << number;
-							ss >> value;
-							if (idx < 2) {
-								innerList[idx] = value;
-							}
-							++idx;
-						}
-
-						outerList.push_back(innerList);
-					}
-
-					peripherals.push_back(outerList);
-				}
-			}
-		}
-		else {
-			// Manually query each sub-peripheral
-			peripherals.push_back({}); // skip controller since it's not used
-			for (u32 i = 0; i < 2; ++i) {
-				std::vector<std::array<uint32_t, 2>> portPeripherals;
-				u8 port = (1 << i);
-				if (expansion_devs & port) {
-					msg.command = MDC_DeviceRequest;
-					msg.destAP = (hardware_bus << 6) | port;
-					msg.originAP = hardware_bus << 6;
-					msg.size = 0;
-
-					error = serial->sendMsg(msg, hardware_bus, msg, timeout_ms);
-					if (error) {
-						WARN_LOG(INPUT, "DreamPicoPort[%d] send(query) failed: %s", software_bus, error.message().c_str());
-						return std::nullopt;
-					}
-
-					if (msg.size < 4) {
-						WARN_LOG(INPUT, "DreamPicoPort[%d] read(query) failed: invalid size %d", software_bus, msg.size);
-						return std::nullopt;
-					}
-
-					const u32 fnCode = (msg.data[0] << 24) | (msg.data[1] << 16) | (msg.data[2] << 8) | msg.data[3];
-					u8 fnIdx = 1;
-					u32 mask = 0x80000000;
-					while (mask > 0) {
-						if (fnCode & mask) {
-							u32 i = fnIdx++ * 4;
-							u32 code = (msg.data[i] << 24) | (msg.data[i+1] << 16) | (msg.data[i+2] << 8) | msg.data[i+3];
-							std::array<uint32_t, 2> peripheral = {{mask, code}};
-							portPeripherals.push_back(std::move(peripheral));
-						}
-						mask >>= 1;
-					}
-
-				}
-				peripherals.push_back(portPeripherals);
-			}
-		}
-
-		return peripherals;
-	}
-
-	bool send(const MapleMsg& msg, std::chrono::milliseconds timeout_ms) override {
-		if (!isConnected()) {
-			return false;
-		}
-
-		asio::error_code ec = serial->sendMsg(msg, hardware_bus, timeout_ms);
-		return !ec;
-	}
-
-    bool send(const MapleMsg& txMsg, MapleMsg& rxMsg, std::chrono::milliseconds timeout_ms) override {
-		if (!isConnected()) {
-			return false;
-		}
-
-		asio::error_code ec = serial->sendMsg(txMsg, hardware_bus, rxMsg, timeout_ms);
-		return !ec;
-	}
-
-	void sendPort(std::chrono::milliseconds timeout_ms) override {
-		// This will update the displayed port letter on the screen
-		std::ostringstream s;
-		s.imbue(std::locale::classic());
-		s << "XP "; // XP is flycast "set port" command
-		s << hardware_bus << " " << software_bus << "\n";
-		serial->sendCmd(s.str(), timeout_ms);
-	}
-};
-
-std::unique_ptr<DreamPicoPortSerialHandler> SerialDreamPicoPortComms::serial;
-std::atomic<std::uint32_t> SerialDreamPicoPortComms::connected_dev_count = 0;
-
-#endif // TARGET_UWP
-
-class ApiDreamPicoPortComms : public DreamPicoPortComms
+class ApiDreamPicoPortComms
 {
 	//! All known dpp_api devices by serial number; already connected if set
 	static std::unordered_map<std::string, std::weak_ptr<dpp_api::DppDevice>> all_dpp_api_devices;
@@ -958,6 +180,8 @@ class ApiDreamPicoPortComms : public DreamPicoPortComms
 	int software_bus = -1;
 	//! The bus index of the hardware connection which will differ from the software bus
 	int hardware_bus = -1;
+	//! Set to true when upgrade is required to continue
+	bool upgrade_required = false;
 
 public:
 	ApiDreamPicoPortComms() = delete;
@@ -982,18 +206,35 @@ public:
 			dppFilter.serial = serial_number;
 			dpp_api_device = dpp_api::DppDevice::find(dppFilter);
 			if (!dpp_api_device) {
-				WARN_LOG(
-					INPUT,
-					"DreamPicoPort[%d] new API connect failed: find failed for serial %s\n"
-					"Update DreamPicoPort firmware to version 1.2.1 or later to use new, faster API",
-					software_bus,
-					serial_number.c_str()
-				);
+				dppFilter.minBcdDevice = 0;
+				dpp_api_device = dpp_api::DppDevice::find(dppFilter);
+				if (dpp_api_device) {
+					upgrade_required = true;
+					std::array<std::uint8_t, 3> ver = dpp_api_device->getVersion();
+					WARN_LOG(
+						INPUT,
+						"DreamPicoPort[%d] API connect failed: device with serial \"%s\" uses version %i.%i.%i\n"
+						"Update DreamPicoPort firmware to version 1.2.1 or later to use DreamLink",
+						software_bus,
+						serial_number.c_str(),
+						static_cast<int>(ver[0]),
+						static_cast<int>(ver[1]),
+						static_cast<int>(ver[2])
+					);
+				}
+				else {
+					WARN_LOG(
+						INPUT,
+						"DreamPicoPort[%d] API connect failed: find failed for serial %s",
+						software_bus,
+						serial_number.c_str()
+					);
+				}
 			}
 			else if (!dpp_api_device->connect()) {
 				WARN_LOG(
 					INPUT,
-					"DreamPicoPort[%d] new API connect failed: %s",
+					"DreamPicoPort[%d] API connect failed: %s",
 					software_bus,
 					dpp_api_device->getLastErrorStr().c_str()
 				);
@@ -1005,21 +246,25 @@ public:
 		}
 
 		if (dpp_api_device) {
-			NOTICE_LOG(INPUT, "DreamPicoPort[%d] new API connected", software_bus);
+			NOTICE_LOG(INPUT, "DreamPicoPort[%d] API connected", software_bus);
 		}
 	}
 
 	virtual ~ApiDreamPicoPortComms() = default;
 
-	void changeSoftwareBus(int software_bus) override {
+	void changeSoftwareBus(int software_bus) {
 		this->software_bus = software_bus;
 	}
 
-	bool isConnected() override {
+	bool isConnected() const {
 		return (dpp_api_device && dpp_api_device->isConnected());
 	}
 
-	bool initialize(std::chrono::milliseconds timeout_ms) override {
+	bool isUpdateRequired() const {
+		return upgrade_required;
+	}
+
+	bool initialize(std::chrono::milliseconds timeout_ms) {
 		if(!isConnected()) {
 			return false;
 		}
@@ -1032,7 +277,7 @@ public:
 
 	std::optional<std::vector<std::vector<std::array<uint32_t, 2>>>> getPeripherals(
 		std::chrono::milliseconds timeout_ms
-	) override {
+	) {
 		if (!isConnected()) {
 			return std::nullopt;
 		}
@@ -1046,7 +291,7 @@ public:
 		return peripherals;
 	}
 
-	bool send(const MapleMsg& msg, std::chrono::milliseconds timeout_ms) override {
+	bool send(const MapleMsg& msg, std::chrono::milliseconds timeout_ms) {
 		if (!isConnected()) {
 			return false;
 		}
@@ -1067,7 +312,7 @@ public:
 		return (id != 0);
 	}
 
-    bool send(const MapleMsg& txMsg, MapleMsg& rxMsg, std::chrono::milliseconds timeout_ms) override {
+    bool send(const MapleMsg& txMsg, MapleMsg& rxMsg, std::chrono::milliseconds timeout_ms) {
 		if (!isConnected()) {
 			return false;
 		}
@@ -1098,7 +343,7 @@ public:
 		return (rxMsg.getDataSize() <= (rx.packet.size() - 4));
 	}
 
-	void sendPort(std::chrono::milliseconds timeout_ms) override {
+	void sendPort(std::chrono::milliseconds timeout_ms) {
 		dpp_api::msg::tx::ChangePlayerDisplay changePlayerDisplay;
 		changePlayerDisplay.idx = hardware_bus;
 		changePlayerDisplay.toIdx = software_bus;
@@ -1112,13 +357,15 @@ std::mutex ApiDreamPicoPortComms::all_dpp_api_devices_mutex;
 class DreamPicoPort : public SDLDreamLink
 {
 	//! Implements communication interface to DreamPicoPort
-	std::unique_ptr<class DreamPicoPortComms> dpp_comms;
+	std::unique_ptr<class ApiDreamPicoPortComms> dpp_comms;
 	//! Current timeout in milliseconds
 	std::chrono::milliseconds timeout_ms;
 	//! The bus ID dictated by flycast
 	int software_bus = -1;
     //! The queried interface version
     double interface_version = 0.0;
+	//! Set to true if update is required
+	bool update_required = false;
     //! The queried peripherals; for each function, index 0 is function code and index 1 is the function definition
     std::vector<std::vector<std::array<uint32_t, 2>>> peripherals;
     //! Dreamcast Controller USB VID:1209 PID:2f07
@@ -1240,6 +487,15 @@ public:
 		}
 	}
 
+	//! Transform a DreamPicoPort port index into flycast port index
+	static int dppPortToFcPort(int forPort) {
+		if (forPort == 0) {
+			return 5;
+		} else {
+			return forPort - 1;
+		}
+	}
+
     u32 getFunctionCode(int forPort) const {
 		forPort = fcPortToDppPort(forPort);
 		u32 mask = 0;
@@ -1326,11 +582,19 @@ public:
 		return (dpp_comms && dpp_comms->isConnected());
 	}
 
+	const char* getIssueDescription() const override {
+		if (update_required) {
+			return i18n::T("Firmware Update Required");
+		} else {
+			return SDLDreamLink::getIssueDescription();
+		}
+	}
+
 	std::shared_ptr<maple_device> createMapleDevice(int bus, int port) override {
 		if (port == 5) {
-			return std::make_shared<MapleLinkMainDevice>();
+			return std::make_shared<MapleLinkMainDevice>(MapleLink(shared_from_this(), bus, port));
 		} else {
-			return std::make_shared<DppMapleLinkDevice>();
+			return std::make_shared<DppMapleLinkDevice>(MapleLink(shared_from_this(), bus, port));
 		}
 	}
 
@@ -1352,25 +616,12 @@ public:
 			);
 
 			if (!dpp_comms->isConnected() || !dpp_comms->initialize(timeout_ms)) {
+				update_required = dpp_comms->isUpdateRequired();
 				dpp_comms.reset();
 			}
 		} else {
 			NOTICE_LOG(INPUT, "Serial number for DreamPicoPort[%d] not found", software_bus);
 		}
-
-#ifndef TARGET_UWP
-		if (!dpp_comms) {
-			NOTICE_LOG(
-				INPUT,
-				"Could not find DppDevice for DreamPicoPort[%d]; falling back to serial interface",
-				software_bus
-			);
-			dpp_comms = std::make_unique<SerialDreamPicoPortComms>(software_bus, hw_info.hardware_bus);
-			if (!dpp_comms->isConnected() || !dpp_comms->initialize(timeout_ms)) {
-				dpp_comms.reset();
-			}
-		}
-#endif
 
 		if (isConnected()) {
 			sendPort();
@@ -1401,7 +652,6 @@ public:
 
 	void disconnect() override {
 		dpp_comms.reset();
-		disableStorage();
 	}
 
     void sendPort() {
@@ -1568,6 +818,8 @@ private:
 
 public:
     bool queryPeripherals(bool clearOnFailure = true) {
+		std::vector<std::vector<std::array<uint32_t, 2>>> prev = peripherals;
+
 		if (clearOnFailure) {
 			peripherals.clear();
 		}
@@ -1584,40 +836,83 @@ public:
 
 		peripherals = std::move(optPeriph.value());
 
+		// If game is running, send game ID to any newly attached VMUs
+		if (isGameRunning()) {
+			auto portContainsMemory = [](const std::vector<std::array<uint32_t, 2>>& portData) {
+				bool containsMemory = false;
+				for (const auto& fns : portData) {
+					if (SWAP32(fns[0]) == MFID_1_Storage) {
+						containsMemory = true;
+						break;
+					}
+				}
+				return containsMemory;
+			};
+
+			for (int port = 0; port < peripherals.size(); ++port) {
+				if (
+					portContainsMemory(peripherals[port]) &&
+					(port >= prev.size() || !portContainsMemory(prev[port]))
+				) {
+					sendGameId(dppPortToFcPort(port));
+				}
+			}
+		}
+
 		return true;
 	}
 };
 
 
-DppMapleLinkDevice::DppMapleLinkDevice(u32 supportedFns) : supportedFns(supportedFns)
-{}
-
-DppMapleLinkDevice::~DppMapleLinkDevice()
+DppMapleLinkDevice::DppMapleLinkDevice(const MapleLink& link, u32 supportedFns) :
+	MapleLinkDeviceBase<maple_base>(link), supportedFns(supportedFns)
 {
-	if (virtualVmu)
-	{
-		// Need to nullify the config to avoid double delete
-		virtualVmu->config = nullptr;
-		virtualVmu.reset();
+	linkedDpp = std::dynamic_pointer_cast<DreamPicoPort>(link.dreamlink);
+	if (!linkedDpp) {
+		ERROR_LOG(INPUT, "DppMapleLinkDevice created without an associated DreamPicoPort");
 	}
 }
 
-std::shared_ptr<DreamPicoPort> DppMapleLinkDevice::getDreamPicoPort() const
+DppMapleLinkDevice::~DppMapleLinkDevice()
+{}
+
+void DppMapleLinkDevice::OnSetup()
 {
-	std::optional<MapleLink> link = MapleLinkRegistry::GetMapleLink(bus_id, bus_port);
-	if (!link)
-		return nullptr;
-	return std::dynamic_pointer_cast<DreamPicoPort>(link->dreamlink);
+	// It doesn't make any sense for these to differ for DppMapleLinkDevices
+	player_num = bus_id;
+
+	maple_base::OnSetup();
 }
 
 bool DppMapleLinkDevice::linkStatus()
 {
-	auto link = getDreamPicoPort();
-	return (
-		link &&
-		link->isConnected() &&
-		((link->getFunctionCode(bus_port) & supportedFns) != 0)
+	if (!maple_base::linkStatus())
+		return false;
+
+	bool isLinked = (
+		linkedDpp &&
+		linkedDpp->isConnected() &&
+		((linkedDpp->getFunctionCode(bus_port) & supportedFns) != 0)
 	);
+
+	if (!isLinked) {
+		virtualVmu.reset();
+	}
+
+	return isLinked;
+}
+
+void DppMapleLinkDevice::requestReconnect()
+{
+	if (virtualVmu)
+	{
+		// Reset the virtual VMU data
+		virtualVmu->accessed_blocks_valid = true;
+		memset(&virtualVmu->flash_data[0], 0, sizeof(virtualVmu->flash_data));
+		memset(&virtualVmu->accessed_blocks[0], 0, sizeof(virtualVmu->accessed_blocks));
+	}
+
+	maple_base::requestReconnect();
 }
 
 MapleDeviceType DppMapleLinkDevice::get_device_type()
@@ -1625,29 +920,50 @@ MapleDeviceType DppMapleLinkDevice::get_device_type()
 	// This is mainly used by the serializer
 	serializingType = MDT_None;
 
-	auto link = getDreamPicoPort();
-	if (!link)
+	if (!linkedDpp)
 		return serializingType;
 
-	u32 fn = link->getFunctionCode(bus_port);
-	if (fn & MFID_0_Input)
-		serializingType = MDT_SegaController;
-	else if (fn & (MFID_1_Storage | MFID_2_LCD | MFID_3_Clock))
-		serializingType = MDT_SegaVMU;
-	else if (fn & MFID_4_Mic)
-		serializingType = MDT_Microphone;
-	else if (fn & (MFID_5_ARGun | MFID_7_LightGun))
-		serializingType = MDT_LightGun;
-	else if (fn & MFID_6_Keyboard)
-		serializingType = MDT_Keyboard;
-	else if (fn & MFID_8_Vibration)
-		serializingType = MDT_PurupuruPack;
-	else if (fn & MFID_9_Mouse)
-		serializingType = MDT_Mouse;
-	else if (fn & MFID_11_Camera)
-		serializingType = MDT_Dreameye;
+	serializingType = fnCodeToMapleDeviceType(linkedDpp->getFunctionCode(bus_port));
+
+	establishVirtualDevice(serializingType);
 
 	return serializingType;
+}
+
+MapleDeviceType DppMapleLinkDevice::fnCodeToMapleDeviceType(u32 fnCodeMask)
+{
+	if (fnCodeMask & MFID_0_Input)
+		return MDT_SegaController;
+	else if (fnCodeMask & (MFID_1_Storage | MFID_2_LCD | MFID_3_Clock))
+		return MDT_SegaVMU;
+	else if (fnCodeMask & MFID_4_Mic)
+		return MDT_Microphone;
+	else if (fnCodeMask & (MFID_5_ARGun | MFID_7_LightGun))
+		return MDT_LightGun;
+	else if (fnCodeMask & MFID_6_Keyboard)
+		return MDT_Keyboard;
+	else if (fnCodeMask & MFID_8_Vibration)
+		return MDT_PurupuruPack;
+	else if (fnCodeMask & MFID_9_Mouse)
+		return MDT_Mouse;
+	else if (fnCodeMask & MFID_11_Camera)
+		return MDT_Dreameye;
+
+	return MDT_None;
+}
+
+void DppMapleLinkDevice::establishVirtualDevice(MapleDeviceType dev)
+{
+	switch (dev)
+	{
+		case MDT_SegaVMU:
+			establishVirtualVmu();
+			break;
+
+		default:
+			virtualVmu.reset();
+			break;
+	}
 }
 
 void DppMapleLinkDevice::establishVirtualVmu()
@@ -1655,13 +971,7 @@ void DppMapleLinkDevice::establishVirtualVmu()
 	if (!virtualVmu)
 	{
 		// Create the virtual VMU and have it share my data
-		virtualVmu = std::make_unique<maple_sega_vmu>();
-		virtualVmu->maple_port = maple_port;
-		virtualVmu->bus_port = bus_port;
-		virtualVmu->bus_id = bus_id;
-		memcpy(&virtualVmu->logical_port[0], &logical_port[0], sizeof(logical_port));
-		virtualVmu->player_num = player_num;
-		virtualVmu->config = config;
+		virtualVmu = std::make_unique<DppVirtualVmu>(!usingExternalStorage(), dynamic_cast<maple_device*>(this));
 		virtualVmu->OnSetup();
 	}
 }
@@ -1681,9 +991,10 @@ u32 DppMapleLinkDevice::virtualVmuDma(u32 cmd)
 
 u32 DppMapleLinkDevice::dma(u32 cmd)
 {
-	auto link = MapleLinkRegistry::GetMapleLink(bus_id, bus_port);
-	if (!link)
+	if (!linkedDpp)
 		return MDRS_JVSNone;
+
+	establishVirtualDevice(fnCodeToMapleDeviceType(linkedDpp->getFunctionCode(bus_port)));
 
 	// Deserialize the first data word without popping off of dma
 	u32 firstWord = 0;
@@ -1691,17 +1002,27 @@ u32 DppMapleLinkDevice::dma(u32 cmd)
 		firstWord = inMsg->readData<u32>(0);
 	}
 
+	bool isMemory = false;
+	bool isMemoryRead = false;
+	u8 memoryBlock = 0;
+
 	if (
 		firstWord == MFID_1_Storage &&
 		(cmd == MDCF_GetMediaInfo || cmd == MDCF_BlockRead || cmd == MDCF_BlockWrite || cmd == MDCF_GetLastError)
 	) {
-		if (!link->storageEnabled() && !storageLinked) {
+		if (!linkedDpp->storageEnabled()) {
 			// Use virtual memory and return without accessing physical memory
 			// This will use file-backed memory and automatically save when needed
 			return virtualVmuDma(cmd);
-		} else {
-			// Ensure flag is updated to save the fact that external storage is being used
-			storageLinked = true;
+		} else if (cmd == MDCF_BlockWrite) {
+			// Send write to virtual memory and also continue below
+			virtualVmuDma(cmd);
+		} // else: continue below to read the data
+
+		isMemoryRead = (cmd == MDCF_BlockRead);
+		isMemory = (isMemoryRead || cmd == MDCF_BlockWrite);
+		if (isMemory) {
+			memoryBlock = inMsg->data[7];
 		}
 	} else if (cmd == MDCF_BlockWrite && firstWord == MFID_2_LCD) {
 		// Send to virtual screen and also continue below
@@ -1719,9 +1040,9 @@ u32 DppMapleLinkDevice::dma(u32 cmd)
 	}
 
 	const MapleMsg& txMsg = *inMsg;
-	MapleMsg rxMsg;
+	MapleMsg rxMsg{};
 	std::vector<u32> output;
-	if (link && link->sendReceive(txMsg, rxMsg)) {
+	if (linkedDpp && linkedDpp->sendReceive(txMsg, rxMsg)) {
 		// If this message came from a main peripheral, clear out attached flags (will be handled by base)
 		if (rxMsg.originAP & 0x20) {
 			rxMsg.originAP = (rxMsg.originAP & 0xE0);
@@ -1732,6 +1053,21 @@ u32 DppMapleLinkDevice::dma(u32 cmd)
 		}
 	} else {
 		rxMsg.command = MDRS_JVSNone;
+	}
+
+	// Save to accessed_blocks if this was a memory command
+	if (isMemory) {
+		bool success = false;
+		if (isMemoryRead) {
+			success = (rxMsg.size >= 130 && rxMsg.command == MDRS_DataTransfer);
+			if (success) {
+				// Mirror read data to the virtual VMU
+				memcpy(&virtualVmu->flash_data[memoryBlock * 512], &rxMsg.data[8], 512);
+			}
+		} else {
+			success = (rxMsg.command == MDRS_DeviceReply);
+		}
+		virtualVmu->accessed_blocks[memoryBlock] = success;
 	}
 
 	// If doing write operation, save time at this point
@@ -1745,13 +1081,24 @@ u32 DppMapleLinkDevice::dma(u32 cmd)
 
 bool DppMapleLinkDevice::usingExternalStorage() const
 {
-	return storageLinked;
+	return link.storageEnabled();
 }
 
 bool DppMapleLinkDevice::deserializingFor(MapleDeviceType type)
 {
 	deserializingType = type;
-	return (type != MDT_None && get_device_type() == type);
+	bool isSameType = false;
+
+	if (linkedDpp) {
+		MapleDeviceType detectedType = fnCodeToMapleDeviceType(linkedDpp->getFunctionCode(bus_port));
+		isSameType = (type != MDT_None && detectedType == type);
+	}
+
+	if (!isSameType) {
+		os_notify(i18n::T("ATTENTION: Current hardware configuration changed since last save state"), 6000);
+	}
+
+	return isSameType;
 }
 
 void DppMapleLinkDevice::serialize(Serializer& ser) const
@@ -1759,21 +1106,30 @@ void DppMapleLinkDevice::serialize(Serializer& ser) const
 	// Assumption: the caller would have called get_device_type() just before serialize(), so serializingType should be
 	//             set to the expected serialization type
 
+	if (serializingType == MDT_None)
+	{
+		ERROR_LOG(INPUT, "DppMapleLinkDevice received serialize for MDT_None");
+		return;
+	}
+	else if (serializingType >= MDT_Count)
+	{
+		ERROR_LOG(
+			INPUT,
+			"DppMapleLinkDevice received invalid type for serialize [%i]",
+			static_cast<int>(serializingType)
+		);
+		return;
+	}
+
 	if (serializingType == MDT_SegaVMU && virtualVmu)
 	{
+		// Note: if (serializingType == MDT_SegaVMU) then virtualVmu will be set
 		virtualVmu->serialize(ser);
-	}
-	else if (serializingType != MDT_None)
-	{
-		// Serialize default state for the serializing type
-		std::shared_ptr<maple_device> dummyDev = maple_Create(serializingType);
-		// Setup without installing
-		dummyDev->Setup(bus_id, bus_port, player_num, false);
-		dummyDev->serialize(ser);
 	}
 	else
 	{
-		ERROR_LOG(INPUT, "DppMapleLinkDevice received serialize for MDT_None");
+		// Serialize default state for the serializing type
+		mcfg_SerializeDefaultDevice(ser, serializingType, bus_id, bus_port, player_num);
 	}
 }
 
@@ -1782,20 +1138,56 @@ void DppMapleLinkDevice::deserialize(Deserializer& deser)
 	// Assumption: the caller would have called deserializingFor() just before deserialize(), so deserializingType
 	//             should be set to the expected deserialization type
 
-	if (deserializingType == MDT_SegaVMU)
+	if (deserializingType == MDT_None)
+	{
+		ERROR_LOG(INPUT, "DppMapleLinkDevice received deserialize for MDT_None");
+		requestReconnect();
+		return;
+	}
+	else if (deserializingType >= MDT_Count)
+	{
+		ERROR_LOG(
+			INPUT,
+			"DppMapleLinkDevice received invalid type for deserialize [%i]",
+			static_cast<int>(deserializingType)
+		);
+		requestReconnect();
+		return;
+	}
+	else if (!linkedDpp)
+	{
+		ERROR_LOG(
+			INPUT,
+			"DppMapleLinkDevice no link setup to deserialize [%i]",
+			static_cast<int>(deserializingType)
+		);
+		requestReconnect();
+		return;
+	}
+
+	MapleDeviceType detectedType = fnCodeToMapleDeviceType(linkedDpp->getFunctionCode(bus_port));
+
+	if (detectedType != deserializingType)
+	{
+		// Should never reach here
+		ERROR_LOG(
+			INPUT,
+			"DppMapleLinkDevice::deserialize received non-matching type [%i]; detected type: [%i]",
+			static_cast<int>(deserializingType),
+			static_cast<int>(detectedType)
+		);
+		requestReconnect();
+	}
+
+	if (deserializingType == MDT_SegaVMU && detectedType == deserializingType)
 	{
 		establishVirtualVmu();
-		virtualVmu->deserialize(deser);
-	}
-	else if (deserializingType != MDT_None)
-	{
-		// Just throw out the data
-		std::shared_ptr<maple_device> dummyDev = maple_Create(deserializingType);
-		dummyDev->deserialize(deser);
+		deserializeVmu(deser, *virtualVmu, usingExternalStorage());
 	}
 	else
 	{
-		ERROR_LOG(INPUT, "DppMapleLinkDevice received deserialize for MDT_None");
+		// Just throw out the data
+		mcfg_DeserializeDiscardDevice(deser, deserializingType, bus_id, bus_port, player_num);
 	}
 
 	// Done deserializing - reset type
@@ -1803,12 +1195,17 @@ void DppMapleLinkDevice::deserialize(Deserializer& deser)
 }
 
 
-MapleLinkMainDevice::MapleLinkMainDevice() : DppMapleLinkDevice(MFID_0_Input) {}
+MapleLinkMainDevice::MapleLinkMainDevice(const MapleLink& link) : DppMapleLinkDevice(link, MFID_0_Input) {}
 
 MapleDeviceType MapleLinkMainDevice::get_device_type()
 {
 	// This is mainly used by the serializer
-	serializingType = MDT_SegaController;
+	if (!linkStatus()) {
+		serializingType = MDT_None;
+	} else {
+		serializingType = MDT_SegaController;
+	}
+
 	return serializingType;
 }
 
@@ -1822,8 +1219,7 @@ u32 MapleLinkMainDevice::dma(u32 cmd)
 		PlainJoystickState pjs;
 		config->GetInput(&pjs);
 
-		auto link = getDreamPicoPort();
-		if (!link || !link->isConnected())
+		if (!linkedDpp || !linkedDpp->isConnected())
 		{
 			// Not connected
 			return MDRS_JVSNone;
@@ -1835,7 +1231,7 @@ u32 MapleLinkMainDevice::dma(u32 cmd)
 			// byte 1: 0  0  a5 a4 a3 a2 a1 a0
 			// byte 2: R2 L2 D2 U2 D  X  Y  Z
 			// byte 3: R  L  D  U  St A  B  C
-			const u32 fnDef = link->getFunctionDefinitions(bus_port)[0]; // MFID_0_Input def is always at [0]
+			const u32 fnDef = linkedDpp->getFunctionDefinitions(bus_port)[0]; // MFID_0_Input def is always at [0]
 
 			// Function
 			w32(MFID_0_Input);

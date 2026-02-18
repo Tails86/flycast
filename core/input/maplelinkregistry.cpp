@@ -29,7 +29,7 @@ MapleLinkRegistry& MapleLinkRegistry::Get()
     return singleton;
 }
 
-std::optional<MapleLink> MapleLinkRegistry::getMapleLink(int bus, int port)
+std::optional<MapleLink> MapleLinkRegistry::getMapleLink(int bus, int port, int linkBusOffset)
 {
     if (!DreamLink::isValidBus(bus) || !DreamLink::isValidPort(port))
         return std::nullopt;
@@ -38,30 +38,13 @@ std::optional<MapleLink> MapleLinkRegistry::getMapleLink(int bus, int port)
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        link = links[bus][port].lock();
+        link = links[bus + linkBusOffset][port].lock();
     }
 
     if (!link)
         return std::nullopt;
 
     return MapleLink(std::move(link), bus, port);
-}
-
-bool MapleLinkRegistry::storageEnabled()
-{
-    std::lock_guard<std::mutex> lock(mutex);
-
-    for (auto& perPort : links)
-    {
-        for (DreamLink::WPtr& wptr : perPort)
-        {
-            DreamLink::Ptr link = wptr.lock();
-            if (link && link->storageEnabled())
-                return true;
-        }
-    }
-
-    return false;
 }
 
 std::size_t MapleLinkRegistry::registerLinks(const DreamLink::Ptr& dreamlink, u32 bus, u32 portsMask)

@@ -6,6 +6,7 @@
 #include "input/gamepad.h"
 #include "serialize.h"
 #include "hw/hwreg.h"
+#include "hw/sh4/sh4_sched.h"
 
 #include <memory>
 #include <vector>
@@ -176,6 +177,11 @@ struct maple_device : public std::enable_shared_from_this<maple_device>
 	u8 bus_id;              //0 .. 3
 	u8 player_num;			// for Atomiswave
 	char logical_port[3];  //A0, etc
+	// When true, initiate reconnect on next linkStatus
+	bool reconnect_requested;
+	// When >0, currently shown as disconnected, and the time will be when to reconnect
+	u64 reconnect_time;
+
 	MapleConfigMap* config;
 
 	//fill in the info
@@ -196,7 +202,32 @@ struct maple_device : public std::enable_shared_from_this<maple_device>
 	virtual MapleDeviceType get_device_type() = 0;
 	virtual bool get_lightgun_pos() { return false; }
 	virtual const void *getData(size_t& size) const { size = 0; return nullptr; }
-	virtual bool linkStatus() { return true; }
+	virtual bool linkStatus()
+	{
+		if (reconnect_requested) {
+			// Reconnect in 100 ms
+			reconnect_time = sh4_sched_now64() + (SH4_MAIN_CLOCK / 10);
+			reconnect_requested = false;
+			return false;
+		} else if (reconnect_time == 0) {
+			return true;
+		}
+		else
+		{
+			u64 now = sh4_sched_now64();
+			if (reconnect_time <= now)
+			{
+				reconnect_time = 0;
+				return true;
+			}
+		}
+
+		return false;
+	}
+	virtual void requestReconnect()
+	{
+		reconnect_requested = true;
+	}
 };
 
 std::shared_ptr<maple_device> maple_Create(MapleDeviceType type);
@@ -369,22 +400,38 @@ struct maple_ascii_stick: maple_sega_controller
 
 struct maple_sega_vmu: maple_base
 {
+	//! Pointer to the file-backed memory of this VMU
 	FILE *file = nullptr;
+	//! The flash memory of the VMU
 	u8 flash_data[128_KB];
+	//! The VMU display
 	u8 lcd_data[192];
-	u8 lcd_data_decoded[48*32];
+	//! Magic value used to validate accessed_blocks in save state
+	static constexpr u8 serialize_magic[4] = {0x04, 0x3d, 0x8b, 0xde};
+	//! When false, the loaded state does not contain accessed_blocks
+	bool accessed_blocks_valid;
+	//! For each block, determines whether the block has been accessed (read/written) by the game (1 == accessed)
+	u8 accessed_blocks[256];
+	//! The last clock tick memory was written
+	u64 last_write_tick;
+	//! After deserialize, this is set to number of microseconds since last write (or u64 max for no write or not valid)
+	u64 loaded_us_since_write;
+	//! Number of bytes to pad out the serialized save-state data (for backwards compatibility reasons)
+	static constexpr std::size_t ser_pad_size =
+		((48*32) - sizeof(serialize_magic) - sizeof(accessed_blocks) - sizeof(loaded_us_since_write));
+	//! When true, the entire flash_data must be written to file on next operation
 	bool fullSaveNeeded = false;
 
 	MapleDeviceType get_device_type() override;
 	void serialize(Serializer& ser) const override;
 	void deserialize(Deserializer& deser) override;
-	void updateMapleLinkScreen();
 	virtual bool fullSave();
 	void initializeVmu();
 	void OnSetup() override;
 	~maple_sega_vmu() override;
 	u32 dma(u32 cmd) override;
 	const void *getData(size_t& size) const override;
+	void setLcd();
 };
 
 struct maple_microphone: maple_base
