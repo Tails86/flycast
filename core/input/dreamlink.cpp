@@ -62,9 +62,9 @@ void BaseDreamLink::onGameStarted()
 {
 }
 
-void BaseDreamLink::registerLink(int bus, u32 portsMask)
+void BaseDreamLink::registerLink(int bus, u32 portsMask, LinkPriority priority)
 {
-	PrioritizedRegistry::Get().registerLink(shared_from_this(), bus, portsMask);
+	PrioritizedRegistry::Get().registerLink(shared_from_this(), bus, portsMask, priority);
 }
 
 void BaseDreamLink::unregisterLink(bool isTerminal)
@@ -103,55 +103,79 @@ BaseDreamLink::PrioritizedRegistry& BaseDreamLink::PrioritizedRegistry::Get()
 }
 
 void BaseDreamLink::PrioritizedRegistry::registerLink(
-	const BaseDreamLink::Ptr& dreamlink,
+	const BaseDreamLink::Ptr& newDreamlink,
 	int bus,
-	u32 portsMask
+	u32 portsMask,
+	LinkPriority priority
 )
 {
-	if (dreamlink->linkedBus == bus && dreamlink->connectedPortsMask == portsMask)
+	if (newDreamlink->linkedBus == bus && newDreamlink->connectedPortsMask == portsMask)
 		return;
 
 	std::lock_guard<std::recursive_mutex> lock(mMutex);
 
 	// Ensure this link is not currently established
-	removeLinkFromRegistry(dreamlink.get(), bus);
+	removeLinkFromRegistry(newDreamlink.get(), bus);
 
 	if (isValidBus(bus))
 	{
-		dreamlink->linkedBus = bus;
-		dreamlink->linkedPortsMask = portsMask;
-		dreamlink->connectedPortsMask = portsMask;
+		newDreamlink->linkedBus = bus;
+		newDreamlink->linkedPortsMask = portsMask;
+		newDreamlink->connectedPortsMask = portsMask;
 
 		std::list<BaseDreamLink::Ptr>& priorities = mRegistry[bus];
 
-		if (!priorities.empty())
+		// Establish local registry link
+		// Since there is only high/low priorities, either put in front or back
+		if (priority == LinkPriority::HIGH)
 		{
-			// Remove connected port flags since this link now takes precedence
-			for (BaseDreamLink::Ptr& link : priorities)
+			if (!priorities.empty())
 			{
-				const u32 prev = link->connectedPortsMask;
-				link->connectedPortsMask = link->connectedPortsMask & ~portsMask;
-				if (link->connectedPortsMask == 0)
+				// Remove connected port flags since this link now takes precedence
+				for (BaseDreamLink::Ptr& existingLink : priorities)
 				{
-					if (prev != link->connectedPortsMask)
+					const u32 prev = existingLink->connectedPortsMask;
+					existingLink->connectedPortsMask = existingLink->connectedPortsMask & ~portsMask;
+					if (existingLink->connectedPortsMask == 0)
 					{
-						// No longer connected to anything
-						link->disconnect();
+						if (prev != existingLink->connectedPortsMask)
+						{
+							// No longer connected to anything
+							existingLink->disconnect();
+						}
 					}
 				}
 			}
+
+			priorities.push_front(newDreamlink);
+		}
+		else
+		{
+			if (!priorities.empty())
+			{
+				// Remove connected port flags from this link since existing items take precedence
+				for (BaseDreamLink::Ptr& existingLink : priorities)
+				{
+					newDreamlink->connectedPortsMask = newDreamlink->connectedPortsMask & ~existingLink->connectedPortsMask;
+					if (newDreamlink->connectedPortsMask == 0)
+					{
+						// No longer connected to anything
+						newDreamlink->disconnect();
+						break;
+					}
+				}
+			}
+
+			priorities.push_back(newDreamlink);
 		}
 
-		// Establish local registry link
-		priorities.push_front(dreamlink);
-
-		establishInMapleLinkRegistry(dreamlink, bus, portsMask);
+		establishInMapleLinkRegistry(newDreamlink, bus, newDreamlink->connectedPortsMask);
 	}
 	else
 	{
 		// Not a valid bus, so this should not be connected
-		dreamlink->linkedBus = -1;
-		dreamlink->disconnect();
+		newDreamlink->linkedBus = -1;
+		newDreamlink->disconnect();
 	}
 
 	MapleLinkRegistry::Get().commitChanges();
