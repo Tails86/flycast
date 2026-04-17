@@ -1819,7 +1819,7 @@ void gui_error(const std::string& what) {
 	error_msg = what;
 }
 
-void gui_loadState(bool backup)
+void gui_loadState()
 {
 	const LockGuard lock(guiMutex);
 
@@ -1836,7 +1836,7 @@ void gui_loadState(bool backup)
 			}
 
 			emu.stop();
-				dc_loadstate(config::SavestateSlot, backup);
+				dc_loadstate(config::SavestateSlot);
 				emu.start();
 		} catch (const FlycastException& e) {
 			gui_stop_game(e.what());
@@ -1939,24 +1939,19 @@ void gui_takeScreenshot()
 	});
 }
 
-// Cache for save state thumbnails (keyed by slot + backup flag)
+// Cache for save state thumbnails
 static std::map<int, ImTextureID> thumbnailCache;
 static std::map<int, time_t> thumbnailCacheTime;
 
-static int makeThumbnailKey(int slot, bool backup)
+static ImTextureID loadSaveStateThumbnail(int slot)
 {
-	return backup ? (slot + 1000) : slot;
-}
-
-static ImTextureID loadSaveStateThumbnail(int slot, bool backup)
-{
-	const int key = makeThumbnailKey(slot, backup);
+	const int key = slot;
 	// Check cache first
 	auto cached = thumbnailCache.find(key);
 	if (cached != thumbnailCache.end())
 	{
 		// Verify cache is still valid (file hasn't changed)
-		time_t fileTime = dc_getStateCreationDate(slot, backup);
+		time_t fileTime = dc_getStateCreationDate(slot);
 		auto cachedTime = thumbnailCacheTime.find(key);
 		if (fileTime > 0 && cachedTime != thumbnailCacheTime.end() && fileTime == cachedTime->second)
 			return cached->second;
@@ -1964,7 +1959,7 @@ static ImTextureID loadSaveStateThumbnail(int slot, bool backup)
 
 	// Load screenshot from save state
 	std::vector<u8> pngData;
-	dc_getStateScreenshot(slot, pngData, backup);
+	dc_getStateScreenshot(slot, pngData);
 	if (pngData.empty())
 		return ImTextureID{};
 
@@ -1993,14 +1988,14 @@ static ImTextureID loadSaveStateThumbnail(int slot, bool backup)
 
 	// Cache texture
 	thumbnailCache[key] = textureId;
-	thumbnailCacheTime[key] = dc_getStateCreationDate(slot, backup);
+	thumbnailCacheTime[key] = dc_getStateCreationDate(slot);
 
 	return textureId;
 }
 
-static void draw_save_state_menu_thumbnail(int slot, bool backup, float size)
+static void draw_save_state_menu_thumbnail(int slot, float size)
 {
-	ImTextureID thumbnail = loadSaveStateThumbnail(slot, backup);
+	ImTextureID thumbnail = loadSaveStateThumbnail(slot);
 	if (thumbnail)
 		ImGui::Image(thumbnail, ImVec2(size, size));
 	else
@@ -2053,14 +2048,14 @@ void render_save_state_slots(bool isSaving)
 	{
 		for (int slot = 0; slot < 10; slot++)
 		{
-			const time_t timestamp = dc_getStateCreationDate(slot, false);
+			const time_t timestamp = dc_getStateCreationDate(slot);
 			std::string label;
 			if (timestamp > 0)
 				label = "Save Slot " + std::to_string(slot + 1) + " (" + format_save_state_menu_time(timestamp) + ")";
 			else
 				label = "Save Slot " + std::to_string(slot + 1) + " (Empty)";
 
-			draw_save_state_menu_thumbnail(slot, false, thumbnailSize);
+			draw_save_state_menu_thumbnail(slot, thumbnailSize);
 			ImGui::SameLine(0, uiScaled(6.0f));
 			if (ImGui::MenuItem(label.c_str()))
 			{
@@ -2071,49 +2066,27 @@ void render_save_state_slots(bool isSaving)
 		return;
 	}
 
-	bool hasMainEntries = false;
-	bool hasBackupEntries = false;
+	bool hasEntries = false;
 
 	for (int slot = 0; slot < 10; slot++)
 	{
-		const time_t timestamp = dc_getStateCreationDate(slot, false);
+		const time_t timestamp = dc_getStateCreationDate(slot);
 		if (timestamp <= 0)
 			continue;
 
-		hasMainEntries = true;
+		hasEntries = true;
 		const std::string label = "Load Slot " + std::to_string(slot + 1)
 								+ " (" + format_save_state_menu_time(timestamp) + ")";
-		draw_save_state_menu_thumbnail(slot, false, thumbnailSize);
+		draw_save_state_menu_thumbnail(slot, thumbnailSize);
 		ImGui::SameLine(0, uiScaled(6.0f));
 		if (ImGui::MenuItem(label.c_str()))
 		{
 			config::SavestateSlot = slot;
-			gui_loadState(false);
+			gui_loadState();
 		}
 	}
 
-	for (int slot = 0; slot < 10; slot++)
-	{
-		const time_t timestamp = dc_getStateCreationDate(slot, true);
-		if (timestamp <= 0)
-			continue;
-
-		if (hasMainEntries && !hasBackupEntries)
-			ImGui::Separator();
-
-		hasBackupEntries = true;
-		const std::string label = "Load Backup Slot " + std::to_string(slot + 1)
-								+ " (" + format_save_state_menu_time(timestamp) + ")";
-		draw_save_state_menu_thumbnail(slot, true, thumbnailSize);
-		ImGui::SameLine(0, uiScaled(6.0f));
-		if (ImGui::MenuItem(label.c_str()))
-		{
-			config::SavestateSlot = slot;
-			gui_loadState(true);
-		}
-	}
-
-	if (!hasMainEntries && !hasBackupEntries)
+	if (!hasEntries)
 		ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No Save States");
 }
 

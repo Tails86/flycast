@@ -6,6 +6,7 @@
 #include <cctype>
 #include <condition_variable>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -274,4 +275,36 @@ private:
 	std::thread::id threadId;
 	std::vector<std::function<void()>> tasks;
 	std::mutex mutex;
+};
+
+template <typename TimePointType>
+class ScheduledThreadRunner : protected ThreadRunner
+{
+public:
+	using ThreadRunner::init;
+	using ThreadRunner::term;
+	using ThreadRunner::runOnThread;
+
+	void runOnThread(const TimePointType& tp, const std::function<void()>& func)
+	{
+		scheduledTasks.insert({tp, func});
+	}
+
+	void execTasks(const TimePointType& tp)
+	{
+		ThreadRunner::execTasks();
+
+		while (!scheduledTasks.empty() && scheduledTasks.begin()->first <= tp)
+		{
+			std::function<void()> func = std::move(scheduledTasks.begin()->second);
+			scheduledTasks.erase(scheduledTasks.begin());
+			func();
+		}
+	}
+
+private:
+	using ThreadRunner::execTasks;
+
+private:
+	std::multimap<TimePointType, std::function<void()>> scheduledTasks;
 };
