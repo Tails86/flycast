@@ -21,6 +21,7 @@
 
 #include <string>
 #include <functional>
+#include <chrono>
 
 void gui_init();
 void gui_initFonts();
@@ -48,12 +49,19 @@ void gui_stop_game(const std::string& message = "");
 void gui_start_game(const std::string& path);
 void gui_error(const std::string& what);
 void gui_setOnScreenKeyboardCallback(void (*callback)(bool show));
-void gui_loadState();
+void gui_loadState(bool backup = false);
 void gui_saveState(bool stopRestart = true);
 void gui_cycleSaveStateSlot(int step);
 std::string gui_getCurGameBoxartUrl();
+void gui_refresh_custom_boxart(bool force = true);
 void gui_takeScreenshot();
 void gui_runOnUiThread(std::function<void()> function);
+void gui_runOnUiThread(const std::chrono::steady_clock::time_point& tp, const std::function<void()>& function);
+
+template <typename Rep, typename Period>
+void gui_runOnUiThread(std::chrono::duration<Rep, Period> duration, const std::function<void()>& function) {
+	gui_runOnUiThread(std::chrono::steady_clock::now() + duration, function);
+}
 
 enum class GuiState {
 	Closed,
@@ -70,6 +78,9 @@ enum class GuiState {
 	Achievements,
 };
 extern GuiState gui_state;
+
+// Exit save dialog flag
+extern bool showExitSaveDialog;
 
 void gui_setState(GuiState newState);
 
