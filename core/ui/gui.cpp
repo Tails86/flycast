@@ -52,6 +52,7 @@
 #endif
 #include "vgamepad.h"
 #include "settings.h"
+#include "oslib/i18n.h"
 #include "gui_menu.h"
 
 #ifdef _WIN32
@@ -265,12 +266,23 @@ void gui_initFonts()
 	size_t dataSize;
 	std::unique_ptr<u8[]> data = resource::load("fonts/Roboto-Medium.ttf", dataSize);
 	verify(data != nullptr);
-	ImFont* baseFont = io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, fontSize, nullptr, ranges);
-    ImFontConfig font_cfg;
-    font_cfg.MergeMode = true;
-	ImFontConfig fontConfig = font_cfg;
-	ImFontConfig largeFontConfig = font_cfg;
+	ImFont *regularFont = io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, fontSize, nullptr, ranges);
+	ImFontConfig fontConfig;
+	fontConfig.MergeMode = true;
+	fontConfig.DstFont = regularFont;
 	const float largeFontSize = uiScaled(21.f);
+	data = resource::load("fonts/Roboto-Regular.ttf", dataSize);
+	verify(data != nullptr);
+	largeFont = io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, largeFontSize, nullptr, ranges);
+	ImFontConfig largeFontConfig;
+	largeFontConfig.MergeMode = true;
+	largeFontConfig.DstFont = largeFont;
+
+	data = resource::load("fonts/" FONT_ICON_FILE_NAME_FAS, dataSize);
+	verify(data != nullptr);
+	fontConfig.FontNo = 0;
+	static ImWchar faRanges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
+	io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, fontSize, &fontConfig, faRanges);
 #ifdef _WIN32
     u32 cp = GetACP();
     std::string fontDir = std::string(nowide::getenv("SYSTEMROOT")) + "\\Fonts\\";
@@ -368,19 +380,84 @@ void gui_initFonts()
         	io.Fonts->AddFontFromFileTTF("/system/fonts/NotoSansCJK-Regular.ttc", largeFontSize, &largeFontConfig, glyphRanges);
         }
     }
-
-    // Additional platform-specific CJK font loading can be added here if needed.
+#elif defined(__linux__)
+	std::string locale = i18n::getCurrentLocale();
+	if (locale.find("ja_") == 0)			// Japanese
+	{
+		const char *fonts[] = {
+				"/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf",
+				"/usr/share/fonts/ipa-pgothic-fonts/ipagp.ttf",	// redhat
+				"/usr/share/fonts/truetype/takao-gothic/TakaoPGothic.ttf",
+				"/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+				"/usr/share/fonts/adobe-source-han-sans-jp-fonts/SourceHanSansJP-Regular.otf", // redhat
+				"/usr/share/fonts/vl-gothic-fonts/VL-Gothic-Regular.ttf", // redhat
+				"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+				"/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", // redhat
+				nullptr
+		};
+		const char *largeFonts[] = {
+				"/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf",
+				"/usr/share/fonts/ipa-pgothic-fonts/ipagp.ttf",	// redhat
+				"/usr/share/fonts/truetype/takao-gothic/TakaoPGothic.ttf",
+				"/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+				"/usr/share/fonts/adobe-source-han-sans-jp-fonts/SourceHanSansJP-Bold.otf", // redhat
+				"/usr/share/fonts/vl-gothic-fonts/VL-Gothic-Regular.ttf", // redhat
+				"/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+				"/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc", // redhat
+				nullptr
+		};
+		addFont(fonts, fontSize, fontConfig, io.Fonts->GetGlyphRangesJapanese());
+		addFont(largeFonts, largeFontSize, largeFontConfig, io.Fonts->GetGlyphRangesJapanese());
+	}
+	else if (locale.find("ko_") == 0)		// Korean
+	{
+		const char *fonts[] = {
+				"/usr/share/fonts/truetype/unfonts-core/UnDotum.ttf",
+				"/usr/share/fonts-droid-fallback/truetype/DroidSansFallback.ttf",
+				"/usr/share/fonts/baekmuk-dotum-fonts/dotum.ttf", // redhat
+				"/usr/share/fonts/adobe-source-han-sans-kr-fonts/SourceHanSansKR-Regular.otf", // redhat
+				"/usr/share/fonts/naver-nanum-gothic-coding-fonts/NanumGothic_Coding.ttf", // redhat
+				"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+				"/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", // redhat
+				nullptr
+		};
+		const char *largeFonts[] = {
+				"/usr/share/fonts/truetype/unfonts-core/UnDotumBold.ttf",
+				"/usr/share/fonts-droid-fallback/truetype/DroidSansFallback.ttf",
+				"/usr/share/fonts/adobe-source-han-sans-kr-fonts/SourceHanSansKR-Bold.otf", // redhat
+				"/usr/share/fonts/naver-nanum-gothic-coding-fonts/NanumGothic_Coding_Bold.ttf", // redhat
+				"/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+				"/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc", // redhat
+				nullptr
+		};
+		addFont(fonts, fontSize, fontConfig, io.Fonts->GetGlyphRangesKorean());
+		addFont(largeFonts, largeFontSize, largeFontConfig, io.Fonts->GetGlyphRangesKorean());
+	}
+	else if (locale.find("zh_") == 0)		// Chinese
+	{
+		const ImWchar *glyphRanges = GetGlyphRangesChineseSimplifiedOfficial();
+		if (locale.find("zh_TW") == 0 || locale.find("zh_HK") == 0)
+			glyphRanges = GetGlyphRangesChineseTraditionalOfficial();
+		const char *fonts[] = {
+				"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+				"/usr/share/fonts/wqy-zenhei-fonts/wqy-zenhei.ttc", // redhat
+				"/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+				"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+				"/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", // redhat
+				nullptr
+		};
+		const char *largeFonts[] = {
+				"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+				"/usr/share/fonts/wqy-zenhei-fonts/wqy-zenhei.ttc", // redhat
+				"/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+				"/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+				"/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc", // redhat
+				nullptr
+		};
+		addFont(fonts, fontSize, fontConfig, glyphRanges);
+		addFont(largeFonts, largeFontSize, largeFontConfig, glyphRanges);
+	}
 #endif
-	// Font Awesome symbols (added to default font)
-	data = resource::load("fonts/" FONT_ICON_FILE_NAME_FAS, dataSize);
-	verify(data != nullptr);
-    font_cfg.FontNo = 0;
-	static ImWchar faRanges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
-	io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, fontSize, &font_cfg, faRanges);
-    // Large font without Asian glyphs
-	data = resource::load("fonts/Roboto-Regular.ttf", dataSize);
-	verify(data != nullptr);
-	largeFont = io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, largeFontSize, nullptr, ranges);
 
 	data = resource::load("fonts/Jura-wght.ttf", dataSize);
 	if (data != nullptr)
@@ -399,7 +476,7 @@ void gui_initFonts()
 		settingsValueFont = io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, uiScaled(24.f), nullptr, ranges);
 
 	if (settingsTitleFont == nullptr)
-		settingsTitleFont = baseFont != nullptr ? baseFont : largeFont;
+		settingsTitleFont = regularFont != nullptr ? regularFont : largeFont;
 	if (settingsValueFont == nullptr)
 		settingsValueFont = largeFont;
 	if (settingsRightValueFont == nullptr)
@@ -1567,6 +1644,12 @@ void gui_display_ui()
 	ImGui::NewFrame();
 	error_msg_shown = false;
 	bool gui_open = gui_is_open();
+	auto finishFrame = [&]() {
+		ImGui::Render();
+		gui_endFrame(gui_open);
+		uiThreadRunner.execTasks(std::chrono::steady_clock::now());
+		ImguiFileTexture::resetLoadCount();
+	};
 
 	// Render menu bar BEFORE any early returns
 	// This ensures menu bar is visible in library mode and during auto-start
@@ -1577,7 +1660,10 @@ void gui_display_ui()
 	{
 #ifdef TARGET_UWP
 		if (checkUWPProtocolActivation())
+		{
+			finishFrame();
 			return;
+		}
 #endif
 		if (!settings.content.path.empty() || settings.naomi.slave)
 		{
@@ -1588,7 +1674,8 @@ void gui_display_ui()
 				gui_start_game("");
 			else
 				gui_start_game(settings.content.path);
-			return; // Menu bar already rendered above
+			finishFrame();
+			return;
 		}
 	}
 
@@ -1643,10 +1730,7 @@ void gui_display_ui()
 		break;
 	}
 
-    ImGui::Render();
-	gui_endFrame(gui_open);
-	uiThreadRunner.execTasks(std::chrono::steady_clock::now());
-	ImguiFileTexture::resetLoadCount();
+	finishFrame();
 
 	if (gui_state == GuiState::Closed)
 		emu.start();
@@ -1782,6 +1866,7 @@ void gui_term()
 	{
 		inited = false;
 		scanner.stop();
+		clearThumbnailCache();
 		ImGui::DestroyContext();
 	    EventManager::unlisten(Event::Resume, emuEventCallback);
 	    EventManager::unlisten(Event::Start, emuEventCallback);
@@ -1874,6 +1959,7 @@ void gui_saveState(bool stopRestart)
 void gui_cycleSaveStateSlot(int step)
 {
 	config::SavestateSlot = (config::SavestateSlot + step + 10) % 10;
+	SaveSettings();
 	os_notify(strprintf(T("Save state slot %d"), config::SavestateSlot + 1).c_str(), 2000);
 }
 

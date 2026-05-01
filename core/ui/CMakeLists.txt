@@ -35,11 +35,7 @@ if(NOT LIBRETRO)
             boxart/gamesdb.h
             boxart/pvrparser.h
             boxart/scraper.cpp
-            boxart/scraper.h
-            widgets/toggle_switch.cpp
-            widgets/toggle_switch.h
-            widgets/widgets.cpp
-            widgets/widgets.h)
+            boxart/scraper.h)
 
     if(USE_DISCORD)
         target_sources(${PROJECT_NAME} PRIVATE discord.cpp)

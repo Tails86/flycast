@@ -48,6 +48,9 @@ static bool openUrlInShell(const char* url)
 // Render the main menu bar using standard ImGui.
 void renderMainMenuBar()
 {
+	if (!menuVisible)
+		return;
+
 	// Use ImGui's native main menu bar - it handles everything automatically:
 	// - Background styling from current theme (ImGuiCol_MenuBarBg)
 	// - Mouse/keyboard interaction
@@ -78,6 +81,7 @@ void renderFileMenu()
 				if (!cancelled && !selection.empty())
 				{
 					config::ContentPath.get().push_back(selection);
+					SaveSettings();
 					gui_refresh_files();
 				}
 				return true;
