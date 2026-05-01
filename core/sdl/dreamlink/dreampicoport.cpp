@@ -699,12 +699,26 @@ private:
 						hw_info.hardware_bus >= gamepads.size() ||
 						gamepads[hw_info.hardware_bus] == dpp_api::GamepadConnectionState::UNAVAILABLE
 					) {
-						for (int i = 0; i < static_cast<int>(gamepads.size()); ++i) {
-							if (gamepads[i] != dpp_api::GamepadConnectionState::UNAVAILABLE) {
-								hw_info.hardware_bus = i;
-								dpp_comms->changeHardwareBus(i);
-								break;
+						// Find the first item which is not marked as UNAVAILABLE
+						auto it = std::find_if(
+							gamepads.begin(),
+							gamepads.end(),
+							[](dpp_api::GamepadConnectionState s) {
+								return s != dpp_api::GamepadConnectionState::UNAVAILABLE;
 							}
+						);
+
+						if (it != gamepads.end()) {
+							size_t i = static_cast<int>(std::distance(gamepads.begin(), it));
+							hw_info.hardware_bus = i;
+							dpp_comms->changeHardwareBus(i);
+						} else {
+							// This should never happen in practice, but just in case something went horribly wrong...
+							WARN_LOG(
+								INPUT,
+								"Failed to determine the hardware bus index for DreamPicoPort[%d]",
+								software_bus
+							);
 						}
 					}
 				}
