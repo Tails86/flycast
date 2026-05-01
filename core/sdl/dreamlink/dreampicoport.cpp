@@ -253,6 +253,10 @@ public:
 
 	virtual ~ApiDreamPicoPortComms() = default;
 
+	void changeHardwareBus(int hardware_bus) {
+		this->hardware_bus = hardware_bus;
+	}
+
 	void changeSoftwareBus(int software_bus) {
 		this->software_bus = software_bus;
 	}
@@ -274,6 +278,10 @@ public:
 		dpp_api_device->send(dpp_api::msg::tx::RefreshGamepad{static_cast<std::uint8_t>(hardware_bus)});
 
 		return true;
+	}
+
+	std::array<dpp_api::GamepadConnectionState, 4> getConnectedGamepads() {
+		return dpp_api_device->sendSync(dpp_api::msg::tx::GetConnectedGamepads{}).gamepadConnectionStates;
 	}
 
 	std::optional<std::vector<std::vector<std::array<uint32_t, 2>>>> getPeripherals(
@@ -410,7 +418,7 @@ class DreamPicoPort : public SDLDreamLink
 	};
 
 	//! Hardware information determined on instantiation
-	const HardwareInfo hw_info;
+	HardwareInfo hw_info;
 	//! The name to return on getName
 	const std::string device_name;
 
@@ -680,7 +688,27 @@ private:
 				hw_info.hardware_bus
 			);
 
-			if (!dpp_comms->isConnected() || !dpp_comms->initialize(timeout_ms)) {
+			if (dpp_comms->isConnected() && dpp_comms->initialize(timeout_ms)) {
+				// Connected and initialized!
+				if (hw_info.is_single_device) {
+					// The determined hardware_bus may be incorrect
+					// This covers cases where, for instance, only a controller is plugged into port D and all others
+					// are either set to auto and disconnected or otherwise disabled
+					std::array<dpp_api::GamepadConnectionState, 4Ui64> gamepads = dpp_comms->getConnectedGamepads();
+					if (
+						hw_info.hardware_bus >= gamepads.size() ||
+						gamepads[hw_info.hardware_bus] == dpp_api::GamepadConnectionState::UNAVAILABLE
+					) {
+						for (int i = 0; i < static_cast<int>(gamepads.size()); ++i) {
+							if (gamepads[i] != dpp_api::GamepadConnectionState::UNAVAILABLE) {
+								hw_info.hardware_bus = i;
+								dpp_comms->changeHardwareBus(i);
+								break;
+							}
+						}
+					}
+				}
+			} else {
 				update_required = dpp_comms->isUpdateRequired();
 				dpp_comms.reset();
 			}
