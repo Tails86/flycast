@@ -29,7 +29,11 @@ namespace {
 
 bool isSupportedBoxartExtension(const std::string& ext)
 {
-	return ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "bmp";
+	std::string lowerExt = ext;
+	std::transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), [](unsigned char c) {
+		return static_cast<char>(std::tolower(c));
+	});
+	return lowerExt == "png" || lowerExt == "jpg" || lowerExt == "jpeg" || lowerExt == "bmp";
 }
 
 std::string normalizeBoxartKey(const std::string& value)
@@ -39,9 +43,14 @@ std::string normalizeBoxartKey(const std::string& value)
 	bool prevSpace = true;
 	for (unsigned char c : value)
 	{
-		if (std::isalnum(c))
+		if (c < 0x80 && std::isalnum(c))
 		{
 			out.push_back(static_cast<char>(std::tolower(c)));
+			prevSpace = false;
+		}
+		else if (c >= 0x80)
+		{
+			out.push_back(static_cast<char>(c));
 			prevSpace = false;
 		}
 		else if (!prevSpace)
