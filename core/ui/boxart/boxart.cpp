@@ -62,9 +62,9 @@ std::string normalizeBoxartKey(const std::string& value)
 	return trim_ws(out);
 }
 
-std::string makeBoxartKey(const std::string& value)
+std::string makeBoxartKey(const std::string& filepath)
 {
-	return normalizeBoxartKey(get_file_basename(value));
+	return normalizeBoxartKey(get_file_basename(filepath));
 }
 
 } // namespace
