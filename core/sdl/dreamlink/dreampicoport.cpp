@@ -386,6 +386,8 @@ class DreamPicoPort : public SDLDreamLink
 	mutable std::recursive_mutex mutex;
 	//! Implements communication interface to DreamPicoPort
 	std::unique_ptr<class ApiDreamPicoPortComms> dpp_comms;
+	//! Set to true on first connection attempt
+	bool connect_attempted = false;
 	//! Set to true while connection was requested
 	bool connect_requested = false;
 	//! Set to true when connect retry has been scheduled
@@ -582,6 +584,17 @@ public:
 
 		if (software_bus == newBus)
 			return;
+
+		// Show change notice only after first connection attempt
+		if (connect_attempted) {
+			NOTICE_LOG(
+				INPUT,
+				"DreamPicoPort[%s] -> DreamPicoPort[%s]",
+				getLocDesc().c_str(),
+				getLocDesc(newBus).c_str()
+			);
+		}
+
 		software_bus = newBus;
 		registerLink(software_bus, ALL_PORTS_MASK); // will automatically unregister from previous bus
 		setMapleDevices();
@@ -646,6 +659,7 @@ public:
 	void connect() override {
 		std::lock_guard<std::recursive_mutex> lock(mutex);
 
+		connect_attempted = true;
 		connect_requested = true;
 
 		internalConnect();
