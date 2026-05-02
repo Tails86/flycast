@@ -46,6 +46,7 @@
 #include <optional>
 #include <chrono>
 #include <unordered_map>
+#include <string_view>
 
 #ifndef TARGET_UWP
 #include <asio.hpp>
@@ -114,6 +115,16 @@ struct DppVirtualVmu : public maple_sega_vmu
 		fullSaveNeeded = false;
 	}
 };
+
+static std::string getBusDescription(int software_bus, int hardware_bus) {
+	const char swPortChar = 'A' + software_bus;
+	const char hwPortChar = 'A' + hardware_bus;
+	if (swPortChar == hwPortChar) {
+		return std::string(1, swPortChar);
+	} else {
+		return std::string(1, swPortChar) + "," + std::string(1, hwPortChar);
+	}
+}
 
 //! Generically handles any MapleLink device when supported
 struct DppMapleLinkDevice : public MapleLinkDeviceBase<maple_base>
@@ -214,9 +225,9 @@ public:
 					std::array<std::uint8_t, 3> ver = dpp_api_device->getVersion();
 					WARN_LOG(
 						INPUT,
-						"DreamPicoPort[%d] API connect failed: device with serial \"%s\" uses version %i.%i.%i\n"
+						"DreamPicoPort[%s] API connect failed: device with serial \"%s\" uses version %i.%i.%i\n"
 						"Update DreamPicoPort firmware to version 1.2.1 or later to use DreamLink",
-						software_bus,
+						getLocDesc().c_str(),
 						serial_number.c_str(),
 						static_cast<int>(ver[0]),
 						static_cast<int>(ver[1]),
@@ -226,8 +237,8 @@ public:
 				else {
 					WARN_LOG(
 						INPUT,
-						"DreamPicoPort[%d] API connect failed: find failed for serial %s",
-						software_bus,
+						"DreamPicoPort[%s] API connect failed: find failed for serial %s",
+						getLocDesc().c_str(),
 						serial_number.c_str()
 					);
 				}
@@ -235,8 +246,8 @@ public:
 			else if (!dpp_api_device->connect()) {
 				WARN_LOG(
 					INPUT,
-					"DreamPicoPort[%d] API connect failed: %s",
-					software_bus,
+					"DreamPicoPort[%s] API connect failed: %s",
+					getLocDesc().c_str(),
 					dpp_api_device->getLastErrorStr().c_str()
 				);
 				dpp_api_device.reset();
@@ -244,10 +255,6 @@ public:
 				// Save this instance to the map
 				all_dpp_api_devices.insert(std::make_pair(serial_number, dpp_api_device));
 			}
-		}
-
-		if (dpp_api_device) {
-			NOTICE_LOG(INPUT, "DreamPicoPort[%d] API connected", software_bus);
 		}
 	}
 
@@ -357,6 +364,13 @@ public:
 		changePlayerDisplay.idx = hardware_bus;
 		changePlayerDisplay.toIdx = software_bus;
 		dpp_api_device->send(changePlayerDisplay, nullptr);
+	}
+
+	std::string getLocDesc(int software_bus = -1) const {
+		if (software_bus < 0) {
+			software_bus = this->software_bus;
+		}
+		return getBusDescription(software_bus, hardware_bus);
 	}
 };
 
@@ -670,6 +684,13 @@ public:
 		return hw_info.is_single_device;
 	}
 
+	std::string getLocDesc(int software_bus = -1) const {
+		if (software_bus < 0) {
+			software_bus = this->software_bus;
+		}
+		return getBusDescription(software_bus, hw_info.hardware_bus);
+	}
+
 private:
 	void internalConnect() {
 		// Timeout is 1 second while establishing connection
@@ -690,44 +711,52 @@ private:
 
 			if (dpp_comms->isConnected() && dpp_comms->initialize(timeout_ms)) {
 				// Connected and initialized!
-				if (hw_info.is_single_device) {
-					// The determined hardware_bus may be incorrect
+				bool hwVerified = false;
+				std::array<dpp_api::GamepadConnectionState, 4Ui64> gamepads = dpp_comms->getConnectedGamepads();
+				if (
+					hw_info.hardware_bus < gamepads.size() &&
+					gamepads[hw_info.hardware_bus] != dpp_api::GamepadConnectionState::UNAVAILABLE
+				) {
+					// Something is available here through the API!
+					hwVerified = true;
+				} else if (hw_info.is_single_device) {
+					// The determined hardware_bus is incorrect, and only single controller device is available
 					// This covers cases where, for instance, only a controller is plugged into port D and all others
 					// are either set to auto and disconnected or otherwise disabled
-					std::array<dpp_api::GamepadConnectionState, 4Ui64> gamepads = dpp_comms->getConnectedGamepads();
-					if (
-						hw_info.hardware_bus >= gamepads.size() ||
-						gamepads[hw_info.hardware_bus] == dpp_api::GamepadConnectionState::UNAVAILABLE
-					) {
-						// Find the first item which is not marked as UNAVAILABLE
-						auto it = std::find_if(
-							gamepads.begin(),
-							gamepads.end(),
-							[](dpp_api::GamepadConnectionState s) {
-								return s != dpp_api::GamepadConnectionState::UNAVAILABLE;
-							}
-						);
 
-						if (it != gamepads.end()) {
-							size_t i = static_cast<int>(std::distance(gamepads.begin(), it));
-							hw_info.hardware_bus = i;
-							dpp_comms->changeHardwareBus(i);
-						} else {
-							// This should never happen in practice, but just in case something went horribly wrong...
-							WARN_LOG(
-								INPUT,
-								"Failed to determine the hardware bus index for DreamPicoPort[%d]",
-								software_bus
-							);
+					// Find the first item which is not marked as UNAVAILABLE
+					auto it = std::find_if(
+						gamepads.begin(),
+						gamepads.end(),
+						[](dpp_api::GamepadConnectionState s) {
+							return s != dpp_api::GamepadConnectionState::UNAVAILABLE;
 						}
+					);
+
+					if (it != gamepads.end()) {
+						// Note: changing the hardware bus will NOT change the name because is_single_device is true
+						size_t i = static_cast<int>(std::distance(gamepads.begin(), it));
+						hw_info.hardware_bus = i;
+						dpp_comms->changeHardwareBus(i);
+						hwVerified = true;
 					}
 				}
+
+				if (!hwVerified) {
+					WARN_LOG(
+						INPUT,
+						"DreamPicoPort[%s]: Hardware bus lookup failed",
+						getLocDesc().c_str()
+					);
+				}
+
+				NOTICE_LOG(INPUT, "DreamPicoPort[%s] API connected", getLocDesc().c_str());
 			} else {
 				update_required = dpp_comms->isUpdateRequired();
 				dpp_comms.reset();
 			}
 		} else {
-			NOTICE_LOG(INPUT, "Serial number for DreamPicoPort[%d] not found", software_bus);
+			NOTICE_LOG(INPUT, "Serial number for DreamPicoPort[%s] not found", getLocDesc().c_str());
 		}
 
 		if (isConnected()) {
@@ -746,19 +775,15 @@ private:
 		timeout_ms = std::chrono::seconds(5);
 
 		setMapleDevices();
-
-		NOTICE_LOG(
-			INPUT,
-			"Connected to DreamPicoPort[%d]: Type:%s, VMU:%d, Jump Pack:%d",
-			software_bus,
-			getName(),
-			(getFunctionCode(0) & MFID_1_Storage) != 0,
-			(getFunctionCode(1) & MFID_8_Vibration) != 0
-		);
 	}
 
 	void internalDisconnect() {
+		bool wasConnected = (dpp_comms != nullptr);
 		dpp_comms.reset();
+
+		if (wasConnected) {
+			NOTICE_LOG(INPUT, "DreamPicoPort[%s] API disconnected", getLocDesc().c_str());
+		}
 	}
 
 	void scheduleConnectRetry() {
@@ -930,6 +955,41 @@ private:
 		return hw_info;
 	}
 
+	static const char* fnToName(u32 fnCode) {
+		if (fnCode == 0) {
+			return "None";
+		}
+		else if (fnCode & MFID_0_Input) {
+			return "Controller";
+		} else if (fnCode & MFID_1_Storage) {
+			if (fnCode & MFID_2_LCD) {
+				return "VMU";
+			} else if (fnCode & MFID_8_Vibration) {
+				return "Jump Pack & Memory";
+			} else {
+				return "Memory Unit";
+			}
+		} else if (fnCode & MFID_4_Mic) {
+			return "Microphone";
+		} else if (fnCode & MFID_5_ARGun) {
+			return "AR Gun";
+		} else if (fnCode & MFID_6_Keyboard) {
+			return "Keyboard";
+		} else if (fnCode & MFID_7_LightGun) {
+			return "Light Gun";
+		} else if (fnCode & MFID_8_Vibration) {
+			return "Jump Pack";
+		} else if (fnCode & MFID_9_Mouse) {
+			return "Mouse";
+		} else if (fnCode & MFID_10_StorageExt) {
+			return "External Storage";
+		} else if (fnCode & MFID_11_Camera) {
+			return "Camera";
+		}
+
+		return "Unknown";
+	}
+
 public:
     bool queryPeripherals(bool clearOnFailure = true) {
 		std::lock_guard<std::recursive_mutex> lock(mutex);
@@ -973,6 +1033,25 @@ public:
 					sendGameId(dppPortToFcPort(port));
 				}
 			}
+		}
+
+		const std::string portCharStr = std::string(1, 'A' + software_bus);
+		const u32 mainCode = getFunctionCode(5);
+
+		if (mainCode != 0) {
+			std::string deviceSummary(fnToName(getFunctionCode(5)));
+
+			for (int i = MAPLE_FIRST_EXT_DEV_IDX; i <= MAPLE_LAST_EXT_DEV_IDX; ++i) {
+				const u32 code = getFunctionCode(i);
+				if (code != 0) {
+					const std::string extDesc = portCharStr + std::string(1, '1' + i - MAPLE_FIRST_EXT_DEV_IDX);
+					deviceSummary += ", " + extDesc + ": " + fnToName(code);
+				}
+			}
+
+			NOTICE_LOG(INPUT, "DreamPicoPort[%s]: %s", getLocDesc().c_str(), deviceSummary.c_str());
+		} else {
+			NOTICE_LOG(INPUT, "DreamPicoPort[%s]: No peripherals connected", getLocDesc().c_str());
 		}
 
 		return true;
@@ -1402,7 +1481,6 @@ bool DreamPicoPortGamepad::identify(int deviceIndex)
 	// Dreamcast Controller USB VID:1209 PID:2f07
 	const char* pid_vid_guid_str = guid_str + 8;
 	if (memcmp(VID_PID_GUID, pid_vid_guid_str, 16) == 0) {
-		NOTICE_LOG(INPUT, "Dreamcast controller found!");
 		return true;
 	}
 	return false;

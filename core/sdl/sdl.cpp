@@ -83,9 +83,14 @@ static void sdl_open_joystick(int index)
 #elif defined(USE_DREAMLINK_DEVICES)
 		std::shared_ptr<SDLGamepad> gamepad;
 		if (DreamLinkGamepad::isDreamcastController(index))
+		{
+			NOTICE_LOG(INPUT, "Dreamcast controller found!");
 			gamepad = createDreamLinkGamepad(index < MAPLE_PORTS ? index : -1, index, pJoystick);
+		}
 		else
+		{
 			gamepad = std::make_shared<SDLGamepad>(index < MAPLE_PORTS ? index : -1, index, pJoystick);
+		}
 #else
 		std::shared_ptr<SDLGamepad> gamepad = std::make_shared<SDLGamepad>(index < MAPLE_PORTS ? index : -1, index, pJoystick);
 #endif
