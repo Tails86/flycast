@@ -1844,8 +1844,7 @@ void renderGeneralTab()
 	// ========================================
 	// Language & Region Section
 	// ========================================
-	SectionHeaderWithIcon(ICON_FA_GLOBE, "Language & Region");
-
+	if (ImGui::CollapsingHeader(ICON_FA_GLOBE " Language & Region##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		static const char* languages[] = { "Japanese", "English", "German", "French", "Spanish", "Italian", "Default" };
 		SettingsUI::PopupConfig languageCfg {};
@@ -1963,9 +1962,10 @@ void renderGeneralTab()
 	// Content Paths Section
 	// ========================================
 #if !defined(TARGET_IPHONE)
-	SectionHeaderWithIcon(ICON_FA_FOLDER, "Content Paths");
+		if (ImGui::CollapsingHeader(ICON_FA_FOLDER " Content Paths##Section", ImGuiTreeNodeFlags_DefaultOpen))
+		{
 
-	int to_delete = -1;
+		int to_delete = -1;
 	bool addContentRequested = false;
 	for (u32 i = 0; i < config::ContentPath.get().size(); i++)
 	{
@@ -2054,16 +2054,18 @@ void renderGeneralTab()
 	// Keep this call every frame so the popup can render while open.
 	addContentPath(addContentRequested);
 
-	if (to_delete >= 0)
-	{
-		scanner.stop();
-		config::ContentPath.get().erase(config::ContentPath.get().begin() + to_delete);
-		scanner.refresh();
-	}
+		if (to_delete >= 0)
+		{
+			scanner.stop();
+			config::ContentPath.get().erase(config::ContentPath.get().begin() + to_delete);
+			scanner.refresh();
+		}
+		}
 
-#if defined(__linux__) && !defined(__ANDROID__)
-	SectionHeaderWithIcon(ICON_FA_FLOPPY_DISK, "Data Folder");
-	RenderGeneralInfoRow(
+	#if defined(__linux__) && !defined(__ANDROID__)
+		if (ImGui::CollapsingHeader(ICON_FA_FLOPPY_DISK " Data Folder##Section", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+		RenderGeneralInfoRow(
 		"DataFolderPathRow",
 		ICON_FA_FLOPPY_DISK,
 		"Data Folder",
@@ -2075,11 +2077,13 @@ void renderGeneralTab()
 		"It typically contains:\n"
 		"- BIOS/Flash files (for example: `dc_boot.bin`, `dc_flash.bin`)\n"
 		"- Save data (VMU files) and save states\n\n"
-		"If Flycast cannot find a BIOS, double-check that your BIOS files are placed in the expected location and that their filenames match what Flycast looks for.\n"
-		"Custom Paths below can also override where some of these files are stored.");
-#else
-	SectionHeaderWithIcon(ICON_FA_HOUSE, "Home Directory");
-	RenderGeneralInfoRow(
+			"If Flycast cannot find a BIOS, double-check that your BIOS files are placed in the expected location and that their filenames match what Flycast looks for.\n"
+			"Custom Paths below can also override where some of these files are stored.");
+		}
+	#else
+		if (ImGui::CollapsingHeader(ICON_FA_HOUSE " Home Directory##Section", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+		RenderGeneralInfoRow(
 		"HomeFolderPathRow",
 		ICON_FA_HOUSE,
 		"Home Directory",
@@ -2105,16 +2109,17 @@ void renderGeneralTab()
 			hostfs::exportHomeDirectory();
 	}
 #endif
-#ifdef TARGET_MAC
-	if (ImGui::Button("Reveal in Finder"))
+	#ifdef TARGET_MAC
+		if (ImGui::Button("Reveal in Finder"))
 	{
 		char temp[512];
 		snprintf(temp, sizeof(temp), "open \"%s\"", get_writable_config_path("").c_str());
 		system(temp);
-	}
-#endif
-#endif // !linux
-	ImGui::Spacing();
+		}
+	#endif
+		}
+	#endif // !linux
+		ImGui::Spacing();
 #else // TARGET_IPHONE
 	{
 			ImGui::PushID("IphoneRescanContentRow");
@@ -2158,8 +2163,7 @@ void renderGeneralTab()
 	// ========================================
 	// UI Settings Section
 	// ========================================
-	SectionHeaderWithIcon(ICON_FA_GEAR, "UI Settings");
-
+	if (ImGui::CollapsingHeader(ICON_FA_GEAR " UI Settings##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		static const char* themes[] = { "Dark", "Light", "Dreamcast", "High Contrast", "Nintendo", "Aqua Chill" };
 		SettingsUI::PopupConfig themeCfg {};
@@ -2246,14 +2250,14 @@ void renderGeneralTab()
 	// ========================================
 	// Box Art Section
 	// ========================================
-	SectionHeaderWithIcon(ICON_FA_IMAGE, "Box Art");
-	if (g_scrollToBoxArtSection)
+	if (ImGui::CollapsingHeader(ICON_FA_IMAGE " Box Art##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		ImGui::SetScrollHereY(0.0f);
-		g_scrollToBoxArtSection = false;
-	}
+		if (g_scrollToBoxArtSection)
+		{
+			ImGui::SetScrollHereY(0.0f);
+			g_scrollToBoxArtSection = false;
+		}
 
-	{
 		static const char* boxartSources[] = { "Original Box Art", "Physical Media", "Custom Boxart" };
 		SettingsUI::PopupConfig boxartSourceCfg {};
 		boxartSourceCfg.type = SettingsUI::PopupType::Options;
@@ -2382,8 +2386,8 @@ void renderGeneralTab()
 	// ========================================
 	// Automatic Save States Section
 	// ========================================
-	SectionHeaderWithIcon(ICON_FA_FLOPPY_DISK, "Automatic Save States");
-
+	if (ImGui::CollapsingHeader(ICON_FA_FLOPPY_DISK " Automatic Save States##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
 		RenderGeneralToggleSettingRow(
 			"AutoLoadState",
 			ICON_FA_FOLDER_OPEN,
@@ -2430,7 +2434,8 @@ void renderGeneralTab()
 			"Disable if you prefer not to share activity status.");
 #endif
 
-	ImGui::Spacing();
+		ImGui::Spacing();
+	}
 
 	// ========================================
 	// RetroAchievements Section
@@ -2539,7 +2544,8 @@ void renderGeneralTab()
 	// Custom Paths Section
 	// ========================================
 #if !defined(TARGET_IPHONE)
-	SectionHeaderWithIcon(ICON_FA_SLIDERS, "Custom Paths");
+	if (ImGui::CollapsingHeader(ICON_FA_SLIDERS " Custom Paths##Section"))
+	{
 
 	managePathList("BIOS Folders", config::BiosPath.get(),
 		"BIOS Folders\n"
@@ -2603,6 +2609,7 @@ void renderGeneralTab()
 		"Use cheats carefully: they can crash games or cause unexpected behavior.");
 	ImGui::Spacing();
 #endif  // !ANDROID
+	}
 #endif  // !IPHONE
 }
 
@@ -2617,18 +2624,18 @@ void renderVideoTab()
 	// ============================================================
 	// PRESET SELECTOR
 	// ============================================================
-	SectionHeaderWithIcon(ICON_FA_BOOKMARK, "Quality Presets");
-
-	static int currentPresetIndex = 0;
-	static bool presetJustApplied = false;
-
-	// Auto-detect current preset
-	if (!presetJustApplied)
+	if (ImGui::CollapsingHeader(ICON_FA_BOOKMARK " Quality Presets##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		VideoPresetLevel detected = detectCurrentPreset();
-		if (detected != VideoPresetLevel::Custom)
-			currentPresetIndex = static_cast<int>(detected);
-	}
+		static int currentPresetIndex = 0;
+		static bool presetJustApplied = false;
+
+		// Auto-detect current preset
+		if (!presetJustApplied)
+		{
+			VideoPresetLevel detected = detectCurrentPreset();
+			if (detected != VideoPresetLevel::Custom)
+				currentPresetIndex = static_cast<int>(detected);
+		}
 
 	// Build preset labels
 	const char* presetLabels[] = {
@@ -2698,22 +2705,21 @@ void renderVideoTab()
 			SetSettingsFooterText(help.c_str());
 		}
 
-	// Show "Custom" indicator if settings were manually changed
-	VideoPresetLevel currentLevel = detectCurrentPreset();
-	if (currentLevel == VideoPresetLevel::Custom && !presetJustApplied)
-	{
-		ImGui::SameLine();
-		ImGui::TextDisabled("(Modified)");
-		if (ImGui::IsItemHovered() || ImGui::IsItemFocused())
-			SetSettingsFooterText("Settings have been manually modified from the last preset.");
+		// Show "Custom" indicator if settings were manually changed
+		VideoPresetLevel currentLevel = detectCurrentPreset();
+		if (currentLevel == VideoPresetLevel::Custom && !presetJustApplied)
+		{
+			ImGui::SameLine();
+			ImGui::TextDisabled("(Modified)");
+			if (ImGui::IsItemHovered() || ImGui::IsItemFocused())
+				SetSettingsFooterText("Settings have been manually modified from the last preset.");
+		}
+
+		ImGui::Separator();
+		presetJustApplied = false;
 	}
 
-	ImGui::Separator();
-	presetJustApplied = false;
-
 	// Graphics API Selection section
-	SectionHeaderWithIcon(ICON_FA_GEAR, "Graphics API");
-
 	int renderApi;
 	bool perPixel;
 	switch (config::RendererType)
@@ -2764,30 +2770,32 @@ void renderVideoTab()
 #endif
 		;
 
-	if (apiCount > 1)
+	if (ImGui::CollapsingHeader(ICON_FA_GEAR " Graphics API##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		std::array<const char*, 4> apiLabels {};
-		std::array<int, 4> apiValues {};
-		int apiOptionCount = 0;
+		if (apiCount > 1)
+		{
+			std::array<const char*, 4> apiLabels {};
+			std::array<int, 4> apiValues {};
+			int apiOptionCount = 0;
 #ifdef USE_OPENGL
-		apiLabels[apiOptionCount] = "OpenGL";
-		apiValues[apiOptionCount++] = 0;
+			apiLabels[apiOptionCount] = "OpenGL";
+			apiValues[apiOptionCount++] = 0;
 #endif
 #ifdef USE_VULKAN
 #ifdef __APPLE
-		apiLabels[apiOptionCount] = "Vulkan (Metal)";
+			apiLabels[apiOptionCount] = "Vulkan (Metal)";
 #else
-		apiLabels[apiOptionCount] = "Vulkan";
+			apiLabels[apiOptionCount] = "Vulkan";
 #endif
-		apiValues[apiOptionCount++] = 1;
+			apiValues[apiOptionCount++] = 1;
 #endif
 #ifdef USE_DX9
-		apiLabels[apiOptionCount] = "DirectX 9";
-		apiValues[apiOptionCount++] = 2;
+			apiLabels[apiOptionCount] = "DirectX 9";
+			apiValues[apiOptionCount++] = 2;
 #endif
 #ifdef USE_DX11
-		apiLabels[apiOptionCount] = "DirectX 11";
-		apiValues[apiOptionCount++] = 3;
+			apiLabels[apiOptionCount] = "DirectX 11";
+			apiValues[apiOptionCount++] = 3;
 #endif
 
 		int currentApiIndex = 0;
@@ -2861,10 +2869,11 @@ void renderVideoTab()
 				apiCfg);
 		}
 
-	// Transparent Sorting section
-	SectionHeaderWithIcon(ICON_FA_WAND_SPARKLES, "Transparent Sorting");
-
+		// Transparent Sorting section
+		if (ImGui::CollapsingHeader(ICON_FA_WAND_SPARKLES " Transparent Sorting##Section", ImGuiTreeNodeFlags_DefaultOpen))
 		{
+
+			{
 			const bool has_per_pixel = GraphicsContext::Instance()->hasPerPixel();
 			int renderer = perPixel ? 2 : config::PerStripSorting ? 1 : 0;
 
@@ -2962,11 +2971,12 @@ void renderVideoTab()
 				"The middle tier allows just about all games to be played with a small amount of slight issues, but uses about half the resources of the top tier.\n"
 				"It is \"good enough\" almost all the time.",
 				sortingCfg);
+			}
 		}
 
-
-	// Rendering Options section
-	SectionHeaderWithIcon(ICON_FA_SLIDERS, "Rendering Options");
+		// Rendering Options section
+		if (ImGui::CollapsingHeader(ICON_FA_SLIDERS " Rendering Options##Section", ImGuiTreeNodeFlags_DefaultOpen))
+		{
 
 	// Internal Resolution
 	{
@@ -3129,8 +3139,9 @@ void renderVideoTab()
 		!config::CustomTextures);
 	ImGui::Unindent();
 
-	// Aspect Ratio section
-	SectionHeaderWithIcon(ICON_FA_TV, "Aspect Ratio");
+		// Aspect Ratio section
+		if (ImGui::CollapsingHeader(ICON_FA_TV " Aspect Ratio##Section", ImGuiTreeNodeFlags_DefaultOpen))
+		{
 
 	RenderGeneralToggleSettingRow(
 		"Widescreen",
@@ -3207,10 +3218,9 @@ void renderVideoTab()
 			"Rotates the screen 90 degrees counterclockwise.\n"
 			"Useful for games designed for rotated/vertical displays.");
 
-		// Per Pixel Settings (only shown when Per Pixel sorting is enabled)
-		if (perPixel)
-		{
-			SectionHeaderWithIcon(ICON_FA_IMAGE, "Per Pixel Settings");
+			// Per Pixel Settings (only shown when Per Pixel sorting is enabled)
+			if (perPixel && ImGui::CollapsingHeader(ICON_FA_IMAGE " Per Pixel Settings##Section", ImGuiTreeNodeFlags_DefaultOpen))
+			{
 
 			const std::array<int64_t, 4> bufSizes{ 512_MB, 1_GB, 2_GB, 4_GB };
 			const std::array<const char*, 4> bufSizesText{ "512 MB", "1 GB", "2 GB", "4 GB" };
@@ -3295,11 +3305,13 @@ void renderVideoTab()
 				"Limits how many transparent layers can be resolved per pixel in complex scenes.\n"
 				"Increase this if you see missing transparency or incorrect layering.\n"
 				"Decrease it to improve performance and reduce memory pressure.");
+			}
 		}
 
-	// Performance section
-	SectionHeaderWithIcon(ICON_FA_GAUGE_HIGH, "Performance");
-	ImGui::Spacing();
+		// Performance section
+		if (ImGui::CollapsingHeader(ICON_FA_GAUGE_HIGH " Performance##Section", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			ImGui::Spacing();
 
 	{
 		const std::array<const char*, 3> autoSkipLabels { "Disabled", "Normal", "Maximum" };
@@ -3390,11 +3402,13 @@ void renderVideoTab()
 				"Enables atmospheric fog effects.\n"
 				"Disable if you see fog artifacts, or if you need extra performance in heavy scenes.");
 
-	ImGui::PopStyleVar(2);
+			ImGui::PopStyleVar(2);
+		}
 
-	// Advanced section
-	SectionHeaderWithIcon(ICON_FA_WAND_MAGIC, "Advanced");
-	ImGui::Spacing();
+		// Advanced section
+		if (ImGui::CollapsingHeader(ICON_FA_WAND_MAGIC " Advanced##Section", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			ImGui::Spacing();
 
 	// 2x height toggle rows for Advanced settings
 	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 12));
@@ -3448,10 +3462,10 @@ void renderVideoTab()
 				"Copies render-to-texture results back into VRAM.\n"
 				"Slower, but more accurate. Enable if a game has missing or incorrect render-to-texture effects.");
 
-	ImGui::PopStyleVar(2);
+			ImGui::PopStyleVar(2);
 
-	// Anisotropic Filtering
-	{
+			// Anisotropic Filtering
+			{
 		const std::array<int, 5> anisoValues { 1, 2, 4, 8, 16 };
 		const std::array<const char*, 5> anisoLabels { "Disabled", "2x", "4x", "8x", "16x" };
 		int anisoSelection = 0;
@@ -3488,11 +3502,12 @@ void renderVideoTab()
 			"Makes mipmapped textures viewed at sharp angles look cleaner (less shimmer).\n"
 			"Increases GPU cost.\n\n"
 			"Only affects mipmapped textures. If you want this to do anything, keep mipmaps enabled.");
-	}
+			}
+		}
 
-	// Texture Filtering
-	SectionHeaderWithIcon(ICON_FA_FILTER, "Texture Filtering");
-	{
+		// Texture Filtering
+		if (ImGui::CollapsingHeader(ICON_FA_FILTER " Texture Filtering##Section", ImGuiTreeNodeFlags_DefaultOpen))
+		{
 		const std::array<const char*, 3> textureFilterLabels {
 			"Default",
 			"Force Nearest-Neighbor",
@@ -3527,7 +3542,7 @@ void renderVideoTab()
 			"Force Nearest-Neighbor: crisp/pixelated look.\n"
 			"Force Linear: smoother/blurrier look.\n\n"
 			"For 2D/pixel-art, many users prefer Nearest-Neighbor. For 3D, Linear can look nicer.");
-	}
+		}
 
 		// Show FPS Counter
 		RenderGeneralToggleSettingRow(
@@ -3542,17 +3557,19 @@ void renderVideoTab()
 			"Strongly recommended while tuning settings: aim for stable 30/60 FPS in real gameplay.");
 
 #ifdef VIDEO_ROUTING
-	// Video Routing section (platform-specific)
+		// Video Routing section (platform-specific)
 #ifdef __APPLE__
-	SectionHeaderWithIcon(ICON_FA_SHARE_NODES, "Video Routing (Syphon)");
+		if (ImGui::CollapsingHeader(ICON_FA_SHARE_NODES " Video Routing (Syphon)##Section", ImGuiTreeNodeFlags_DefaultOpen))
 #elif defined(_WIN32)
-	((renderApi == 0) || (renderApi == 3)) ? SectionHeaderWithIcon(ICON_FA_SHARE_NODES, "Video Routing (Spout)") : SectionHeaderWithIcon(ICON_FA_SHARE_NODES, "Video Routing (Only available with OpenGL or DirectX 11)");
+		if (((renderApi == 0) || (renderApi == 3))
+			? ImGui::CollapsingHeader(ICON_FA_SHARE_NODES " Video Routing (Spout)##Section", ImGuiTreeNodeFlags_DefaultOpen)
+			: ImGui::CollapsingHeader(ICON_FA_SHARE_NODES " Video Routing (Only available with OpenGL or DirectX 11)##Section", ImGuiTreeNodeFlags_DefaultOpen))
 #else
-	SectionHeaderWithIcon(ICON_FA_SHARE_NODES, "Video Routing");
+		if (ImGui::CollapsingHeader(ICON_FA_SHARE_NODES " Video Routing##Section", ImGuiTreeNodeFlags_DefaultOpen))
 #endif
-
+		{
 #ifdef _WIN32
-	DisabledScope routingScope(!((renderApi == 0) || (renderApi == 3)));
+			DisabledScope routingScope(!((renderApi == 0) || (renderApi == 3)));
 #endif
 
 		// Send Video to Another Program
@@ -3653,13 +3670,14 @@ void renderVideoTab()
 				ImGui::TextUnformatted(outputSizeText.c_str());
 				ImGui::PopFont();
 
-				RenderTwoLineSettingDescription(line1Start, "Calculated size of the shared output texture.");
-				ImGui::PopID();
-				ImGui::Spacing();
+					RenderTwoLineSettingDescription(line1Start, "Calculated size of the shared output texture.");
+					ImGui::PopID();
+					ImGui::Spacing();
+				}
 			}
 	#endif
 
-	// Update renderer type based on selections
+		// Update renderer type based on selections
 	switch (renderApi)
 	{
 	case 0:
@@ -3671,12 +3689,13 @@ void renderVideoTab()
 	case 2:
 		config::RendererType = RenderType::DirectX9;
 		break;
-	case 3:
-		config::RendererType = perPixel ? RenderType::DirectX11_OIT : RenderType::DirectX11;
-		break;
+		case 3:
+			config::RendererType = perPixel ? RenderType::DirectX11_OIT : RenderType::DirectX11;
+			break;
+		}
 	}
 }
-
+}
 void renderAudioTab()
 {
 	ScopedTwoLineRowStyle audioRowStyle(20.0f, true, 0.5f, 8.0f);
@@ -3685,7 +3704,8 @@ void renderAudioTab()
 	ImGui::Separator();
 
 	// Audio Playback Section
-	SectionHeaderWithIcon(ICON_FA_VOLUME_HIGH, "Playback");
+	if (ImGui::CollapsingHeader(ICON_FA_VOLUME_HIGH " Playback##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
 
 		RenderGeneralToggleSettingRow(
 			"EnableDSP",
@@ -3750,10 +3770,15 @@ void renderAudioTab()
 				"If audio clips or is too quiet, tune this before changing latency settings.");
 	}
 
-	// Audio Latency Section
+	}
+
+	const bool showAudioLatency = ImGui::CollapsingHeader(ICON_FA_CLOCK " Audio Latency##Section", ImGuiTreeNodeFlags_DefaultOpen);
+	if (showAudioLatency)
+	{
+		// Audio Latency Section
 #ifdef __ANDROID__
-	// Automatic Latency (Android only)
-	if (config::AudioBackend.get() == "auto" || config::AudioBackend.get() == "android")
+		// Automatic Latency (Android only)
+		if (config::AudioBackend.get() == "auto" || config::AudioBackend.get() == "android")
 	{
 			RenderGeneralToggleSettingRow(
 				"AutoLatency",
@@ -3808,15 +3833,14 @@ void renderAudioTab()
 				latencyPopupCfg,
 				"Audio Latency\n"
 				"Lower values reduce audio lag but can cause crackling/stutter if your system cannot keep up.\n"
-				"Higher values are more stable but add latency.\n\n"
-				"If you hear pops, increase latency. If audio feels delayed, decrease it carefully.");
+					"Higher values are more stable but add latency.\n\n"
+					"If you hear pops, increase latency. If audio feels delayed, decrease it carefully.");
+		}
 	}
 
-	// Audio Latency Section
-	SectionHeaderWithIcon(ICON_FA_CLOCK, "Audio Latency");
-
-	// Audio Driver Selection
-	SectionHeaderWithIcon(ICON_FA_HEADPHONES, "Audio Driver");
+		// Audio Driver Selection
+	if (ImGui::CollapsingHeader(ICON_FA_HEADPHONES " Audio Driver##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
 
 	// Get current backend name for display
 	AudioBackend *currentBackend = AudioBackend::getBackend(config::AudioBackend.get());
@@ -3837,7 +3861,7 @@ void renderAudioTab()
 	for (u32 i = 0; i < AudioBackend::getCount(); i++)
 	{
 		if (config::AudioBackend.get() == AudioBackend::getBackend(i)->slug)
-		{
+			{
 			currentBackendIndex = (int)i;
 			break;
 		}
@@ -3891,11 +3915,9 @@ void renderAudioTab()
 		int option_count;
 		const AudioBackend::Option *options = current_backend->getOptions(&option_count);
 
-		if (option_count > 0)
-		{
-			SectionHeaderWithIcon(ICON_FA_SLIDERS, "Driver Options");
-
-			for (int o = 0; o < option_count; o++)
+			if (option_count > 0 && ImGui::CollapsingHeader(ICON_FA_SLIDERS " Driver Options##Section", ImGuiTreeNodeFlags_DefaultOpen))
+			{
+				for (int o = 0; o < option_count; o++)
 			{
 				std::string value = cfgLoadStr(current_backend->slug, options->name, "");
 
@@ -4015,6 +4037,7 @@ void renderAudioTab()
 		}
 	}
 }
+}
 
 void renderControlsTab()
 {
@@ -4023,11 +4046,11 @@ void renderControlsTab()
 	ImGui::TextDisabled("Controls Configuration");
 	ImGui::Separator();
 
-	SectionHeaderWithIcon(ICON_FA_GAMEPAD, "Physical Devices");
-
-	if (ImGui::BeginTable("physicalDevices", 6, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+	if (ImGui::CollapsingHeader(ICON_FA_GAMEPAD " Physical Devices##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		ImGui::TableSetupColumn("System", ImGuiTableColumnFlags_WidthFixed);
+		if (ImGui::BeginTable("physicalDevices", 6, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+		{
+			ImGui::TableSetupColumn("System", ImGuiTableColumnFlags_WidthFixed);
 		ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
 		ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed);
 		ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
@@ -4142,10 +4165,12 @@ void renderControlsTab()
 			}
 			ImGui::EndTable();
 		}
+	}
 
-		ImGui::Spacing();
+	ImGui::Spacing();
 
-		SectionHeaderWithIcon(ICON_FA_CROSSHAIRS, "Mouse & Raw Input");
+	if (ImGui::CollapsingHeader(ICON_FA_CROSSHAIRS " Mouse & Raw Input##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
 
 		{
 			// Temp storage for popup slider
@@ -4201,10 +4226,12 @@ void renderControlsTab()
 				"Enables raw input so multiple pointing devices (mice, light guns) and keyboards can be handled more accurately.\n"
 				"Recommended if you use light guns or multiple input devices.");
 #endif
+	}
 
 	ImGui::Spacing();
 
-	SectionHeaderWithIcon(ICON_FA_PLUG, "Dreamcast Devices");
+	if (ImGui::CollapsingHeader(ICON_FA_PLUG " Dreamcast Devices##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
 
 	// Device type arrays for dropdowns
 	static const char *maple_device_types[] =
@@ -4505,7 +4532,8 @@ void renderControlsTab()
 			}
 
 	ImGui::Spacing();
-	SectionHeaderWithIcon(ICON_FA_MICROCHIP, "VMU Settings");
+	if (ImGui::CollapsingHeader(ICON_FA_MICROCHIP " VMU Settings##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
 			RenderGeneralToggleSettingRow(
 				"PerGameVmu",
 				ICON_FA_MICROCHIP,
@@ -4572,6 +4600,8 @@ void renderControlsTab()
 		}
 	}
 #endif
+	}
+	}
 }
 
 void renderNetworkTab()
@@ -4581,10 +4611,10 @@ void renderNetworkTab()
 	ImGui::TextDisabled("Network Configuration");
 	ImGui::Separator();
 
-	SectionHeaderWithIcon(ICON_FA_GLOBE, "Network Type");
-
-	// Network Type Selection - Options Popup
+	if (ImGui::CollapsingHeader(ICON_FA_GLOBE " Network Type##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
+		// Network Type Selection - Options Popup
+		{
 		static int netType = 0;
 		if (config::GGPOEnable)
 			netType = 1;
@@ -4632,7 +4662,8 @@ void renderNetworkTab()
 	{
 		ImGui::Spacing();
 
-		SectionHeaderWithIcon(ICON_FA_SLIDERS, "Configuration");
+		if (ImGui::CollapsingHeader(ICON_FA_SLIDERS " Configuration##Section", ImGuiTreeNodeFlags_DefaultOpen))
+		{
 
 		// GGPO Settings
 		if (config::GGPOEnable)
@@ -4699,10 +4730,10 @@ void renderNetworkTab()
 						"Too much delay increases input lag; use the lowest value that feels stable.");
 			}
 
-			// Analog Axes Configuration
-			SectionHeaderWithIcon(ICON_FA_GAMEPAD, "Analog Axes");
-
-			{
+				// Analog Axes Configuration
+				if (ImGui::CollapsingHeader(ICON_FA_GAMEPAD " Analog Axes##Section", ImGuiTreeNodeFlags_DefaultOpen))
+				{
+					{
 				static const char* axesOptions[] = { "Disabled", "Horizontal", "Full" };
 				int axesSelection = config::GGPOAnalogAxes.get();
 				if (axesSelection < 0 || axesSelection > 2)
@@ -4787,6 +4818,7 @@ void renderNetworkTab()
 					ImGui::Spacing();
 					if (g_twoLineRowExtraGapPx > 0.0f)
 						ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
+					}
 				}
 			}
 
@@ -4872,6 +4904,8 @@ void renderNetworkTab()
 					ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 			}
 		}
+		}
+	}
 		// Battle Cable Settings
 		else if (config::BattleCableEnable)
 		{
@@ -5014,8 +5048,8 @@ void renderNetworkTab()
 
 	ImGui::Spacing();
 
-	SectionHeaderWithIcon(ICON_FA_GEAR, "Network Options");
-
+	if (ImGui::CollapsingHeader(ICON_FA_GEAR " Network Options##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
 		RenderGeneralToggleSettingRow(
 			"EnableUPnP",
 			ICON_FA_NETWORK_WIRED,
@@ -5101,18 +5135,20 @@ void renderNetworkTab()
 			"Note: When DCNet Cloud is enabled, DNS behavior may be handled differently and this field may not apply.",
 			config::UseDCNet);
 #endif
+	}
 
 #ifdef NAOMI_MULTIBOARD
 	// Multiboard Screens
 	ImGui::Spacing();
 
-	SectionHeaderWithIcon(ICON_FA_TABLE, "Multiboard");
-
-	OptionRadioButton<int>("1 (Twin)", config::MultiboardSlaves, 1,
-		"One screen configuration (F355 Twin)");
-	ImGui::SameLine();
-	OptionRadioButton<int>("3 (Deluxe)", config::MultiboardSlaves, 2,
-		"Three screens configuration");
+	if (ImGui::CollapsingHeader(ICON_FA_TABLE " Multiboard##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		OptionRadioButton<int>("1 (Twin)", config::MultiboardSlaves, 1,
+			"One screen configuration (F355 Twin)");
+		ImGui::SameLine();
+		OptionRadioButton<int>("3 (Deluxe)", config::MultiboardSlaves, 2,
+			"Three screens configuration");
+	}
 #endif
 }
 
@@ -5124,9 +5160,9 @@ void renderAdvancedTab()
 	ImGui::Separator();
 
 	// CPU & Emulation Section
-	SectionHeaderWithIcon(ICON_FA_MICROCHIP, "CPU & Emulation");
+	if (ImGui::CollapsingHeader(ICON_FA_MICROCHIP " CPU & Emulation##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-	#if FEAT_SHREC != DYNAREC_NONE
+#if FEAT_SHREC != DYNAREC_NONE
 			// CPU Mode
 			{
 				static const char* cpuModeLabels[] = { "Dynarec", "Interpreter" };
@@ -5156,10 +5192,10 @@ void renderAdvancedTab()
 					if (idx >= 0 && idx < (int)std::size(kHelp))
 						SetSettingsFooterText(kHelp[idx]);
 				};
-				cpuModeCfg.options.onChange = [&](int selectedIndex) {
-					config::DynarecEnabled.set(selectedIndex == 0);
-					return true;
-				};
+					cpuModeCfg.options.onChange = [&](int selectedIndex) {
+						config::DynarecEnabled.set(selectedIndex == 0);
+						return true;
+					};
 
 				RenderGeneralPopupSettingRow(
 					"CpuModeSetting",
@@ -5259,7 +5295,7 @@ void renderAdvancedTab()
 
 	// Debugging Section
 #if defined(GDB_SERVER) || !defined(__ANDROID__)
-	SectionHeaderWithIcon(ICON_FA_BUG, "Debugging");
+	if (ImGui::CollapsingHeader(ICON_FA_BUG " Debugging##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 #if !defined(__ANDROID) && !defined(GDB_SERVER)
 		// Serial Console - 2x Row Pattern
@@ -5340,6 +5376,7 @@ void renderAdvancedTab()
 					ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 			}
 			ImGui::Unindent();
+			}
 		}
 #endif
 
@@ -5361,7 +5398,7 @@ void renderAdvancedTab()
 
 	// Logging Section (Debug builds only)
 #if !defined(NDEBUG) || defined(DEBUGFAST) || FC_PROFILER
-	SectionHeaderWithIcon(ICON_FA_FILE_LINES, "Logging");
+	if (ImGui::CollapsingHeader(ICON_FA_FILE_LINES " Logging##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		LogManager *logManager = LogManager::GetInstance();
 
@@ -5403,11 +5440,11 @@ void renderAdvancedTab()
 					if (idx >= 0 && idx < (int)std::size(kHelp))
 						SetSettingsFooterText(kHelp[idx]);
 				};
-				logVerbosityCfg.options.onChange = [&](int selectedIndex) {
-					logManager->SetLogLevel((LogTypes::LOG_LEVELS)(selectedIndex + 1));
-					cfgSaveInt("log", "Verbosity", selectedIndex + 1);
-					return true;
-				};
+					logVerbosityCfg.options.onChange = [&](int selectedIndex) {
+						LogManager::GetInstance()->SetLogLevel((LogTypes::LOG_LEVELS)(selectedIndex + 1));
+						cfgSaveInt("log", "Verbosity", selectedIndex + 1);
+						return true;
+					};
 
 				RenderGeneralPopupSettingRow(
 					"LogVerbositySetting",
@@ -5506,7 +5543,7 @@ void renderAdvancedTab()
 	// Profiling Section
 #if FC_PROFILER
 	ImGui::Spacing();
-	SectionHeaderWithIcon(ICON_FA_CHART_LINE, "Profiling");
+	if (ImGui::CollapsingHeader(ICON_FA_CHART_LINE " Profiling##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 			RenderGeneralToggleSettingRow(
 				"ProfilerEnabled",
@@ -5553,7 +5590,7 @@ void renderAdvancedTab()
 
 	// Experimental Features Section (with warnings)
 	ImGui::Spacing();
-	header("Experimental Features");
+	if (ImGui::CollapsingHeader("Experimental Features##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		// Texture Dumping (with warning)
 		ImVec4 warningColor = ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered];
@@ -5595,7 +5632,7 @@ void renderAdvancedTab()
 
 	// Developer Tools Section
 	ImGui::Spacing();
-	header("Developer Tools");
+	if (ImGui::CollapsingHeader("Developer Tools##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		const std::array<const char*, 3> monitorModeLabels {
 			"Off",
@@ -5616,7 +5653,7 @@ void renderAdvancedTab()
 		monitorModeCfg.options.currentValue = &monitorModeSelection;
 		monitorModeCfg.options.valueWidth = 220.0f;
 		monitorModeCfg.options.onChange = [&](int selectedIndex) {
-			if (selectedIndex < 0 || selectedIndex >= static_cast<int>(monitorModeLabels.size()))
+			if (selectedIndex < 0 || selectedIndex >= 3)
 				return false;
 			setResourceMonitorMode(selectedIndex);
 			return true;
@@ -5679,10 +5716,10 @@ void renderAdvancedTab()
 				ImGui::Text("ARAM: %p", aram);
 				ImGui::Columns(1, nullptr, false);
 			}
-		}
-#endif
 	}
-}
+#endif
+		}
+	}
 
 void renderAboutTab()
 {
@@ -5713,33 +5750,34 @@ void renderAboutTab()
 	ImGui::Spacing();
 
 	// Version Information
-	ImGui::TextDisabled("%s Version Information", ICON_FA_TAG);
-	ImGui::Separator();
-	ImGui::Text("Version: %s", GIT_VERSION);
-	ImGui::Text("Git Hash: %s", GIT_HASH);
-	ImGui::Text("Build Date: %s", BUILD_DATE);
-	ImGui::Spacing();
+	if (ImGui::CollapsingHeader(ICON_FA_TAG " Version Information##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		ImGui::Text("Version: %s", GIT_VERSION);
+		ImGui::Text("Git Hash: %s", GIT_HASH);
+		ImGui::Text("Build Date: %s", BUILD_DATE);
+		ImGui::Spacing();
+	}
 
 	// Platform Information
-	ImGui::TextDisabled("%s Platform", ICON_FA_COMPUTER);
-	ImGui::Separator();
-	ImGui::Text("CPU: %s",
-#if HOST_CPU == CPU_X86
+	if (ImGui::CollapsingHeader(ICON_FA_COMPUTER " Platform##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		ImGui::Text("CPU: %s",
+	#if HOST_CPU == CPU_X86
 		"x86"
-#elif HOST_CPU == CPU_ARM
+	#elif HOST_CPU == CPU_ARM
 		"ARM"
 #elif HOST_CPU == CPU_X64
 		"x86_64"
 #elif HOST_CPU == CPU_ARM64
 		"ARM64"
-#else
+	#else
 		"Unknown"
-#endif
-	);
-	ImGui::Text("Operating System: %s",
-#ifdef __ANDROID__
+	#endif
+		);
+		ImGui::Text("Operating System: %s",
+	#ifdef __ANDROID__
 		"Android"
-#elif defined(__unix__)
+	#elif defined(__unix__)
 		"Linux"
 #elif defined(__APPLE__)
 #ifdef TARGET_IPHONE
@@ -5753,103 +5791,113 @@ void renderAboutTab()
 		"Windows"
 #elif defined(__SWITCH__)
 		"Nintendo Switch"
-#else
+	#else
 		"Unknown"
-#endif
-	);
+	#endif
+		);
 #ifdef TARGET_IPHONE
-	extern const char *getIosJitStatus();
-	ImGui::Text("JIT Status: %s", getIosJitStatus());
+		extern const char *getIosJitStatus();
+		ImGui::Text("JIT Status: %s", getIosJitStatus());
 #endif
-	ImGui::Spacing();
+		ImGui::Spacing();
+	}
 
 	// Graphics Information
-	if (isOpenGL(config::RendererType))
-		ImGui::TextDisabled("%s Graphics - OpenGL", ICON_FA_DISPLAY);
-	else if (isVulkan(config::RendererType))
-		ImGui::TextDisabled("%s Graphics - Vulkan", ICON_FA_DISPLAY);
-	else if (isDirectX(config::RendererType))
-		ImGui::TextDisabled("%s Graphics - DirectX", ICON_FA_DISPLAY);
-	ImGui::Separator();
-	ImGui::Text("Driver: %s", GraphicsContext::Instance()->getDriverName().c_str());
-	ImGui::Text("Version: %s", GraphicsContext::Instance()->getDriverVersion().c_str());
+	{
+		const char *graphicsTitle = ICON_FA_DISPLAY " Graphics##Section";
+		if (isOpenGL(config::RendererType))
+			graphicsTitle = ICON_FA_DISPLAY " Graphics - OpenGL##Section";
+		else if (isVulkan(config::RendererType))
+			graphicsTitle = ICON_FA_DISPLAY " Graphics - Vulkan##Section";
+		else if (isDirectX(config::RendererType))
+			graphicsTitle = ICON_FA_DISPLAY " Graphics - DirectX##Section";
+
+		if (ImGui::CollapsingHeader(graphicsTitle, ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			ImGui::Text("Driver: %s", GraphicsContext::Instance()->getDriverName().c_str());
+			ImGui::Text("Version: %s", GraphicsContext::Instance()->getDriverVersion().c_str());
 
 #if defined(__ANDROID__) && HOST_CPU == CPU_ARM64 && USE_VULKAN
-	if (isVulkan(config::RendererType))
-	{
-		ImGui::Spacing();
-		if (config::CustomGpuDriver)
-		{
-			std::string name, description, vendor, version;
-			if (getCustomGpuDriverInfo(name, description, vendor, version))
+			if (isVulkan(config::RendererType))
 			{
-				ImGui::Text("Custom Driver:");
-				ImGui::Indent();
-				ImGui::Text("%s - %s", name.c_str(), description.c_str());
-				ImGui::Text("%s - %s", vendor.c_str(), version.c_str());
-				ImGui::Unindent();
+				ImGui::Spacing();
+				if (config::CustomGpuDriver)
+				{
+					std::string name, description, vendor, version;
+					if (getCustomGpuDriverInfo(name, description, vendor, version))
+					{
+						ImGui::Text("Custom Driver:");
+						ImGui::Indent();
+						ImGui::Text("%s - %s", name.c_str(), description.c_str());
+						ImGui::Text("%s - %s", vendor.c_str(), version.c_str());
+						ImGui::Unindent();
+					}
+				}
 			}
+#endif
+			ImGui::Spacing();
 		}
 	}
-#endif
-	ImGui::Spacing();
 
 	// Project Description
-	ImGui::TextDisabled("About");
-	ImGui::Separator();
-	ImGui::TextWrapped(
-		"Hollycast is a multi-platform emulator for Sega Dreamcast, "
-		"Naomi, Naomi 2, and Atomiswave arcade systems."
-	);
-	ImGui::TextWrapped(
-		"Based on Flycast, providing accurate emulation with enhancements "
-		"for modern systems."
-	);
-	ImGui::Spacing();
+	if (ImGui::CollapsingHeader("About##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		ImGui::TextWrapped(
+			"Hollycast is a multi-platform emulator for Sega Dreamcast, "
+			"Naomi, Naomi 2, and Atomiswave arcade systems."
+		);
+		ImGui::TextWrapped(
+			"Based on Flycast, providing accurate emulation with enhancements "
+			"for modern systems."
+		);
+		ImGui::Spacing();
+	}
 
 	// Links Section
-	ImGui::TextDisabled("%s Links", ICON_FA_LINK);
-	ImGui::Separator();
+	if (ImGui::CollapsingHeader(ICON_FA_LINK " Links##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		// Website (colored text to look like a link)
+		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered]);
+		ImGui::Text("Website");
+		ImGui::PopStyleColor();
+		ImGui::SameLine();
+		ImGui::TextDisabled("https://flycast-emu.com/");
 
-	// Website (colored text to look like a link)
-	ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered]);
-	ImGui::Text("Website");
-	ImGui::PopStyleColor();
-	ImGui::SameLine();
-	ImGui::TextDisabled("https://flycast-emu.com/");
-
-	ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered]);
-	ImGui::Text("Source Code");
-	ImGui::PopStyleColor();
-	ImGui::SameLine();
-	ImGui::TextDisabled("https://github.com/flycast-emu/flycast");
-	ImGui::Spacing();
+		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered]);
+		ImGui::Text("Source Code");
+		ImGui::PopStyleColor();
+		ImGui::SameLine();
+		ImGui::TextDisabled("https://github.com/flycast-emu/flycast");
+		ImGui::Spacing();
+	}
 
 	// License Information
-	ImGui::TextDisabled("%s License", ICON_FA_FILE_CONTRACT);
-	ImGui::Separator();
-	ImGui::TextWrapped(
-		"Copyright (C) 2019-2025 flyinghead and contributors"
-	);
-	ImGui::TextWrapped(
-		"Hollycast/Flycast is free software; you can redistribute it and/or modify "
-		"it under the terms of the GNU General Public License as published by "
-		"the Free Software Foundation; either version 2 of the License, or "
-		"(at your option) any later version."
-	);
-	ImGui::Spacing();
+	if (ImGui::CollapsingHeader(ICON_FA_FILE_CONTRACT " License##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		ImGui::TextWrapped(
+			"Copyright (C) 2019-2025 flyinghead and contributors"
+		);
+		ImGui::TextWrapped(
+			"Hollycast/Flycast is free software; you can redistribute it and/or modify "
+			"it under the terms of the GNU General Public License as published by "
+			"the Free Software Foundation; either version 2 of the License, or "
+			"(at your option) any later version."
+		);
+		ImGui::Spacing();
+	}
 
 	// Credits
-	ImGui::TextDisabled("%s Credits", ICON_FA_USERS);
-	ImGui::Separator();
-	ImGui::TextWrapped(
-		"This emulator is based on the work of many talented developers "
-		"who have contributed to the Flycast project and its dependencies."
-	);
-	ImGui::TextWrapped(
-		"Special thanks to the original Flycast team and all contributors "
-		"who make this project possible."
-	);
+	if (ImGui::CollapsingHeader(ICON_FA_USERS " Credits##Section", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		ImGui::TextWrapped(
+			"This emulator is based on the work of many talented developers "
+			"who have contributed to the Flycast project and its dependencies."
+		);
+		ImGui::TextWrapped(
+			"Special thanks to the original Flycast team and all contributors "
+			"who make this project possible."
+		);
+	}
 
 	ImGui::PopStyleVar();
 }
@@ -5869,8 +5917,7 @@ void renderSettingsNew()
 			| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse
 			| ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
 	{
-		auto exitSettings = []()
-		{
+		const std::function<void()> exitSettings = [&]() {
 			if (g_mapleDevicesChangedInSettings)
 			{
 				g_mapleDevicesChangedInSettings = false;
