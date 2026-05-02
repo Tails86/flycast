@@ -726,7 +726,7 @@ private:
 			if (dpp_comms->isConnected() && dpp_comms->initialize(timeout_ms)) {
 				// Connected and initialized!
 				bool hwVerified = false;
-				std::array<dpp_api::GamepadConnectionState, 4Ui64> gamepads = dpp_comms->getConnectedGamepads();
+				std::array<dpp_api::GamepadConnectionState, 4> gamepads = dpp_comms->getConnectedGamepads();
 				if (
 					hw_info.hardware_bus < gamepads.size() &&
 					gamepads[hw_info.hardware_bus] != dpp_api::GamepadConnectionState::UNAVAILABLE
@@ -737,22 +737,14 @@ private:
 					// The determined hardware_bus is incorrect, and only single controller device is available
 					// This covers cases where, for instance, only a controller is plugged into port D and all others
 					// are either set to auto and disconnected or otherwise disabled
-
-					// Find the first item which is not marked as UNAVAILABLE
-					auto it = std::find_if(
-						gamepads.begin(),
-						gamepads.end(),
-						[](dpp_api::GamepadConnectionState s) {
-							return s != dpp_api::GamepadConnectionState::UNAVAILABLE;
+					for (int i = 0; i < gamepads.size(); i++) {
+						if (gamepads[i] != dpp_api::GamepadConnectionState::UNAVAILABLE) {
+							// Note: changing the hardware bus will NOT change the name because is_single_device is true
+							hw_info.hardware_bus = i;
+							dpp_comms->changeHardwareBus(i);
+							hwVerified = true;
+							break;
 						}
-					);
-
-					if (it != gamepads.end()) {
-						// Note: changing the hardware bus will NOT change the name because is_single_device is true
-						size_t i = static_cast<int>(std::distance(gamepads.begin(), it));
-						hw_info.hardware_bus = i;
-						dpp_comms->changeHardwareBus(i);
-						hwVerified = true;
 					}
 				}
 
