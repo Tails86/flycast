@@ -87,11 +87,18 @@ Double-click the bootstrap script:
 #### Build
 
 ```
-$ git clone --recursive https://github.com/flyinghead/flycast.git
-$ cd flycast
-$ mkdir build && cd build
-$ cmake ..
-$ make
+# Clone repo
+$ git clone --recursive https://github.com/OrangeFox86/hollycast.git
+$ cd hollycast
+
+# Update submodules (this needs to be manually performed when submodule versions are updated)
+$ git submodule update --init --recursive
+
+# Configure the build (make sln file, etc., depending on your platform)
+$ cmake -B build-debug/
+
+# Run the build
+$ cmake --build build-debug/
 ```
 
 ## Packaging status
