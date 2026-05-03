@@ -202,7 +202,6 @@ bool DreamConnGamepad::identify(int deviceIndex)
 	// DreamConn VID:4457 PID:4443
 	const char* pid_vid_guid_str = guid_str + 8;
 	if (memcmp(VID_PID_GUID, pid_vid_guid_str, 16) == 0) {
-		NOTICE_LOG(INPUT, "DreamConn controller found!");
 		return true;
 	}
 	return false;
