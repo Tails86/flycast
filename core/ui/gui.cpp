@@ -1958,7 +1958,10 @@ void gui_saveState(bool stopRestart)
 
 void gui_cycleSaveStateSlot(int step)
 {
-	config::SavestateSlot = (config::SavestateSlot + step + 10) % 10;
+
+config::SavestateSlot = (config::SavestateSlot + (step % NUM_SAVE_SLOTS) + NUM_SAVE_SLOTS) % NUM_SAVE_SLOTS;
+
+
 	SaveSettings();
 	os_notify(strprintf(T("Save state slot %d"), config::SavestateSlot + 1).c_str(), 2000);
 }
