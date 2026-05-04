@@ -56,11 +56,13 @@ void error_popup();
 static void storage_popup_callback(bool cancelled, std::string selectedPath)
 {
 	StringCallback callback;
+	
 	{
 		std::lock_guard<std::mutex> lock(g_storageCallbackMutex);
 		callback = g_storageCallback;
 		g_storageCallback = {};
 	}
+	
 	if (callback)
 		callback(cancelled, selectedPath);
 }
