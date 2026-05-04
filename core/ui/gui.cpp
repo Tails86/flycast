@@ -2139,7 +2139,8 @@ void render_save_state_slots(bool isSaving)
 
 	if (isSaving)
 	{
-		for (int slot = 0; slot < 10; slot++)
+		for (int slot = 0; slot < NUM_SAVE_SLOTS; slot++)
+
 		{
 			const time_t timestamp = dc_getStateCreationDate(slot);
 			std::string label;
