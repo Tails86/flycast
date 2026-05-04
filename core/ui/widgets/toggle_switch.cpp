@@ -136,7 +136,6 @@ bool ToggleSwitch(const char* label, bool* value, const char* tooltip,
 		*value = !*value;
 	}
 
-	// Smooth animation using linear interpolation
 	float anim = *value ? 1.0f : 0.0f;
 	if (g.LastActiveId == id && !disabled)
 	{
