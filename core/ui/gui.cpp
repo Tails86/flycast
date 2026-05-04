@@ -2089,7 +2089,7 @@ static ImTextureID loadSaveStateThumbnail(int slot)
 static void draw_save_state_menu_thumbnail(int slot, float size)
 {
 	ImTextureID thumbnail = loadSaveStateThumbnail(slot);
-	if (thumbnail)
+	if (thumbnail != ImTextureID_Invalid)
 		ImGui::Image(thumbnail, ImVec2(size, size));
 	else
 		ImGui::Dummy(ImVec2(size, size));
