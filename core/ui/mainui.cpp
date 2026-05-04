@@ -65,6 +65,14 @@ bool mainui_rend_frame()
 				gui_display_profiler();
 			// OSD and menu bar are rendered together
 			gui_draw_osd();
+		} catch (const RendererException& e) {
+			gui_error(i18n::Ts("Renderer error:") + "\n" + e.what() + "\n\n"
+					+ i18n::Ts("The game has been paused but it is recommended to restart Flycast"));
+			rend_term_renderer();
+			if (!rend_init_renderer())
+				ERROR_LOG(RENDERER, "Renderer re-initialization failed");
+			gui_open_settings();
+			return false;
 		} catch (const FlycastException& e) {
 			gui_stop_game(e.what());
 			return false;
