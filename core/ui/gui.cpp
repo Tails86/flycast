@@ -93,6 +93,7 @@ static Boxart boxart;
 static Chat chat;
 static std::recursive_mutex guiMutex;
 using LockGuard = std::lock_guard<std::recursive_mutex>;
+static constexpr int NUM_SAVE_SLOTS = 10;
 
 ImFont *largeFont;
 ImFont *settingsTitleFont;
@@ -1958,10 +1959,7 @@ void gui_saveState(bool stopRestart)
 
 void gui_cycleSaveStateSlot(int step)
 {
-
-config::SavestateSlot = (config::SavestateSlot + (step % NUM_SAVE_SLOTS) + NUM_SAVE_SLOTS) % NUM_SAVE_SLOTS;
-
-
+	config::SavestateSlot = (config::SavestateSlot + (step % NUM_SAVE_SLOTS) + NUM_SAVE_SLOTS) % NUM_SAVE_SLOTS;
 	SaveSettings();
 	os_notify(strprintf(T("Save state slot %d"), config::SavestateSlot + 1).c_str(), 2000);
 }
