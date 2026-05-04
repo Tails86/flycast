@@ -32,7 +32,7 @@ struct GameMedia;
 
 enum class BoxartSourceMode
 {
-	ScrapedOnly = 0,
+	ScrapedOnly = 0,  // Only use scraped artwork from the box art database / online scraper
 	PhysicalMediaOnly = 1, // Shows the Physical media image of the disc on the Rom
 	CustomThenScraped = 2,
 };
