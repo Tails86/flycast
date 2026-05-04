@@ -2026,8 +2026,12 @@ void gui_takeScreenshot()
 }
 
 // Cache for save state thumbnails
-static std::map<int, ImTextureID> thumbnailCache;
-static std::map<int, time_t> thumbnailCacheTime;
+struct ThumbnailEntry {
+    ImTextureID id;
+    time_t cacheTime;
+};
+static std::map<int, ThumbnailEntry> thumbnailCache;
+
 
 static ImTextureID loadSaveStateThumbnail(int slot)
 {
