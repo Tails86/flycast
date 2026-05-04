@@ -2128,55 +2128,43 @@ static std::string format_save_state_menu_time(time_t timestamp)
 	return timeStr;
 }
 
-void render_save_state_slots(bool isSaving)
+void render_save_state_slots(bool isSaving) 
 {
-	const float thumbnailSize = uiScaled(18.0f);
+    const float thumbnailSize = uiScaled(18.0f);
+    bool hasEntries = false;
 
-	if (isSaving)
-	{
-		for (int slot = 0; slot < NUM_SAVE_SLOTS; slot++)
+    for (int slot = 0; slot < NUM_SAVE_SLOTS; slot++) 
+    {
+        const time_t timestamp = dc_getStateCreationDate(slot);
+        const bool isEmpty = (timestamp <= 0);
 
-		{
-			const time_t timestamp = dc_getStateCreationDate(slot);
-			std::string label;
-			if (timestamp > 0)
-				label = "Save Slot " + std::to_string(slot + 1) + " (" + format_save_state_menu_time(timestamp) + ")";
-			else
-				label = "Save Slot " + std::to_string(slot + 1) + " (Empty)";
+        // If loading, we only care about occupied slots
+        if (!isSaving && isEmpty) {
+            continue;
+        }
 
-			draw_save_state_menu_thumbnail(slot, thumbnailSize);
-			ImGui::SameLine(0, uiScaled(6.0f));
-			if (ImGui::MenuItem(label.c_str()))
-			{
-				config::SavestateSlot = slot;
-				gui_saveState();
-			}
-		}
-		return;
-	}
+        hasEntries = true;
 
-	bool hasEntries = false;
+        std::string dateStr = isEmpty ? "Empty" : format_save_state_menu_time(timestamp);
+        std::string label = (isSaving ? "Save Slot " : "Load Slot ") 
+                          + std::to_string(slot + 1) + " (" + dateStr + ")";
 
-	for (int slot = 0; slot < 10; slot++)
-	{
-		const time_t timestamp = dc_getStateCreationDate(slot);
-		if (timestamp <= 0)
-			continue;
+        draw_save_state_menu_thumbnail(slot, thumbnailSize);
+        ImGui::SameLine(0, uiScaled(6.0f));
 
-		hasEntries = true;
-		const std::string label = "Load Slot " + std::to_string(slot + 1)
-								+ " (" + format_save_state_menu_time(timestamp) + ")";
-		draw_save_state_menu_thumbnail(slot, thumbnailSize);
-		ImGui::SameLine(0, uiScaled(6.0f));
-		if (ImGui::MenuItem(label.c_str()))
-		{
-			config::SavestateSlot = slot;
-			gui_loadState();
-		}
-	}
+        if (ImGui::MenuItem(label.c_str())) {
+            config::SavestateSlot = slot;
+            if (isSaving) {
+                gui_saveState();
+            } else {
+                gui_loadState();
+            }
+        }
+    }
 
-	if (!hasEntries)
-		ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No Save States");
+    if (!isSaving && !hasEntries) {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No Save States");
+    }
 }
 
 #ifdef TARGET_UWP
