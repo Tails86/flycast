@@ -224,13 +224,13 @@ void select_file_popup(const char *prompt, const StringCallback& callback,
 	}
 }
 
-bool select_storage_popup(bool isDirectory, bool writeAccess, const std::string& description,
+StoragePopupResult select_storage_popup(bool isDirectory, bool writeAccess, const std::string& description,
 		const StringCallback& callback, const std::string& mimeType)
 {
 	{
 		std::lock_guard<std::mutex> lock(g_storageCallbackMutex);
 		if (g_storageCallback)
-			return false;
+			return StoragePopupResult::CallbackAlreadySet;
 		g_storageCallback = callback;
 	}
 
@@ -240,7 +240,7 @@ bool select_storage_popup(bool isDirectory, bool writeAccess, const std::string&
 		std::lock_guard<std::mutex> lock(g_storageCallbackMutex);
 		g_storageCallback = {};
 	}
-	return supported;
+	return supported ? StoragePopupResult::Supported : StoragePopupResult::Unsupported;
 }
 
 // See https://github.com/ocornut/imgui/issues/3379

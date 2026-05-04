@@ -40,7 +40,14 @@ using StringCallback = std::function<bool(bool cancelled, const std::string& sel
 void select_file_popup(const char *prompt, const StringCallback& callback,
 		bool selectFile = false, const std::string& extension = "");
 
-bool select_storage_popup(bool isDirectory, bool writeAccess, const std::string& description,
+enum class StoragePopupResult
+{
+	Supported,
+	Unsupported,
+	CallbackAlreadySet,
+};
+
+StoragePopupResult select_storage_popup(bool isDirectory, bool writeAccess, const std::string& description,
 		const StringCallback& callback, const std::string& mimeType = {});
 
 void scrollWhenDraggingOnVoid(ImGuiMouseButton mouse_button = ImGuiMouseButton_Left);

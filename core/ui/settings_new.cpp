@@ -1676,7 +1676,7 @@ static void managePathList(const char* label, std::vector<std::string>& paths, c
 #ifdef __ANDROID__
 	if (openPopup)
 	{
-		bool supported = select_storage_popup(true, false, popupTitle, [pathsPtr](bool cancelled, const std::string& selection) {
+		const StoragePopupResult storageResult = select_storage_popup(true, false, popupTitle, [pathsPtr](bool cancelled, const std::string& selection) {
 			if (!cancelled)
 			{
 				pathsPtr->push_back(selection);
@@ -1684,7 +1684,7 @@ static void managePathList(const char* label, std::vector<std::string>& paths, c
 			}
 			return true;
 		});
-		if (!supported)
+		if (storageResult == StoragePopupResult::Unsupported)
 			ImGui::OpenPopup(popupTitle.c_str());
 	}
 #else
