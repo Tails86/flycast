@@ -2424,7 +2424,7 @@ void renderGeneralTab()
 #if USE_DISCORD
 		RenderGeneralToggleSettingRow(
 			"discord_presence",
-			ICON_FA_DISCORD,
+			ICON_FA_COMMENT,
 			"Discord Presence",
 			"Show which game you are playing on Discord",
 			static_cast<bool>(config::DiscordPresence),
