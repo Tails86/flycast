@@ -149,49 +149,49 @@ void renderSystemMenu()
 		// Pause/Resume
 		if (::game_started)
 		{
-				if (gui_state == GuiState::Closed)
+			if (gui_state == GuiState::Closed)
+			{
+				if (ImGui::MenuItem("Pause", nullptr, false, true))
 				{
-					if (ImGui::MenuItem("Pause", nullptr, false, true))
-					{
-						emu.stop();
-						gui_setState(GuiState::Commands);
-					}
+					emu.stop();
+					gui_setState(GuiState::Commands);
+				}
 			}
-				else
+			else
+			{
+				if (ImGui::MenuItem("Resume", nullptr, false, true))
 				{
-					if (ImGui::MenuItem("Resume", nullptr, false, true))
-					{
-						gui_setState(GuiState::Closed);
-						emu.start();
-					}
+					gui_setState(GuiState::Closed);
+					emu.start();
+				}
 			}
 		}
 
 		// Restart
-			if (ImGui::MenuItem("Restart", nullptr, false, ::game_started))
+		if (ImGui::MenuItem("Restart", nullptr, false, ::game_started))
+		{
+			if (::game_started)
 			{
-				if (::game_started)
-				{
-					emu.stop();
-					emu.start();
-				}
+				emu.stop();
+				emu.start();
+			}
 		}
 
 		ImGui::Separator();
 
 		// Fast Forward
-			if (ImGui::MenuItem("Fast Forward", nullptr, false, ::game_started))
-			{
-				if (::game_started)
-					settings.input.fastForwardMode = !settings.input.fastForwardMode;
-			}
+		if (ImGui::MenuItem("Fast Forward", nullptr, false, ::game_started))
+		{
+			if (::game_started)
+				settings.input.fastForwardMode = !settings.input.fastForwardMode;
+		}
 
 		// Screenshot
-			if (ImGui::MenuItem("Screenshot", nullptr, false, ::game_started))
-			{
-				if (::game_started)
-					gui_takeScreenshot();
-			}
+		if (ImGui::MenuItem("Screenshot", nullptr, false, ::game_started))
+		{
+			if (::game_started)
+				gui_takeScreenshot();
+		}
 
 		ImGui::Separator();
 
@@ -212,13 +212,13 @@ void renderSystemMenu()
 		ImGui::Separator();
 
 		// Cheats
-			if (ImGui::MenuItem("Cheats", nullptr, false, ::game_started))
+		if (ImGui::MenuItem("Cheats", nullptr, false, ::game_started))
+		{
+			if (::game_started)
 			{
-				if (::game_started)
-				{
-					gui_setState(GuiState::Cheats);
-				}
+				gui_setState(GuiState::Cheats);
 			}
+		}
 
 		ImGui::EndMenu();
 	}
