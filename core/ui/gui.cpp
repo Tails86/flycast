@@ -1921,8 +1921,8 @@ void gui_loadState()
 			}
 
 			emu.stop();
-				dc_loadstate(config::SavestateSlot);
-				emu.start();
+            dc_loadstate(config::SavestateSlot);
+            emu.start();
 		} catch (const FlycastException& e) {
 			gui_stop_game(e.what());
 		}
