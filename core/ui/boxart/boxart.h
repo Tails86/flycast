@@ -34,7 +34,7 @@ enum class BoxartSourceMode
 {
 	ScrapedOnly = 0,  // Only use scraped artwork from the box art database / online scraper
 	PhysicalMediaOnly = 1, // Shows the Physical media image of the disc on the Rom
-	CustomThenScraped = 2,
+	CustomThenScraped = 2, // Use custom boxart, and then when no customs img is available, use scrapped media.
 };
 
 class Boxart
