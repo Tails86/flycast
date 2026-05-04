@@ -1909,14 +1909,11 @@ void gui_loadState()
 {
 	const LockGuard lock(guiMutex);
 
-	// Fix: Close GUI if open (menu selection scenario)
-	bool needToCloseGui = (gui_state != GuiState::Closed);
-
 	if (dc_savestateAllowed())
 	{
 		try {
 			// Close UI if it's open (menu selection scenario)
-			if (needToCloseGui)
+			if (gui_state != GuiState::Closed)
 			{
 				gui_setState(GuiState::Closed);
 			}
