@@ -2052,7 +2052,7 @@ static ImTextureID loadSaveStateThumbnail(int slot)
 	std::vector<u8> pngData;
 	dc_getStateScreenshot(slot, pngData);
 	if (pngData.empty())
-		return ImTextureID{};
+		return ImTextureID_Invalid;
 
 	// Decode PNG using stb_image
 	int width, height, channels;
@@ -2062,7 +2062,7 @@ static ImTextureID loadSaveStateThumbnail(int slot)
 		&width, &height, &channels, 4);
 
 	if (!imgData)
-		return ImTextureID{};
+		return ImTextureID_Invalid;
 
 	// Create texture using imguiDriver abstraction (works with all renderers)
 	std::string texName = "savestate_" + std::to_string(key);
@@ -2072,7 +2072,7 @@ static ImTextureID loadSaveStateThumbnail(int slot)
 	} catch (...) {
 		// Renderer might throw during resize
 		free(imgData);
-		return ImTextureID{};
+		return ImTextureID_Invalid;
 	}
 
 	free(imgData);
