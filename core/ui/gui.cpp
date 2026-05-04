@@ -1966,6 +1966,7 @@ void gui_setState(GuiState newState)
 	gui_state = newState;
 	if (newState == GuiState::Closed)
 	{
+		clearThumbnailCache();
 		// If the game isn't rendering any frame, these flags won't be updated and keyboard/mouse input will be ignored.
 		// So we force them false here. They will be set in the next ImGUI::NewFrame() anyway
 		ImGuiIO& io = ImGui::GetIO();
@@ -2026,7 +2027,6 @@ void gui_takeScreenshot()
 // Cache for save state thumbnails
 struct ThumbnailEntry {
     ImTextureID id;
-    time_t cacheTime;
 };
 static std::map<int, ThumbnailEntry> thumbnailCache;
 
@@ -2037,13 +2037,7 @@ static ImTextureID loadSaveStateThumbnail(int slot)
 	// Check cache first
 	auto cached = thumbnailCache.find(key);
 	if (cached != thumbnailCache.end())
-	{
-		// Verify cache is still valid (file hasn't changed)
-		time_t fileTime = dc_getStateCreationDate(slot);
-		auto cachedTime = thumbnailCacheTime.find(key);
-		if (fileTime > 0 && cachedTime != thumbnailCacheTime.end() && fileTime == cachedTime->second)
-			return cached->second;
-	}
+		return cached->second.id;
 
 	// Load screenshot from save state
 	std::vector<u8> pngData;
@@ -2075,8 +2069,7 @@ static ImTextureID loadSaveStateThumbnail(int slot)
 	free(imgData);
 
 	// Cache texture
-	thumbnailCache[key] = textureId;
-	thumbnailCacheTime[key] = dc_getStateCreationDate(slot);
+	thumbnailCache[key] = {textureId};
 
 	return textureId;
 }
@@ -2104,7 +2097,6 @@ static void clearThumbnailCache()
 	}
 
 	thumbnailCache.clear();
-	thumbnailCacheTime.clear();
 }
 
 static std::string format_save_state_menu_time(time_t timestamp)
