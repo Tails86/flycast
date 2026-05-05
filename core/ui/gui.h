@@ -53,6 +53,7 @@ void gui_loadState();
 void gui_saveState(bool stopRestart = true);
 void gui_cycleSaveStateSlot(int step);
 std::string gui_getCurGameBoxartUrl();
+void gui_refresh_custom_boxart(bool force = true);
 void gui_takeScreenshot();
 void gui_runOnUiThread(std::function<void()> function);
 void gui_runOnUiThread(const std::chrono::steady_clock::time_point& tp, const std::function<void()>& function);
@@ -77,6 +78,9 @@ enum class GuiState {
 	Achievements,
 };
 extern GuiState gui_state;
+
+// Exit save dialog flag
+extern bool showExitSaveDialog;
 
 void gui_setState(GuiState newState);
 

@@ -1,5 +1,5 @@
 /*
-	Copyright 2025 flyinghead
+	Copyright 2019 flyinghead
 
 	This file is part of Flycast.
 
@@ -16,12 +16,9 @@
     You should have received a copy of the GNU General Public License
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include "settings.h"
-#include "settings_new.h"
 
-// Legacy compatibility entry point. The Network tab is implemented in
-// settings_new.cpp; preserve this symbol for compatibility and merge stability.
-void gui_settings_network()
-{
-	SettingsNew::renderNetworkTab();
-}
+#include "widgets.h"
+
+// Placeholder widget implementation
+// Full widget system implementation is pending
+// This file exists to satisfy linker requirements

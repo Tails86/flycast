@@ -42,6 +42,7 @@
 #include "gui_achievements.h"
 #include "IconsFontAwesome6.h"
 #include <stb_image_write.h>
+#include <stb_image.h>
 #include "hw/pvr/Renderer_if.h"
 #include "rend/CustomTexture.h"
 #include "hw/mem/addrspace.h"
@@ -52,7 +53,7 @@
 #include "vgamepad.h"
 #include "settings.h"
 #include "oslib/i18n.h"
-using namespace i18n;
+#include "gui_menu.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -84,6 +85,7 @@ static void (*showOnScreenKeyboard)(bool show);
 static bool keysUpNextFrame[512];
 bool uiUserScaleUpdated;
 static bool clearActiveIdNextFrame;
+bool showExitSaveDialog = false;
 
 GameScanner scanner;
 static BackgroundGameLoader gameLoader;
@@ -91,8 +93,12 @@ static Boxart boxart;
 static Chat chat;
 static std::recursive_mutex guiMutex;
 using LockGuard = std::lock_guard<std::recursive_mutex>;
+static constexpr int NUM_SAVE_SLOTS = 10;
 
 ImFont *largeFont;
+ImFont *settingsTitleFont;
+ImFont *settingsValueFont;
+ImFont *settingsRightValueFont;
 static Toast toast;
 static ScheduledThreadRunner<std::chrono::steady_clock::time_point> uiThreadRunner;
 
@@ -116,8 +122,11 @@ static void emuEventCallback(Event event, void *)
 	}
 }
 
+static void clearThumbnailCache();
+
 void gui_init()
 {
+	DEBUG_LOG(COMMON, "gui_init() called");
 	if (inited)
 		return;
 	inited = true;
@@ -250,25 +259,19 @@ void gui_initFonts()
 
 	ImGuiIO& io = ImGui::GetIO();
 	io.Fonts->Clear();
-
-	// Regular font
+	largeFont = nullptr;
+	settingsTitleFont = nullptr;
+	settingsValueFont = nullptr;
+	settingsRightValueFont = nullptr;
 	const float fontSize = uiScaled(17.f);
 	size_t dataSize;
 	std::unique_ptr<u8[]> data = resource::load("fonts/Roboto-Medium.ttf", dataSize);
 	verify(data != nullptr);
 	ImFont *regularFont = io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, fontSize, nullptr, ranges);
-    ImFontConfig fontConfig;
-    fontConfig.MergeMode = true;
-    fontConfig.DstFont = regularFont;
-	// Font Awesome symbols (added to default font)
-	data = resource::load("fonts/" FONT_ICON_FILE_NAME_FAS, dataSize);
-	verify(data != nullptr);
-    fontConfig.FontNo = 0;
-	static ImWchar faRanges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
-	io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, fontSize, &fontConfig, faRanges);
-
-	// Large font
-    const float largeFontSize = uiScaled(21.f);
+	ImFontConfig fontConfig;
+	fontConfig.MergeMode = true;
+	fontConfig.DstFont = regularFont;
+	const float largeFontSize = uiScaled(21.f);
 	data = resource::load("fonts/Roboto-Regular.ttf", dataSize);
 	verify(data != nullptr);
 	largeFont = io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, largeFontSize, nullptr, ranges);
@@ -276,6 +279,11 @@ void gui_initFonts()
 	largeFontConfig.MergeMode = true;
 	largeFontConfig.DstFont = largeFont;
 
+	data = resource::load("fonts/" FONT_ICON_FILE_NAME_FAS, dataSize);
+	verify(data != nullptr);
+	fontConfig.FontNo = 0;
+	static ImWchar faRanges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
+	io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, fontSize, &fontConfig, faRanges);
 #ifdef _WIN32
     u32 cp = GetACP();
     std::string fontDir = std::string(nowide::getenv("SYSTEMROOT")) + "\\Fonts\\";
@@ -373,7 +381,6 @@ void gui_initFonts()
         	io.Fonts->AddFontFromFileTTF("/system/fonts/NotoSansCJK-Regular.ttc", largeFontSize, &largeFontConfig, glyphRanges);
         }
     }
-
 #elif defined(__linux__)
 	std::string locale = i18n::getCurrentLocale();
 	if (locale.find("ja_") == 0)			// Japanese
@@ -438,6 +445,7 @@ void gui_initFonts()
 				"/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
 				"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
 				"/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", // redhat
+				nullptr
 		};
 		const char *largeFonts[] = {
 				"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
@@ -445,13 +453,36 @@ void gui_initFonts()
 				"/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
 				"/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
 				"/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc", // redhat
+				nullptr
 		};
 		addFont(fonts, fontSize, fontConfig, glyphRanges);
 		addFont(largeFonts, largeFontSize, largeFontConfig, glyphRanges);
 	}
-
-	// TODO BSD, iOS, ...
 #endif
+
+	data = resource::load("fonts/Jura-wght.ttf", dataSize);
+	if (data != nullptr)
+		settingsTitleFont = io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, fontSize, nullptr, ranges);
+
+	data = resource::load("fonts/EncodeSans-wdth-wght.ttf", dataSize);
+	if (data != nullptr)
+	{
+		ImFontConfig rightValueFontCfg;
+		rightValueFontCfg.RasterizerMultiply = 4.50f;
+		settingsRightValueFont = io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, largeFontSize, &rightValueFontCfg, ranges);
+	}
+
+	data = resource::load("fonts/EncodeSans-wdth-wght.ttf", dataSize);
+	if (data != nullptr)
+		settingsValueFont = io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, uiScaled(24.f), nullptr, ranges);
+
+	if (settingsTitleFont == nullptr)
+		settingsTitleFont = regularFont != nullptr ? regularFont : largeFont;
+	if (settingsValueFont == nullptr)
+		settingsValueFont = largeFont;
+	if (settingsRightValueFont == nullptr)
+		settingsRightValueFont = largeFont;
+
     NOTICE_LOG(RENDERER, "Screen DPI is %.0f, size %d x %d. Scaling by %.2f", settings.display.dpi, settings.display.width, settings.display.height, settings.display.uiScale);
 	vgamepad::applyUiScale();
 }
@@ -560,6 +591,18 @@ static void gui_newFrame()
 	analog = joyy[0] > 0 ? (float)joyy[0] / 32768.f : 0.f;
 	io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, analog > 0.1f, analog);
 
+	// Emergency quit: Shift+Esc or Ctrl+Shift+Esc to force quit (bypasses save dialog)
+	// This is a safety measure in case of UI bugs
+	if (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
+	    (ImGui::GetIO().KeyShift || ImGui::GetIO().KeySuper))
+	{
+		INFO_LOG(COMMON, "Emergency quit activated");
+		showExitSaveDialog = false;  // Clear any pending dialog
+		gui_stop_game();  // Stop the game immediately
+		dc_exit();  // Exit application
+		return;  // Skip the rest of this frame
+	}
+
 	ImGui::GetStyle().Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.06f, 0.06f, 0.06f, 0.94f);
 
 	if (showOnScreenKeyboard != nullptr)
@@ -666,6 +709,9 @@ void gui_start_game(const std::string& path)
 	reset_vmus();
     chat.reset();
 
+	// Clear thumbnail cache when starting a new game
+	clearThumbnailCache();
+
 	scanner.stop();
 	gui_setState(GuiState::Loading);
 	gameLoader.load(path);
@@ -680,6 +726,10 @@ void gui_stop_game(const std::string& message)
 		emu.unloadGame();
 		gui_setState(GuiState::Main);
 		reset_vmus();
+
+		// Clear thumbnail cache when stopping game
+		clearThumbnailCache();
+
 		if (!message.empty())
 			gui_error(Ts("Flycast has stopped.") + "\n\n" + message);
 	}
@@ -712,7 +762,7 @@ static void getScreenshot(std::vector<u8>& data, int width = 0)
 
 static void savestate()
 {
-	// TODO save state async: png compression, savestate file compression/write
+	// Potential optimization: move screenshot/state compression/write off the UI thread.
 	std::vector<u8> pngData;
 	getScreenshot(pngData, 640);
 	dc_savestate(config::SavestateSlot, pngData.empty() ? nullptr : &pngData[0], pngData.size());
@@ -720,10 +770,94 @@ static void savestate()
 	savestatePic.invalidate();
 }
 
-void cycleSaveStateSlot(int step)
+static void render_exit_save_dialog()
 {
-	config::SavestateSlot = (config::SavestateSlot + 10 + step) % 10;
-	SaveSettings();
+	static bool wasDialogShown = false;
+
+	if (!showExitSaveDialog)
+	{
+		wasDialogShown = false;
+		return;
+	}
+
+	// Center dialog
+	ImGui::SetNextWindowPos(
+		ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f),
+		ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+
+	// Only open popup if it's not already open and this is a new request
+	if (showExitSaveDialog && !wasDialogShown)
+	{
+		ImGui::OpenPopup("Exit Game?");
+		wasDialogShown = true;
+	}
+
+	if (ImGui::BeginPopupModal("Exit Game?", NULL,
+		ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar))
+	{
+		ImGui::Text("Do you want to save state before exiting?");
+		ImGui::NewLine();
+
+		// Button styling (consistent with existing dialogs)
+		ImguiStyleVar _(ImGuiStyleVar_ItemSpacing, ImVec2(uiScaled(20), ImGui::GetStyle().ItemSpacing.y));
+		ImguiStyleVar _1(ImGuiStyleVar_FramePadding, ScaledVec2(10, 10));
+		const float buttonWidth = std::max({
+			ImGui::CalcTextSize("Save & Exit").x,
+			ImGui::CalcTextSize("Exit Without Saving").x,
+			ImGui::CalcTextSize("Cancel").x
+		}) + ImGui::GetStyle().FramePadding.x * 2 + uiScaled(24.f);
+
+		// Check if save is allowed
+		bool canSave = dc_savestateAllowed();
+
+		if (ImGui::Button("Save & Exit", ImVec2(buttonWidth, 0)))
+		{
+			if (canSave)
+			{
+				savestate(); // Save current state
+				ImGui::CloseCurrentPopup();
+				showExitSaveDialog = false;
+				gui_stop_game();
+			}
+			else
+			{
+				// Show error that save isn't allowed
+				ImGui::OpenPopup("Save Not Allowed");
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Exit Without Saving", ImVec2(buttonWidth, 0)))
+		{
+			ImGui::CloseCurrentPopup();
+			showExitSaveDialog = false;
+			gui_stop_game();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0)))
+		{
+			ImGui::CloseCurrentPopup();
+			showExitSaveDialog = false;
+		}
+
+		// Error popup for save not allowed
+		if (ImGui::BeginPopupModal("Save Not Allowed", NULL,
+			ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
+		{
+			ImGui::Text("Cannot save state in current mode.");
+			ImGui::Text("Possible reasons:");
+			ImGui::BulletText("No game loaded");
+			ImGui::BulletText("Network play active");
+			ImGui::BulletText("Multi-board arcade mode");
+			ImGui::NewLine();
+			if (ImGui::Button("OK", ImVec2(120, 0)))
+			{
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+
+		ImGui::EndPopup();
+	}
 }
 
 static void gui_display_commands()
@@ -754,7 +888,7 @@ static void gui_display_commands()
 		game.fileName = settings.content.fileName;
 		GameBoxart art = boxart.getBoxart(game);
 		ImguiFileTexture tex(art.boxartPath);
-		// TODO use placeholder image if not available
+		// Use a fallback image when artwork is unavailable
 		tex.draw(ScaledVec2(100, 100));
 
 		ImGui::SameLine();
@@ -832,9 +966,11 @@ static void gui_display_commands()
 				gui_setState(GuiState::Closed);
 			}
 		}
-		// Settings
-		if (IconButton(ICON_FA_GEAR, T("Settings"), ScaledVec2(buttonWidth, 50)).realize())
-			gui_setState(GuiState::Settings);
+			// Settings
+			if (ImGui::Button(ICON_FA_GEAR "  Settings", ScaledVec2(buttonWidth, 50)))
+			{
+				gui_setState(GuiState::Settings);
+			}
 
 		// Exit
 		if (IconButton(ICON_FA_POWER_OFF, commandLineStart ?  T("Exit") : T("Close Game"), ScaledVec2(buttonWidth, 50)).realize())
@@ -865,14 +1001,14 @@ static void gui_display_commands()
 
 			// Slot #
 			if (ImGui::ArrowButton("##prev-slot", ImGuiDir_Left))
-				cycleSaveStateSlot(-1);
+				gui_cycleSaveStateSlot(-1);
 			std::string slot = strprintf(T("Slot %d"), (int)config::SavestateSlot + 1);
 			float spacingW = (uiScaled(buttonWidth) - ImGui::GetFrameHeight() * 2 - ImGui::CalcTextSize(slot.c_str()).x) / 2;
 			ImGui::SameLine(0, spacingW);
 			ImGui::Text("%s", slot.c_str());
 			ImGui::SameLine(0, spacingW);
 			if (ImGui::ArrowButton("##next-slot", ImGuiDir_Right))
-				cycleSaveStateSlot(1);
+				gui_cycleSaveStateSlot(1);
 			{
 				ImVec4 gray(0.75f, 0.75f, 0.75f, 1.f);
 				if (savestateDate == 0)
@@ -1064,6 +1200,8 @@ static void gui_display_content()
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ScaledVec2(20, 8));
     ImGui::AlignTextToFramePadding();
+    // Position "GAMES" text and search bar below the menu bar (window is already positioned below menu bar)
+    ImGui::SetCursorPosY(ImGui::GetStyle().FramePadding.y);
     ImGui::Indent(uiScaled(10));
     ImGui::Text("%s", T("GAMES"));
     ImGui::Unindent(uiScaled(10));
@@ -1093,8 +1231,10 @@ static void gui_display_content()
 #else
 		ImGui::SameLine(ImGui::GetContentRegionMax().x - settingsBtn.width());
 #endif
-		if (settingsBtn.realize())
-			gui_setState(GuiState::Settings);
+			if (settingsBtn.realize())
+			{
+				gui_setState(GuiState::Settings);
+			}
     }
     else
     {
@@ -1498,11 +1638,33 @@ void gui_display_ui()
 
 	if (gui_state == GuiState::Closed)
 		return;
+
+	// Initialize ImGui frame BEFORE any early returns
+	// This ensures the menu bar is always visible, even during auto-start
+	gui_newFrame();
+	ImGui::NewFrame();
+	error_msg_shown = false;
+	bool gui_open = gui_is_open();
+	auto finishFrame = [&]() {
+		ImGui::Render();
+		gui_endFrame(gui_open);
+		uiThreadRunner.execTasks(std::chrono::steady_clock::now());
+		ImguiFileTexture::resetLoadCount();
+	};
+
+	// Render menu bar BEFORE any early returns
+	// This ensures menu bar is visible in library mode and during auto-start
+	GuiMenu::renderMainMenuBar();
+
+	// Check for auto-start after menu bar is rendered
 	if (gui_state == GuiState::Main)
 	{
 #ifdef TARGET_UWP
 		if (checkUWPProtocolActivation())
+		{
+			finishFrame();
 			return;
+		}
 #endif
 		if (!settings.content.path.empty() || settings.naomi.slave)
 		{
@@ -1513,18 +1675,20 @@ void gui_display_ui()
 				gui_start_game("");
 			else
 				gui_start_game(settings.content.path);
+			finishFrame();
 			return;
 		}
 	}
 
-	gui_newFrame();
-	ImGui::NewFrame();
-	error_msg_shown = false;
-	bool gui_open = gui_is_open();
+	// Render modal dialogs BEFORE window management
+	// This ensures modals are not affected by window stack operations
+	error_popup();
+	render_exit_save_dialog();
 
 	switch (gui_state)
 	{
 	case GuiState::Settings:
+		// Settings now always use the new UI through the compatibility facade.
 		gui_display_settings();
 		break;
 	case GuiState::Commands:
@@ -1566,11 +1730,8 @@ void gui_display_ui()
 		die("Unknown UI state");
 		break;
 	}
-	error_popup();
-    ImGui::Render();
-	gui_endFrame(gui_open);
-	uiThreadRunner.execTasks(std::chrono::steady_clock::now());
-	ImguiFileTexture::resetLoadCount();
+
+	finishFrame();
 
 	if (gui_state == GuiState::Closed)
 		emu.start();
@@ -1640,7 +1801,14 @@ void gui_draw_osd()
 	if (!settings.raHardcoreMode)
 		lua::overlay();
 	vgamepad::draw();
-    ImGui::Render();
+	// Render menu bar on top during gameplay
+	GuiMenu::renderMainMenuBar();
+
+	// Render modal dialogs (exit dialog, error popups)
+	error_popup();
+	render_exit_save_dialog();
+
+	ImGui::Render();
 	uiThreadRunner.execTasks(std::chrono::steady_clock::now());
 }
 
@@ -1699,6 +1867,7 @@ void gui_term()
 	{
 		inited = false;
 		scanner.stop();
+		clearThumbnailCache();
 		ImGui::DestroyContext();
 	    EventManager::unlisten(Event::Resume, emuEventCallback);
 	    EventManager::unlisten(Event::Start, emuEventCallback);
@@ -1739,15 +1908,29 @@ void gui_error(const std::string& what) {
 void gui_loadState()
 {
 	const LockGuard lock(guiMutex);
-	if (gui_state == GuiState::Closed && dc_savestateAllowed())
+
+	if (dc_savestateAllowed())
 	{
 		try {
+			// Close UI if it's open (menu selection scenario)
+			if (gui_state != GuiState::Closed)
+			{
+				gui_setState(GuiState::Closed);
+			}
+
 			emu.stop();
-			dc_loadstate(config::SavestateSlot);
-			emu.start();
+            dc_loadstate(config::SavestateSlot);
+            emu.start();
 		} catch (const FlycastException& e) {
 			gui_stop_game(e.what());
 		}
+	}
+	else
+	{
+		// User feedback when load not allowed
+		WARN_LOG(COMMON, "Load state not allowed: network=%d, multiboard=%d",
+				 settings.network.online, settings.naomi.multiboard);
+		os_notify("Cannot load state during online play", 3000);
 	}
 }
 
@@ -1773,7 +1956,8 @@ void gui_saveState(bool stopRestart)
 
 void gui_cycleSaveStateSlot(int step)
 {
-	cycleSaveStateSlot(step);
+	config::SavestateSlot = (config::SavestateSlot + (step % NUM_SAVE_SLOTS) + NUM_SAVE_SLOTS) % NUM_SAVE_SLOTS;
+	SaveSettings();
 	os_notify(strprintf(T("Save state slot %d"), config::SavestateSlot + 1).c_str(), 2000);
 }
 
@@ -1782,6 +1966,7 @@ void gui_setState(GuiState newState)
 	gui_state = newState;
 	if (newState == GuiState::Closed)
 	{
+		clearThumbnailCache();
 		// If the game isn't rendering any frame, these flags won't be updated and keyboard/mouse input will be ignored.
 		// So we force them false here. They will be set in the next ImGUI::NewFrame() anyway
 		ImGuiIO& io = ImGui::GetIO();
@@ -1797,6 +1982,11 @@ std::string gui_getCurGameBoxartUrl()
 	game.path = settings.content.path;
 	GameBoxart art = boxart.getBoxart(game);
 	return art.boxartUrl;
+}
+
+void gui_refresh_custom_boxart(bool force)
+{
+	boxart.refreshCustomBoxartIndex(force);
 }
 
 void gui_runOnUiThread(std::function<void()> function) {
@@ -1832,6 +2022,141 @@ void gui_takeScreenshot()
 			}
 		}
 	});
+}
+
+// Cache for save state thumbnails
+struct ThumbnailEntry {
+    ImTextureID id;
+};
+static std::map<int, ThumbnailEntry> thumbnailCache;
+
+
+static ImTextureID loadSaveStateThumbnail(int slot)
+{
+	const int key = slot;
+	// Check cache first
+	auto cached = thumbnailCache.find(key);
+	if (cached != thumbnailCache.end())
+		return cached->second.id;
+
+	// Load screenshot from save state
+	std::vector<u8> pngData;
+	dc_getStateScreenshot(slot, pngData);
+	if (pngData.empty())
+		return ImTextureID_Invalid;
+
+	// Decode PNG using stb_image
+	int width, height, channels;
+	stbi_set_flip_vertically_on_load(0);
+	u8* imgData = stbi_load_from_memory(
+		pngData.data(), pngData.size(),
+		&width, &height, &channels, 4);
+
+	if (!imgData)
+		return ImTextureID_Invalid;
+
+	// Create texture using imguiDriver abstraction (works with all renderers)
+	std::string texName = "savestate_" + std::to_string(key);
+	ImTextureID textureId{};
+	try {
+		textureId = imguiDriver->updateTextureAndAspectRatio(texName, imgData, width, height, false);
+	} catch (...) {
+		// Renderer might throw during resize
+		free(imgData);
+		return ImTextureID_Invalid;
+	}
+
+	free(imgData);
+
+	// Cache texture
+	thumbnailCache[key] = {textureId};
+
+	return textureId;
+}
+
+static void draw_save_state_menu_thumbnail(int slot, float size)
+{
+	ImTextureID thumbnail = loadSaveStateThumbnail(slot);
+	if (thumbnail != ImTextureID_Invalid)
+		ImGui::Image(thumbnail, ImVec2(size, size));
+	else
+		ImGui::Dummy(ImVec2(size, size));
+}
+
+static void clearThumbnailCache()
+{
+	// Delete textures before clearing cache
+	for (auto& entry : thumbnailCache)
+	{
+		std::string texName = "savestate_" + std::to_string(entry.first);
+		try {
+			imguiDriver->deleteTexture(texName);
+		} catch (...) {
+			// Ignore errors during shutdown/cleanup
+		}
+	}
+
+	thumbnailCache.clear();
+}
+
+static std::string format_save_state_menu_time(time_t timestamp)
+{
+	if (timestamp <= 0)
+		return "Unknown";
+
+	struct tm tmInfo {};
+#ifdef _WIN32
+	if (localtime_s(&tmInfo, &timestamp) != 0)
+		return "Unknown";
+#else
+	if (localtime_r(&timestamp, &tmInfo) == nullptr)
+		return "Unknown";
+#endif
+
+	char timeStr[64];
+	if (strftime(timeStr, sizeof(timeStr), "%m/%d/%Y %I:%M %p", &tmInfo) == 0)
+		return "Unknown";
+
+	return timeStr;
+}
+
+void render_save_state_slots(bool isSaving) 
+{
+    const float thumbnailSize = uiScaled(18.0f);
+    bool hasEntries = false;
+
+    for (int slot = 0; slot < NUM_SAVE_SLOTS; slot++) 
+    {
+        const time_t timestamp = dc_getStateCreationDate(slot);
+        const bool isEmpty = (timestamp <= 0);
+
+        // If loading, we only care about occupied slots
+        if (!isSaving && isEmpty) {
+            continue;
+        }
+
+        hasEntries = true;
+
+        std::string dateStr = isEmpty ? "Empty" : format_save_state_menu_time(timestamp);
+        std::string label = (isSaving ? "Save Slot " : "Load Slot ") 
+                          + std::to_string(slot + 1) + " (" + dateStr + ")";
+
+        draw_save_state_menu_thumbnail(slot, thumbnailSize);
+        ImGui::SameLine(0, uiScaled(6.0f));
+
+        if (ImGui::MenuItem(label.c_str())) {
+            config::SavestateSlot = slot;
+            if (isSaving) {
+                gui_saveState();
+            } else {
+                gui_loadState();
+            }
+        }
+    }
+
+    if (!isSaving && !hasEntries) {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No Save States");
+    }
 }
 
 #ifdef TARGET_UWP

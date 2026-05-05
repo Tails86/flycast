@@ -6,6 +6,7 @@
 #include <cctype>
 #include <condition_variable>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <thread>
 #include <vector>
