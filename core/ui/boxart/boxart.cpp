@@ -73,7 +73,7 @@ GameBoxart Boxart::getBoxart(const GameMedia& media)
 {
 	loadDatabase();
 	const int sourceMode = config::BoxartSourceMode.get();
-	if (sourceMode == static_cast<int>(BoxartSourceMode::PhysicalOnly))
+	if (sourceMode == static_cast<int>(BoxartSourceMode::PhysicalMediaOnly))
 		return getPhysicalBoxart(media);
 
 	GameBoxart boxart;
@@ -103,7 +103,7 @@ GameBoxart Boxart::getBoxartAndLoad(const GameMedia& media)
 {
 	loadDatabase();
 	const int sourceMode = config::BoxartSourceMode.get();
-	if (sourceMode == static_cast<int>(BoxartSourceMode::PhysicalOnly))
+	if (sourceMode == static_cast<int>(BoxartSourceMode::PhysicalMediaOnly))
 		return getPhysicalBoxart(media);
 
 	GameBoxart boxart;
@@ -155,7 +155,7 @@ GameBoxart Boxart::getBoxartAndLoad(const GameMedia& media)
 
 bool Boxart::shouldFetchOnline() const
 {
-	return config::FetchBoxart && config::BoxartSourceMode.get() != static_cast<int>(BoxartSourceMode::PhysicalOnly);
+	return config::FetchBoxart && config::BoxartSourceMode.get() != static_cast<int>(BoxartSourceMode::PhysicalMediaOnly);
 }
 
 GameBoxart Boxart::getPhysicalBoxart(const GameMedia& media)

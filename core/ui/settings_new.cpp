@@ -2370,7 +2370,7 @@ void renderGeneralTab()
 			"Displays cover art tiles in the content list.\n"
 			"Disable if you prefer a faster, more compact list or want to reduce UI clutter.");
 
-	const bool physicalOnly = config::BoxartSourceMode.get() == static_cast<int>(BoxartSourceMode::PhysicalOnly);
+	const bool physicalOnly = config::BoxartSourceMode.get() == static_cast<int>(BoxartSourceMode::PhysicalMediaOnly);
 		RenderGeneralToggleSettingRow(
 			"FetchBoxart",
 			ICON_FA_DOWNLOAD,
