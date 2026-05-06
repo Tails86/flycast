@@ -627,6 +627,13 @@ HWND getNativeHwnd()
 }
 #endif
 
+#ifdef _WIN32
+static bool is_point_in_rect(int x, int y, const SDL_Rect& r) {
+    return (x >= r.x && x < (r.x + r.w) &&
+            y >= r.y && y < (r.y + r.h));
+}
+#endif
+
 bool sdl_recreate_window(u32 flags)
 {
 	windowFlags = flags;
@@ -677,31 +684,47 @@ bool sdl_recreate_window(u32 flags)
 	window_maximized = config::loadBool("window", "maximized", window_maximized);
 	if (window != nullptr)
 		get_window_state();
+#endif
 
-	// Check if the saved window position is on a valid display, preventing Flycast from opening on a screen no longer pluged in
-	bool validPosition = false;
+	// Workaround for Windows only
+	// This is not an issue in Linux or macOS as the window will always snap to visible area in those
+#ifdef _WIN32
+	// Ensure the top 2 corners of the window will be visible (spanning multiple monitors allowed)
+	bool topLeftVisible = false;
+	bool topRightVisible = false;
 	int numDisplays = SDL_GetNumVideoDisplays();
 	if (numDisplays > 0) {
 		for (int i = 0; i < numDisplays; i++) {
 			SDL_Rect bounds;
-			if (SDL_GetDisplayBounds(i, &bounds) == 0) {
-				// Check if the window position is inside this display
-				if (windowPos.x >= bounds.x && windowPos.x < bounds.x + bounds.w &&
-					windowPos.y >= bounds.y && windowPos.y < bounds.y + bounds.h) {
-					validPosition = true;
+			if (SDL_GetDisplayUsableBounds(i, &bounds) == 0) {
+				// windowPos doesn't include title bar
+				// Using y-1 as "top" to ensure at least 1 pixel of the title bar is visible
+				if (is_point_in_rect(windowPos.x, windowPos.y - 1, bounds)) {
+					topLeftVisible = true;
+				}
+
+				if (is_point_in_rect(windowPos.x + windowPos.w - 1, windowPos.y - 1, bounds)) {
+					topRightVisible = true;
+				}
+
+				if (topLeftVisible && topRightVisible) {
+					// Window confirmed visible
 					break;
 				}
 			}
 		}
 
-		// If position is invalid, reset to primary display, avoiding Flycast from opening in a missing window and not being seen when windowed
-		if (!validPosition) {
+		// If position is invalid, reset to defaults
+		if (!topLeftVisible || !topRightVisible) {
 			NOTICE_LOG(COMMON, "Saved window position is not on any connected display, resetting to primary display");
 			windowPos.x = SDL_WINDOWPOS_UNDEFINED;
 			windowPos.y = SDL_WINDOWPOS_UNDEFINED;
+			windowPos.w = WINDOW_WIDTH;
+			windowPos.h = WINDOW_HEIGHT;
 		}
 	}
 #endif
+
 	if (window != nullptr)
 	{
 		SDL_DestroyWindow(window);
