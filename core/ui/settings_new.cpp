@@ -106,6 +106,18 @@ static void reconnectDreamLinks()
 }
 #endif
 
+static void reconnectAndResetVmusIfNeeded()
+{
+	if (game_started && settings.platform.isConsole())
+	{
+#if defined(USE_DREAMLINK_DEVICES)
+		reconnectDreamLinks();
+#endif
+		maple_ReconnectDevices();
+		reset_vmus();
+	}
+}
+
 // Static state for gamepad settings popup
 static std::shared_ptr<GamepadDevice> g_currentGamepadForSettings;
 static float g_twoLineRowExtraHeightPx = 0.0f;
@@ -4165,20 +4177,20 @@ static bool createBlankVmuFileInDataFolder(const std::string& fileName, std::str
 		return false;
 	}
 
-	constexpr size_t kVmuBytes = 131072;
-	u8 zeros[4096] = {};
-	size_t remaining = kVmuBytes;
-	while (remaining > 0)
+	std::array<u8, 128_KB> vmuImage {};
+	if (!buildDefaultVmuImage(vmuImage.data(), vmuImage.size()))
 	{
-		const size_t chunk = std::min(remaining, sizeof(zeros));
-		if (std::fwrite(zeros, 1, chunk, f) != chunk)
-		{
-			std::fclose(f);
-			nowide::remove(fullPath.c_str());
-			error = "Failed to write VMU image.";
-			return false;
-		}
-		remaining -= chunk;
+		std::fclose(f);
+		nowide::remove(fullPath.c_str());
+		error = "Failed to build default VMU image.";
+		return false;
+	}
+	if (std::fwrite(vmuImage.data(), 1, vmuImage.size(), f) != vmuImage.size())
+	{
+		std::fclose(f);
+		nowide::remove(fullPath.c_str());
+		error = "Failed to write VMU image.";
+		return false;
 	}
 	std::fclose(f);
 	return true;
@@ -4740,17 +4752,10 @@ void renderControlsTab()
 		static std::string vmuOpError;
 		static std::vector<hostfs::FileInfo> cachedVmuFiles;
 		static bool refreshVmuList = true;
-		static std::array<std::array<std::string, 2>, MAPLE_PORTS> vmuSlotAssignments {};
+		static std::array<std::array<std::string, 2>, MAPLE_PORTS> vmuFilePathsBySlot {};
 		static bool vmuSlotAssignmentsInitialized = false;
-		auto beginRuntimeVmuMutationIfNeeded = []() {
-			if (game_started && settings.platform.isConsole())
-			{
-#if defined(USE_DREAMLINK_DEVICES)
-				reconnectDreamLinks();
-#endif
-				maple_ReconnectDevices();
-				reset_vmus();
-			}
+		auto clear_vmu_screens = []() {
+			reconnectAndResetVmusIfNeeded();
 		};
 		auto reloadRuntimeVmusIfNeeded = []() {
 			if (game_started && settings.platform.isConsole())
@@ -4758,11 +4763,10 @@ void renderControlsTab()
 		};
 
 		const bool perGameEnabled = static_cast<bool>(config::PerGameVmu);
-		DisabledScope scope(perGameEnabled);
 
 		ImGui::TextDisabled("Memory Cards (Data Folder)");
 		if (perGameEnabled)
-			ImGui::TextDisabled("Disable \"Per Game VMU A1\" to manage shared VMU slots here.");
+			ImGui::TextDisabled("Per Game VMU manages A1 automatically; other shared slots remain editable.");
 
 		if (refreshVmuList)
 		{
@@ -4782,12 +4786,12 @@ void renderControlsTab()
 			for (int bus = 0; bus < MAPLE_PORTS; bus++)
 				for (int slot = 0; slot < 2; slot++)
 				{
-					vmuSlotAssignments[bus][slot].clear();
+					vmuFilePathsBySlot[bus][slot].clear();
 					if (!isSharedVmuSlotActive(bus, slot))
 						continue;
 					const std::string defaultName = defaultVmuFileNameForSlot(bus, slot);
 					if (fileExistsByName(defaultName))
-						vmuSlotAssignments[bus][slot] = defaultName;
+						vmuFilePathsBySlot[bus][slot] = defaultName;
 				}
 			vmuSlotAssignmentsInitialized = true;
 		}
@@ -4798,17 +4802,17 @@ void renderControlsTab()
 				{
 					if (!isSharedVmuSlotActive(bus, slot))
 					{
-						vmuSlotAssignments[bus][slot].clear();
+						vmuFilePathsBySlot[bus][slot].clear();
 						continue;
 					}
-					if (!vmuSlotAssignments[bus][slot].empty()
-						&& !fileExistsByName(vmuSlotAssignments[bus][slot]))
-						vmuSlotAssignments[bus][slot].clear();
-					if (vmuSlotAssignments[bus][slot].empty())
+					if (!vmuFilePathsBySlot[bus][slot].empty()
+						&& !fileExistsByName(vmuFilePathsBySlot[bus][slot]))
+						vmuFilePathsBySlot[bus][slot].clear();
+					if (vmuFilePathsBySlot[bus][slot].empty())
 					{
 						const std::string defaultName = defaultVmuFileNameForSlot(bus, slot);
 						if (fileExistsByName(defaultName))
-							vmuSlotAssignments[bus][slot] = defaultName;
+							vmuFilePathsBySlot[bus][slot] = defaultName;
 					}
 				}
 		}
@@ -4830,7 +4834,7 @@ void renderControlsTab()
 				{
 					if (!isSharedVmuSlotActive(bus, slot))
 						continue;
-					if (vmuSlotAssignments[bus][slot] != fileName)
+					if (vmuFilePathsBySlot[bus][slot] != fileName)
 						continue;
 					if (!labels.empty())
 						labels += ", ";
@@ -4991,7 +4995,7 @@ void renderControlsTab()
 						}
 						else
 						{
-							beginRuntimeVmuMutationIfNeeded();
+							clear_vmu_screens();
 							if (nowide::rename(oldPath.c_str(), newPath.c_str()) != 0)
 							{
 								vmuOpError = "Rename failed.";
@@ -5000,8 +5004,8 @@ void renderControlsTab()
 							{
 							for (int bus = 0; bus < MAPLE_PORTS; bus++)
 								for (int slot = 0; slot < 2; slot++)
-									if (vmuSlotAssignments[bus][slot] == oldName)
-										vmuSlotAssignments[bus][slot] = newName;
+									if (vmuFilePathsBySlot[bus][slot] == oldName)
+										vmuFilePathsBySlot[bus][slot] = newName;
 							selectedVmuName = newName;
 							refreshVmuList = true;
 							reloadRuntimeVmusIfNeeded();
@@ -5036,8 +5040,16 @@ void renderControlsTab()
 					{
 						if (!isSharedVmuSlotActive(bus, slot))
 							continue;
-						anySlot = true;
 						const std::string label = vmuSlotLabel(bus, slot);
+						const bool slotLockedByPerGame = perGameEnabled && bus == 0 && slot == 0;
+						if (slotLockedByPerGame)
+						{
+							const std::string lockedLabel = label + " (Per Game VMU)";
+							DisabledScope disabled(true);
+							ImGui::Selectable(lockedLabel.c_str());
+							continue;
+						}
+						anySlot = true;
 						if (ImGui::Selectable(label.c_str()))
 						{
 							vmuOpError.clear();
@@ -5051,7 +5063,7 @@ void renderControlsTab()
 							}
 							else
 							{
-								beginRuntimeVmuMutationIfNeeded();
+								clear_vmu_screens();
 								std::string err;
 								const bool targetExists = hostfs::storage().exists(targetPath);
 								const bool ok = targetExists
@@ -5063,7 +5075,7 @@ void renderControlsTab()
 									int sourceSlot = -1;
 									for (int scanBus = 0; scanBus < MAPLE_PORTS && sourceBus < 0; scanBus++)
 										for (int scanSlot = 0; scanSlot < 2; scanSlot++)
-											if (vmuSlotAssignments[scanBus][scanSlot] == sourceName)
+											if (vmuFilePathsBySlot[scanBus][scanSlot] == sourceName)
 											{
 												sourceBus = scanBus;
 												sourceSlot = scanSlot;
@@ -5071,9 +5083,9 @@ void renderControlsTab()
 											}
 
 									if (sourceBus >= 0)
-										std::swap(vmuSlotAssignments[sourceBus][sourceSlot], vmuSlotAssignments[bus][slot]);
+										std::swap(vmuFilePathsBySlot[sourceBus][sourceSlot], vmuFilePathsBySlot[bus][slot]);
 									else
-										vmuSlotAssignments[bus][slot] = sourceName;
+										vmuFilePathsBySlot[bus][slot] = sourceName;
 
 									selectedVmuName = sourceName;
 									refreshVmuList = true;
@@ -6471,19 +6483,12 @@ void renderSettingsNew()
 			| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse
 			| ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
 	{
-		const std::function<void()> exitSettings = [&]() {
-			if (g_mapleDevicesChangedInSettings)
-			{
-				g_mapleDevicesChangedInSettings = false;
-				if (game_started && settings.platform.isConsole())
+			const std::function<void()> exitSettings = [&]() {
+				if (g_mapleDevicesChangedInSettings)
 				{
-#if defined(USE_DREAMLINK_DEVICES)
-					reconnectDreamLinks();
-#endif
-					maple_ReconnectDevices();
-					reset_vmus();
+					g_mapleDevicesChangedInSettings = false;
+					reconnectAndResetVmusIfNeeded();
 				}
-			}
 
 			SaveSettings();
 

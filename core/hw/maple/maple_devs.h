@@ -359,6 +359,8 @@ struct RFIDReaderWriter : public BaseMIE
 // Specific Devices
 //
 
+bool buildDefaultVmuImage(u8 *buffer, size_t bufferSize);
+
 struct maple_sega_controller: maple_base
 {
 	virtual u32 get_capabilities();
