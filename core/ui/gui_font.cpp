@@ -1,18 +1,19 @@
 /*
  Copyright 2026 flyinghead
- 
+ Portions Copyright 2026 The Hollycast Authors
+
  This file is part of Flycast.
- 
+
  Flycast is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
  the Free Software Foundation, either version 2 of the License, or
  (at your option) any later version.
- 
+
  Flycast is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  GNU General Public License for more details.
- 
+
  You should have received a copy of the GNU General Public License
  along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
  */
@@ -24,6 +25,10 @@
 #include "imgui/misc/freetype/imgui_freetype.h"
 
 ImFont *boldFont;
+ImFont *largeFont;
+ImFont *settingsTitleFont;
+ImFont *settingsValueFont;
+ImFont *settingsRightValueFont;
 
 namespace FontFace
 {
@@ -37,10 +42,10 @@ enum class MSHei : ImU32 { Legacy = 0, UI = 1};
 struct FontNo
 {
 	ImU32 value = 0;
-	
+
 	constexpr FontNo() = default;
 	constexpr FontNo(ImU32 v) : value(v) {}
-	
+
 	template <typename E, typename = std::enable_if_t<std::is_enum<E>::value>>
 	constexpr FontNo(E e) : value(static_cast<ImU32>(e)) {}
 };
@@ -67,7 +72,7 @@ static std::string getFontPath(const char* patternText)
 	{
 		return "";
 	}
-	
+
 	typedef struct _FcConfig FcConfig;
 	typedef struct _FcPattern FcPattern;
 	typedef unsigned char FcChar8;
@@ -79,7 +84,7 @@ static std::string getFontPath(const char* patternText)
 		FcResultNoId,
 		FcResultOutOfMemory
 	} FcResult;
-	
+
 	static auto fcInitLoadConfigAndFonts = (FcConfig * (*)())dlsym(libfontconfig, "FcInitLoadConfigAndFonts");
 	static auto fcConfigDestroy = (void (*)(FcConfig*))dlsym(libfontconfig, "FcConfigDestroy");
 	static auto fcPatternDestroy = (void (*)(FcPattern*))dlsym(libfontconfig, "FcPatternDestroy");
@@ -88,7 +93,7 @@ static std::string getFontPath(const char* patternText)
 	static auto fcConfigSubstitute = (int (*)(FcConfig*, FcPattern*, int))dlsym(libfontconfig, "FcConfigSubstitute");
 	static auto fcDefaultSubstitute = (void (*)(FcPattern*))dlsym(libfontconfig, "FcDefaultSubstitute");
 	static auto fcFontMatch = (FcPattern * (*)(FcConfig*, FcPattern*, FcResult*))dlsym(libfontconfig, "FcFontMatch");
-	
+
 	if (!fcInitLoadConfigAndFonts ||
 		!fcConfigDestroy ||
 		!fcPatternDestroy ||
@@ -100,9 +105,9 @@ static std::string getFontPath(const char* patternText)
 	{
 		return "";
 	}
-	
+
 	const int fcMatchPattern = 0;
-	
+
 	std::string path;
 	FcConfig* config = fcInitLoadConfigAndFonts();
 	if (config)
@@ -112,7 +117,7 @@ static std::string getFontPath(const char* patternText)
 		{
 			fcConfigSubstitute(config, pattern, fcMatchPattern);
 			fcDefaultSubstitute(pattern);
-			
+
 			FcResult result = FcResultNoMatch;
 			FcPattern* match = fcFontMatch(config, pattern, &result);
 			if (match)
@@ -125,16 +130,16 @@ static std::string getFontPath(const char* patternText)
 						path = reinterpret_cast<const char*>(file);
 					}
 				}
-				
+
 				fcPatternDestroy(match);
 			}
-			
+
 			fcPatternDestroy(pattern);
 		}
-		
+
 		fcConfigDestroy(config);
 	}
-	
+
 	return path;
 }
 #endif
@@ -149,9 +154,9 @@ static void registerFont(std::vector<FontEntry>& target, FontEntry entry)
 			entry.paths.push_back(path);
 	}
 #endif
-	
+
 	std::string locale = i18n::getCurrentLocale();
-	
+
 	auto bucketRank = [&](const char* l) -> int
 	{
 		if (!l) return 3;                      // generic last
@@ -159,7 +164,7 @@ static void registerFont(std::vector<FontEntry>& target, FontEntry entry)
 		if (locale.rfind(l, 0) == 0) return 1; // user locale
 		return 2;                              // remaining langs
 	};
-	
+
 	const int rank = bucketRank(entry.lang);
 	auto it = target.begin();
 	for (; it != target.end(); ++it)
@@ -180,23 +185,23 @@ static void loadFonts(const std::vector<FontEntry>& entries, const ImFontConfig&
 {
 	std::unordered_set<std::string> satisfiedLangs;
 	satisfiedLangs.reserve(8);
-	
+
 	bool cjkLoaded = false;
-	
+
 	for (const FontEntry& e : entries)
 	{
 		const char* lang = e.lang ? e.lang : "generic";
-		
+
 		// Skip specific CJK langs if a generic CJK font already loaded
 		if (cjkLoaded && (!strcmp(lang, "ja") || !strcmp(lang, "ko") || !strncmp(lang, "zh", 2)))
 			continue;
-		
+
 		// Break-per-langTag
 		if (satisfiedLangs.count(lang))
 			continue;
-		
+
 		bool loaded = false;
-		
+
 		for (const std::string& path : e.paths)
 		{
 			ImFontConfig entryCfg = cfg;
@@ -204,7 +209,7 @@ static void loadFonts(const std::vector<FontEntry>& entries, const ImFontConfig&
 			entryCfg.GlyphOffset.y = e.size * e.offsetY;
 			static ImWchar faRanges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
 			entryCfg.GlyphExcludeRanges = faRanges;
-			
+
 			ImFont* font = ImGui::GetIO().Fonts->AddFontFromFileTTF(path.c_str(), e.size, &entryCfg, nullptr);
 			if (font)
 			{
@@ -212,20 +217,20 @@ static void loadFonts(const std::vector<FontEntry>& entries, const ImFontConfig&
 				break;
 			}
 		}
-		
+
 		if (!loaded)
 			continue;
-		
+
 		// Mark this lang as satisfied
 		satisfiedLangs.emplace(lang);
-		
+
 		// Traditional Chinese group: TW and HK satisfy each other
 		if (strcmp(lang, "zh_HK") == 0 || strcmp(lang, "zh_TW") == 0)
 		{
 			satisfiedLangs.emplace("zh_HK");
 			satisfiedLangs.emplace("zh_TW");
 		}
-		
+
 		// Umbrella rule: zh satisfies all specific Chinese locales
 		if (strcmp(lang, "zh") == 0)
 		{
@@ -233,7 +238,7 @@ static void loadFonts(const std::vector<FontEntry>& entries, const ImFontConfig&
 			satisfiedLangs.emplace("zh_TW");
 			satisfiedLangs.emplace("zh_CN");
 		}
-		
+
 		// Special rule: cjk satisfies all CJK languages
 		if (strcmp(lang, "cjk") == 0)
 		{
@@ -253,12 +258,12 @@ void gui_loadFonts()
 	ImGuiIO& io = ImGui::GetIO();
 	io.Fonts->Clear();
 	io.Fonts->SetFontLoader(ImGuiFreeType::GetFontLoader());
-	
+
 	// Regular font
 	ImGuiStyle& style = ImGui::GetStyle();
 	const float fontSize = uiScaled(17.f);
 	style.FontSizeBase = fontSize;
-	
+
 	size_t dataSize;
 	std::unique_ptr<u8[]> data = resource::load("fonts/Roboto-Medium.ttf", dataSize);
 	verify(data != nullptr);
@@ -266,7 +271,7 @@ void gui_loadFonts()
 	ImFontConfig fontConfig;
 	fontConfig.MergeMode = true;
 	fontConfig.DstFont = regularFont;
-	
+
 	// Bold font
 	data = resource::load("fonts/Roboto-Bold.ttf", dataSize);
 	verify(data != nullptr);
@@ -274,45 +279,50 @@ void gui_loadFonts()
 	ImFontConfig boldFontConfig;
 	boldFontConfig.MergeMode = true;
 	boldFontConfig.DstFont = boldFont;
-	
+
+	// Large font
+	data = resource::load("fonts/Roboto-Regular.ttf", dataSize);
+	verify(data != nullptr);
+	largeFont = io.Fonts->AddFontFromMemoryTTF(data.release(), (int)dataSize, uiScaled(21.f), nullptr, nullptr);
+
 	std::vector<FontEntry> fonts;
 	std::vector<FontEntry> boldFonts;
 	fontConfig.Flags |= ImFontFlags_NoLoadError;
 	boldFontConfig.Flags |= ImFontFlags_NoLoadError;
-	
+
 	ImFontConfig emojiConfig = fontConfig;
 	emojiConfig.FontLoaderFlags |= ImGuiFreeTypeLoaderFlags_LoadColor | ImGuiFreeTypeBuilderFlags_Bitmap;
 	ImFontConfig emojiBoldConfig = boldFontConfig;
 	emojiBoldConfig.FontLoaderFlags |= ImGuiFreeTypeLoaderFlags_LoadColor | ImGuiFreeTypeBuilderFlags_Bitmap;
-	
+
 #ifdef _WIN32
 	// Windows
 	std::string fontDir = std::string(nowide::getenv("SYSTEMROOT")) + "\\Fonts\\";
-	
+
 	ImGui::GetIO().Fonts->AddFontFromFileTTF((fontDir + "seguiemj.ttf").c_str(), fontSize, &emojiConfig);
 	ImGui::GetIO().Fonts->AddFontFromFileTTF((fontDir + "seguiemj.ttf").c_str(), fontSize, &emojiBoldConfig);
-	
+
 	/*
 	registerFont(fonts,     { .lang="ja", .paths={fontDir + "NotoSansJP-VF.ttf"}, .fontNo=FontFace::Noto::Medium, .size=fontSize * 1.05f });
 	registerFont(boldFonts, { .lang="ja", .paths={fontDir + "NotoSansJP-VF.ttf"}, .fontNo=FontFace::Noto::Bold,   .size=fontSize * 1.05f });
 	registerFont({&fonts, &boldFonts}, { .lang="ja", .paths={fontDir + "BIZ-UDGothicB.ttc"}, .size=fontSize * 0.85f });
-	
+
 	registerFont(fonts,     { .lang="ko", .paths={fontDir + "NotoSansKR-VF.ttf"}, .fontNo=FontFace::Noto::Medium, .size=fontSize * 1.05f });
 	registerFont(boldFonts, { .lang="ko", .paths={fontDir + "NotoSansKR-VF.ttf"}, .fontNo=FontFace::Noto::Bold,   .size=fontSize * 1.05f });
 	registerFont({&fonts, &boldFonts}, { .lang="ko", .paths={fontDir + "malgunbd.ttf"}, .size=fontSize * 1.124891f });
 	registerFont({&fonts, &boldFonts}, { .lang="ko", .paths={fontDir + "Gulim.ttc"}, .fontNo=FontFace::Gulim::Sharp, .size=fontSize * 0.9f });
-	
+
 	registerFont(fonts,     { .lang="zh_HK", .paths={fontDir + "NotoSansHK-VF.ttf"}, .fontNo=FontFace::Noto::Medium, .size=fontSize * 1.05f });
 	registerFont(boldFonts, { .lang="zh_HK", .paths={fontDir + "NotoSansHK-VF.ttf"}, .fontNo=FontFace::Noto::Bold,   .size=fontSize * 1.05f });
 	registerFont(fonts,     { .lang="zh_TW", .paths={fontDir + "NotoSansTC-VF.ttf"}, .fontNo=FontFace::Noto::Medium, .size=fontSize * 1.05f });
 	registerFont(boldFonts, { .lang="zh_TW", .paths={fontDir + "NotoSansTC-VF.ttf"}, .fontNo=FontFace::Noto::Bold,   .size=fontSize * 1.05f });
 	registerFont(fonts,     { .lang="zh_CN", .paths={fontDir + "NotoSansSC-VF.ttf"}, .fontNo=FontFace::Noto::Medium, .size=fontSize * 1.05f });
 	registerFont(boldFonts, { .lang="zh_CN", .paths={fontDir + "NotoSansSC-VF.ttf"}, .fontNo=FontFace::Noto::Bold,   .size=fontSize * 1.05f });
-	
+
 	registerFont({&fonts, &boldFonts}, { .lang="zh_HK", .paths={fontDir + "msjhbd.ttc"}, .fontNo=FontFace::MSHei::UI, .size=fontSize * 1.13000f, .offsetY=0.015f });
 	registerFont({&fonts, &boldFonts}, { .lang="zh_TW", .paths={fontDir + "msjhbd.ttc"}, .fontNo=FontFace::MSHei::UI, .size=fontSize * 1.13000f, .offsetY=0.015f });
 	registerFont({&fonts, &boldFonts}, { .lang="zh_CN", .paths={fontDir + "msyhbd.ttc"}, .fontNo=FontFace::MSHei::UI, .size=fontSize * 1.13000f, .offsetY=0.015f });
-	
+
 	// Windows 7
 	registerFont({&fonts, &boldFonts}, { .lang="zh_HK", .paths={fontDir + "msjhbd.ttf"}, .size=fontSize * 1.13000f, .offsetY=0.015f });
 	registerFont({&fonts, &boldFonts}, { .lang="zh_TW", .paths={fontDir + "msjhbd.ttf"}, .size=fontSize * 1.13000f, .offsetY=0.015f });
@@ -399,25 +409,25 @@ void gui_loadFonts()
 		FontEntry entry; entry.lang = "zh_CN"; entry.paths = { fontDir + "msyhbd.ttf" }; entry.size = fontSize * 1.13000f; entry.offsetY = 0.015f;
 		registerFont({ &fonts, &boldFonts }, entry);
 	}
-	
+
 #elif defined(TARGET_OS_MAC)
 	emojiConfig.GlyphOffset = { 0.0f, fontSize * (0.2f) };
 	emojiBoldConfig.GlyphOffset = emojiConfig.GlyphOffset;
 	ImGui::GetIO().Fonts->AddFontFromFileTTF("/System/Library/Fonts/Apple Color Emoji.ttc", fontSize, &emojiConfig);
 	ImGui::GetIO().Fonts->AddFontFromFileTTF("/System/Library/Fonts/Apple Color Emoji.ttc", fontSize, &emojiBoldConfig);
-	
+
 	registerFont(fonts,		{ .lang = "ja", .paths = { "/System/Library/Fonts/ヒラギノ角ゴシック W5.ttc" }, .size=fontSize * 0.85f } );
 	registerFont(boldFonts,	{ .lang = "ja", .paths = { "/System/Library/Fonts/ヒラギノ角ゴシック W7.ttc" }, .size=fontSize * 0.85f } );
-	
+
 	registerFont({&fonts, &boldFonts}, { .lang="ko", .paths = { "/System/Library/Fonts/AppleSDGothicNeo.ttc" }, .fontNo=FontFace::GothicNeo::SemiBold, .size=fontSize * 1.05f });
-	
+
 	registerFont(fonts,		{ .lang="zh", .paths = { "/System/Library/Fonts/PingFang.ttc" }, .fontNo=FontFace::PingFang::Medium, .size=fontSize * 1.185f, .offsetY=-0.03f });
 	registerFont(boldFonts,	{ .lang="zh", .paths = { "/System/Library/Fonts/PingFang.ttc" }, .fontNo=FontFace::PingFang::Semibold, .size=fontSize * 1.185f, .offsetY=-0.03f });
-	
+
 #elif defined(__ANDROID__)
 	ImGui::GetIO().Fonts->AddFontFromFileTTF("/system/fonts/NotoColorEmoji.ttf", fontSize, &emojiConfig);
 	ImGui::GetIO().Fonts->AddFontFromFileTTF("/system/fonts/NotoColorEmoji.ttf", fontSize, &emojiBoldConfig);
-	
+
 	registerFont(fonts,     { .lang="cjk", .paths={
 		"/system/fonts/NotoSansCJK-Medium.ttc",
 		"/system/fonts/NotoSansCJK-Regular.ttc"
@@ -427,7 +437,7 @@ void gui_loadFonts()
 		"/system/fonts/NotoSansCJK-Medium.ttc",
 		"/system/fonts/NotoSansCJK-Regular.ttc"
 	}, .size=fontSize * 1.05f });
-	
+
 #elif defined(__linux__)
 	std::string emojiPath = getFontPath("Noto Color Emoji");
 	if (!emojiPath.empty())
@@ -435,26 +445,26 @@ void gui_loadFonts()
 		ImGui::GetIO().Fonts->AddFontFromFileTTF(emojiPath.c_str(), fontSize, &emojiConfig);
 		ImGui::GetIO().Fonts->AddFontFromFileTTF(emojiPath.c_str(), fontSize, &emojiBoldConfig);
 	}
-	
+
 	registerFont(fonts,		{ .lang="cjk", .fcNames={ "Noto Sans CJK JP:medium", "Noto Sans CJK JP:regular" }, .size=fontSize * 1.05f });
 	registerFont(boldFonts,	{ .lang="cjk", .fcNames={ "Noto Sans CJK JP:bold" }, .size=fontSize * 1.05f });
 	registerFont({&fonts, &boldFonts}, { .lang="cjk", .fcNames={ "Droid Sans Fallback" }, .size=fontSize * 1.2f });
-	
+
 	registerFont(fonts,		{ .lang="ja", .fcNames={ "Source Han Sans JP:medium" }, .size=fontSize * 1.05f });
 	registerFont(boldFonts,	{ .lang="ja", .fcNames={ "Source Han Sans JP:bold" }, .size=fontSize * 1.05f });
 	registerFont({&fonts, &boldFonts}, { .lang="ja", .fcNames={ "IPAPGothic" }, .size=fontSize * 0.9f });
 	registerFont({&fonts, &boldFonts}, { .lang="ja", .fcNames={ "VL Gothic" }, .size=fontSize * 1.15f });
 	registerFont({&fonts, &boldFonts}, { .lang="ja", .fcNames={ "TakaoPGothic" }, .size=fontSize });
-	
+
 	registerFont(fonts,		{ .lang="ko", .fcNames={ "Source Han Sans KR:medium" }, .size=fontSize * 1.05f });
 	registerFont(boldFonts,	{ .lang="ko", .fcNames={ "Source Han Sans KR:bold" }, .size=fontSize * 1.05f });
-	
+
 	registerFont(fonts,		{ .lang="ko", .fcNames={ "NanumGothic:bold" }, .size=fontSize * 0.8f });
 	registerFont(boldFonts,	{ .lang="ko", .fcNames={ "NanumGothic:extrabold" }, .size=fontSize * 0.8f });
 	registerFont({&fonts, &boldFonts}, { .lang="ko", .fcNames={ "NanumGothicCoding:bold" }, .size=fontSize * 0.8f });
 	registerFont({&fonts, &boldFonts}, { .lang="ko", .fcNames={ "UnDotum:bold" }, .size=fontSize, .offsetY=-0.1f });
 	registerFont({&fonts, &boldFonts}, { .lang="ko", .fcNames={ "Baekmuk Dotum" }, .size=fontSize * 1.18f, .offsetY=-0.02f });
-	
+
 	registerFont(fonts,		{ .lang="zh_HK", .fcNames={ "Source Han Sans HK:medium" }, .size=fontSize * 1.05f });
 	registerFont(boldFonts,	{ .lang="zh_HK", .fcNames={ "Source Han Sans HK:bold" }, .size=fontSize * 1.05f });
 	registerFont(fonts,		{ .lang="zh_TW", .fcNames={ "Source Han Sans TW:medium" }, .size=fontSize * 1.05f });
@@ -462,17 +472,49 @@ void gui_loadFonts()
 	registerFont(fonts,		{ .lang="zh_CN", .fcNames={ "Source Han Sans SC:medium" }, .size=fontSize * 1.05f });
 	registerFont(boldFonts,	{ .lang="zh_CN", .fcNames={ "Source Han Sans SC:bold" }, .size=fontSize * 1.05f });
 	registerFont({&fonts, &boldFonts}, { .lang="zh", .fcNames={ "WenQuanYi Zen Hei" }, .size=fontSize, .offsetY=-0.05f });
-	
+
 	// TODO BSD, iOS, ...
 #endif
-	
+
 	loadFonts(fonts, fontConfig);
 	loadFonts(boldFonts, boldFontConfig);
-	
+
+	// Settings UI fonts
+	static const ImWchar ranges[] =
+	{
+		0x0020, 0xFFFF, // All chars
+		0,
+	};
+
+	const float largeFontSize = uiScaled(21.f);
+
+	data = resource::load("fonts/Jura-wght.ttf", dataSize);
+	if (data != nullptr)
+		settingsTitleFont = io.Fonts->AddFontFromMemoryTTF(data.release(), (int)dataSize, fontSize, nullptr, ranges);
+
+	data = resource::load("fonts/EncodeSans-wdth-wght.ttf", dataSize);
+	if (data != nullptr)
+	{
+		ImFontConfig rightValueFontCfg;
+		rightValueFontCfg.RasterizerMultiply = 4.50f;
+		settingsRightValueFont = io.Fonts->AddFontFromMemoryTTF(data.release(), (int)dataSize, largeFontSize, &rightValueFontCfg, ranges);
+	}
+
+	data = resource::load("fonts/EncodeSans-wdth-wght.ttf", dataSize);
+	if (data != nullptr)
+		settingsValueFont = io.Fonts->AddFontFromMemoryTTF(data.release(), (int)dataSize, uiScaled(24.f), nullptr, ranges);
+
+	if (settingsTitleFont == nullptr)
+		settingsTitleFont = regularFont != nullptr ? regularFont : largeFont;
+	if (settingsValueFont == nullptr)
+		settingsValueFont = largeFont;
+	if (settingsRightValueFont == nullptr)
+		settingsRightValueFont = largeFont;
+
 	// Font Awesome symbols
 	data = resource::load("fonts/" FONT_ICON_FILE_NAME_FAS, dataSize);
 	verify(data != nullptr);
-	
+
 	ImFontConfig faFontConfig = fontConfig;
 	faFontConfig.FontDataOwnedByAtlas = false;
 	io.Fonts->AddFontFromMemoryTTF(data.get(), (int)dataSize, fontSize, &faFontConfig);
