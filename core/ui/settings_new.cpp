@@ -749,7 +749,7 @@ static void gamepadSettingsPopup(const std::shared_ptr<GamepadDevice>& gamepad)
 	ImGui::SetNextWindowSize(min(ImGui::GetIO().DisplaySize, ScaledVec2(450.f, 300.f)));
 
 	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
-	if (ImGui::BeginPopupModal("Gamepad Settings", NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_DragScrolling))
+	if (ImGui::BeginPopupModal("Gamepad Settings", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_DragScrolling))
 	{
 		if (ImGui::Button("Done", ScaledVec2(100, 30)))
 		{
@@ -5913,7 +5913,7 @@ void renderSettingsNew()
 	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
 
 	// Main settings window
-	if (ImGui::Begin("Settings", NULL, ImGuiWindowFlags_NoResize
+	if (ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoResize
 			| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse
 			| ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
 	{
