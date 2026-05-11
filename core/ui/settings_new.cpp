@@ -1854,7 +1854,8 @@ void renderGeneralTab()
 	// ========================================
 	if (ImGui::CollapsingHeader(ICON_FA_GLOBE " Language & Region##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		static const char* languages[] = { "Japanese", "English", "German", "French", "Spanish", "Italian", "Default" };
+		// 0 -> JP, 1 -> EN, 2 -> DE, 3 -> FR, 4 -> SP, 5 -> IT, 6 -> default
+		static const char* languages[] = { "日本語", "English", "German", "French", "Spanish", "Italian", "Default" };
 		SettingsUI::PopupConfig languageCfg {};
 		languageCfg.type = SettingsUI::PopupType::Options;
 		languageCfg.options.label = "Dreamcast Language";
