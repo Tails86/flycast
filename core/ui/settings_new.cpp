@@ -100,21 +100,10 @@ static void setResourceMonitorMode(int mode)
 	config::saveInt("rend", "ResourceMonitorMode", mode);
 }
 
-#if defined(USE_DREAMLINK_DEVICES)
-static void reconnectDreamLinks()
-{
-	// DreamLink devices are tied into maple reconnect flow; keep this hook so
-	// settings exit can request DreamLink-specific reconnection behavior later.
-}
-#endif
-
 static void reconnectAndResetVmusIfNeeded()
 {
 	if (game_started && settings.platform.isConsole())
 	{
-#if defined(USE_DREAMLINK_DEVICES)
-		reconnectDreamLinks();
-#endif
 		maple_ReconnectDevices();
 		reset_vmus();
 	}
@@ -6526,11 +6515,7 @@ void renderSettingsNew()
 			if (g_mapleDevicesChangedInSettings)
 			{
 				g_mapleDevicesChangedInSettings = false;
-				if (game_started && settings.platform.isConsole())
-				{
-					g_mapleDevicesChangedInSettings = false;
-					reconnectAndResetVmusIfNeeded();
-				}
+				reconnectAndResetVmusIfNeeded();
 			}
 
 			SaveSettings();
