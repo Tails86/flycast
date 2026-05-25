@@ -4877,13 +4877,46 @@ void renderControlsTab()
 		}
 
 		int selectedIndex = -1;
-		if (!selectedVmuName.empty())
-			for (int i = 0; i < static_cast<int>(cachedVmuFiles.size()); i++)
-				if (cachedVmuFiles[i].name == selectedVmuName)
-				{
+		if (!selectedVmuName.empty()) {
+			for (int i = 0; i < static_cast<int>(cachedVmuFiles.size()); i++) {
+				if (cachedVmuFiles[i].name == selectedVmuName) {
 					selectedIndex = i;
 					break;
 				}
+			}
+		}
+
+		const bool hasSelection = (selectedIndex >= 0 && selectedIndex < static_cast<int>(cachedVmuFiles.size()));
+		if (ImGui::Button("Refresh"))
+		{
+			vmuOpError.clear();
+			refreshVmuList = true;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Create New Card"))
+		{
+			vmuOpError.clear();
+			ImGui::OpenPopup("Create VMU Card");
+		}
+		ImGui::SameLine();
+		{
+			DisabledScope renameDisabled(!hasSelection);
+			if (ImGui::Button("Rename"))
+			{
+				vmuOpError.clear();
+				renameVmuName = hasSelection ? cachedVmuFiles[selectedIndex].name : "";
+				ImGui::OpenPopup("Rename VMU Card");
+			}
+		}
+		ImGui::SameLine();
+		{
+			DisabledScope insertDisabled(!hasSelection);
+			if (ImGui::Button("Insert"))
+			{
+				vmuOpError.clear();
+				ImGui::OpenPopup("Insert VMU Card");
+			}
+		}
 
 		auto slotLabelsForFile = [&](const std::string& fileName) {
 			std::string labels;
@@ -4929,38 +4962,6 @@ void renderControlsTab()
 			ImGui::EndTable();
 		}
 		ImGui::EndChild();
-
-		const bool hasSelection = (selectedIndex >= 0 && selectedIndex < static_cast<int>(cachedVmuFiles.size()));
-		if (ImGui::Button("Refresh"))
-		{
-			vmuOpError.clear();
-			refreshVmuList = true;
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Create New Card"))
-		{
-			vmuOpError.clear();
-			ImGui::OpenPopup("Create VMU Card");
-		}
-		ImGui::SameLine();
-		{
-			DisabledScope renameDisabled(!hasSelection);
-			if (ImGui::Button("Rename"))
-			{
-				vmuOpError.clear();
-				renameVmuName = hasSelection ? cachedVmuFiles[selectedIndex].name : std::string();
-				ImGui::OpenPopup("Rename VMU Card");
-			}
-		}
-		ImGui::SameLine();
-		{
-			DisabledScope insertDisabled(!hasSelection);
-			if (ImGui::Button("Insert"))
-			{
-				vmuOpError.clear();
-				ImGui::OpenPopup("Insert VMU Card");
-			}
-		}
 
 		if (ImGui::BeginPopupModal("Create VMU Card", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
