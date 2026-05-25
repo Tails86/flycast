@@ -4208,16 +4208,19 @@ static bool isVmuCardFile(const hostfs::FileInfo& info)
 			return false;
 		}
 	}
-	if (fileSize != 131072)
+	if (fileSize != 128_KB)
 		return false;
 
 	std::string lower = info.name;
 	string_tolower(lower);
 	if (lower == "dc_nvmem.bin")
 		return false;
+	if (lower == "dc_flash.bin")
+		return false;
 	if (lower.size() < 4)
 		return false;
-	return lower.compare(lower.size() - 4, 4, ".bin") == 0;
+	return lower.compare(lower.size() - 4, 4, ".bin") == 0
+		|| lower.compare(lower.size() - 4, 4, ".vmu") == 0;
 }
 
 static void listVmuCardFilesInDataFolder(std::vector<hostfs::FileInfo>& out)
