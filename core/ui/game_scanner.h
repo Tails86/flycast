@@ -1,5 +1,6 @@
 /*
 	Copyright 2020 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of flycast.
 
@@ -34,6 +35,7 @@ struct GameMedia
 	std::string gameName;	// for arcade games only, description from the rom list
 	bool arcade = false;	// Arcade game (naomi, atomiswave, system sp, ...)
 	bool device = false;	// Corresponds to a physical cdrom device
+	size_t size = 0;		// File size, if available from the storage backend
 };
 
 class GameScanner

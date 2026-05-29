@@ -1,5 +1,6 @@
 /*
 	Copyright 2024 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -24,6 +25,7 @@
 
 #include "hw/maple/maple_devs.h"
 #include "hw/maple/maple_if.h"
+#include "ui/boxart/vmu_icon.h"
 #include "ui/gui.h"
 #include "cfg/option.h"
 #include "oslib/i18n.h"
@@ -63,6 +65,17 @@
 
 namespace dream_pico_port
 {
+
+constexpr size_t DPP_VMU_BLOCK_SIZE = 512;
+constexpr size_t DPP_VMU_BLOCK_COUNT = 256;
+constexpr size_t DPP_VMU_FLASH_SIZE = DPP_VMU_BLOCK_SIZE * DPP_VMU_BLOCK_COUNT;
+
+bool vmuIconCachingEnabled(const std::string& gameId)
+{
+	return config::LibraryImageSource.get() != static_cast<int>(config::LibraryImageSourceMode::CurrentArtwork)
+		&& config::PerGameVmu
+		&& !gameId.empty();
+}
 
 //! A Sega VMU with an optional file back-end
 struct DppVirtualVmu : public maple_sega_vmu
@@ -435,6 +448,10 @@ class DreamPicoPort : public SDLDreamLink
 
 	//! Hardware information determined on instantiation
 	HardwareInfo hw_info;
+	//! Last game id sent to VMU Pro storage; settings.content is cleared before termination events.
+	std::string activeGameId;
+	//! Last game title loaded while VMU Pro storage was active.
+	std::string activeGameTitle;
 	//! The name to return on getName
 	const std::string device_name;
 
@@ -491,6 +508,8 @@ public:
 			if (gameId.empty()) {
 				return;
 			}
+			activeGameId = gameId;
+			activeGameTitle = settings.content.title;
 
 			MapleMsg msg{};
 			msg.command = 33;
@@ -506,15 +525,51 @@ public:
 
 	void onGameStarted() override {
 		SDLDreamLink::onGameStarted();
+		activeGameId = settings.content.gameId;
+		activeGameTitle = settings.content.title;
 		sendGameId();
 	}
 
 	void onGameTermination() override {
 		SDLDreamLink::onGameTermination();
+		cacheLoadedVmuIcons();
 		// Need a short delay to wait for last screen draw to complete
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		// Reset screen to selected port
 		sendPort();
+	}
+
+	void cacheLoadedVmuIcons() {
+		if (!vmuIconCachingEnabled(activeGameId) || hw_info.hardware_bus < 0 || !storageEnabled()) {
+			return;
+		}
+
+		constexpr int perGameVmuPort = 0;
+		if ((getFunctionCode(perGameVmuPort) & MFID_1_Storage) == 0) {
+			return;
+		}
+
+		std::vector<u8> flash(DPP_VMU_FLASH_SIZE);
+		bool readOk = true;
+		for (u32 block = 0; block < DPP_VMU_BLOCK_COUNT; ++block) {
+			MapleMsg msg{};
+			msg.command = MDCF_BlockRead;
+			msg.destAP = (hw_info.hardware_bus << 6) | (1u << perGameVmuPort);
+			msg.originAP = hw_info.hardware_bus << 6;
+			msg.pushData(MFID_1_Storage);
+			msg.pushData((block & 0xff) << 24);
+
+			MapleMsg rxMsg{};
+			if (!sendReceive(msg, rxMsg) || rxMsg.command != MDRS_DataTransfer || rxMsg.size < 130) {
+				readOk = false;
+				break;
+			}
+			memcpy(&flash[block * DPP_VMU_BLOCK_SIZE], &rxMsg.data[8], DPP_VMU_BLOCK_SIZE);
+		}
+
+		if (readOk) {
+			cacheVmuIconFromFlash(activeGameId, activeGameTitle, flash.data(), flash.size());
+		}
 	}
 
 	//! Transform flycast port index into DreamPicoPort port index

@@ -1,5 +1,6 @@
 /*
 	Copyright 2024 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -33,6 +34,17 @@ void GameScanner::insert_game(const GameMedia& game)
 {
 	LockGuard _(mutex);
 	game_list.insert(std::upper_bound(game_list.begin(), game_list.end(), game), game);
+}
+
+static size_t getFileSize(const hostfs::FileInfo& item)
+{
+	if (item.size != 0)
+		return item.size;
+	try {
+		return hostfs::storage().getFileInfo(item.path).size;
+	} catch (const hostfs::StorageException&) {
+		return 0;
+	}
 }
 
 void GameScanner::add_game_directory(const std::string& path)
@@ -80,13 +92,13 @@ void GameScanner::add_game_directory(const std::string& path)
 				continue;
 			gameName = it->second->description;
 			fileName = fileName + " (" + gameName + ")";
-			insert_game(GameMedia{ fileName, item.path, item.name, gameName, true });
+			insert_game(GameMedia{ fileName, item.path, item.name, gameName, true, false, getFileSize(item) });
 			continue;
 		}
 		else if (extension == "bin" || extension == "lst" || extension == "dat")
 		{
 			if (!config::HideLegacyNaomiRoms)
-				insert_game(GameMedia{ fileName, item.path, item.name, gameName, true });
+				insert_game(GameMedia{ fileName, item.path, item.name, gameName, true, false, getFileSize(item) });
 			continue;
 		}
 		else if (extension == "chd" || extension == "gdi")
@@ -99,7 +111,7 @@ void GameScanner::add_game_directory(const std::string& path)
 		}
 		else if (extension != "cdi" && extension != "cue")
 			continue;
-		insert_game(GameMedia{ fileName, item.path, item.name, gameName });
+		insert_game(GameMedia{ fileName, item.path, item.name, gameName, false, false, getFileSize(item) });
 	}
 }
 
@@ -159,7 +171,7 @@ void GameScanner::fetch_game_list()
 							name = drive.substr(4);
 						else
 							name = drive;
-						game_list.insert(game_list.begin(), { name, drive, name, "", false, true });
+						game_list.insert(game_list.begin(), { name, drive, name, "", false, true, 0 });
 					}
 				}
 				// Dreamcast BIOS

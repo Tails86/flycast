@@ -1,5 +1,6 @@
 /*
 	Copyright 2019 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -36,6 +37,7 @@
 #include "implot.h"
 #endif
 #include "boxart/boxart.h"
+#include "boxart/vmu_icon.h"
 #include "profiler/fc_profiler.h"
 #include "hw/naomi/card_reader.h"
 #include "oslib/resources.h"
@@ -111,6 +113,7 @@ static void emuEventCallback(Event event, void *)
 		vgamepad::startGame();
 		break;
 	case Event::Start:
+		markLibraryGameBooted(settings.content.gameId, settings.content.path);
 		GamepadDevice::load_system_mappings();
 		break;
 	case Event::Terminate:
@@ -933,12 +936,114 @@ static void gameTooltip(const std::string& tip)
     }
 }
 
-static bool gameImageButton(ImguiTexture& texture, const std::string& tooltip, ImVec2 size, const std::string& gameName)
+static bool gameImageButton(ImguiTexture& texture, const std::string& tooltip, ImVec2 size,
+		const std::string& gameName, float fallbackTitleSize = 0.0f)
 {
-	bool pressed = texture.button("##imagebutton", size, gameName);
+	bool pressed = texture.button("##imagebutton", size, gameName, ImVec4(0, 0, 0, 0), ImVec4(1, 1, 1, 1),
+			fallbackTitleSize);
 	gameTooltip(tooltip);
 
     return pressed;
+}
+
+static double getLibraryIconAnimationClock()
+{
+	static double animationStart = 0.0;
+	static bool libraryWasOpen = false;
+	const bool libraryOpen = gui_state == GuiState::Main || gui_state == GuiState::SelectDisk;
+
+	if (libraryOpen && !libraryWasOpen)
+		animationStart = ImGui::GetTime();
+	libraryWasOpen = libraryOpen;
+	return std::max(0.0, ImGui::GetTime() - animationStart);
+}
+
+static GameBoxart getLibraryDisplayArtwork(const GameMedia& game, double animationClock)
+{
+	GameBoxart art;
+	if (game.device)
+		return art;
+
+	art = boxart.getBoxartAndLoad(game);
+	const auto source = static_cast<config::LibraryImageSourceMode>(config::LibraryImageSource.get());
+	switch (source)
+	{
+	case config::LibraryImageSourceMode::CurrentArtwork:
+		return art;
+
+	case config::LibraryImageSourceMode::VmuSaveIcon:
+	case config::LibraryImageSourceMode::VmuThenCurrentArtwork: {
+		const bool animate = config::VmuIconMode.get() == static_cast<int>(config::VmuIconPlaybackMode::Active);
+		const std::string vmuIconPath = getCachedVmuIconPath(game, art.uniqueId, animate, animationClock);
+		if (!vmuIconPath.empty())
+			art.boxartPath = vmuIconPath;
+		return art;
+	}
+
+	case config::LibraryImageSourceMode::CurrentArtworkThenVmu:
+		if (art.boxartPath.empty())
+		{
+			const bool animate = config::VmuIconMode.get() == static_cast<int>(config::VmuIconPlaybackMode::Active);
+			const std::string vmuIconPath = getCachedVmuIconPath(game, art.uniqueId, animate, animationClock);
+			if (!vmuIconPath.empty())
+				art.boxartPath = vmuIconPath;
+		}
+		return art;
+	}
+
+	return art;
+}
+
+static std::string formatLibraryRegion(u32 region)
+{
+	if (region == 0)
+		return "Unknown";
+
+	std::string value;
+	if (region & GameBoxart::JAPAN)
+		value += "JP";
+	if (region & GameBoxart::USA)
+	{
+		if (!value.empty())
+			value += "/";
+		value += "US";
+	}
+	if (region & GameBoxart::EUROPE)
+	{
+		if (!value.empty())
+			value += "/";
+		value += "EU";
+	}
+	return value.empty() ? "Unknown" : value;
+}
+
+static std::string formatLibrarySize(size_t size)
+{
+	if (size == 0)
+		return "";
+
+	constexpr size_t KiB = 1024;
+	constexpr size_t MiB = KiB * 1024;
+	if (size < MiB)
+		return std::to_string((size + KiB - 1) / KiB) + " KB";
+	return std::to_string((size + MiB - 1) / MiB) + " MB";
+}
+
+static void centerTableCellCursor(const ImVec2& contentSize, float rowContentHeight, bool centerX)
+{
+	ImVec2 pos = ImGui::GetCursorScreenPos();
+	pos.y += std::max(0.0f, (rowContentHeight - contentSize.y) * 0.5f);
+	if (centerX)
+		pos.x += std::max(0.0f, (ImGui::GetContentRegionAvail().x - contentSize.x) * 0.5f);
+	ImGui::SetCursorScreenPos(pos);
+}
+
+static void textTableCellCentered(const std::string& text, float rowContentHeight, bool centerX = true)
+{
+	if (text.empty())
+		return;
+	centerTableCellCursor(ImGui::CalcTextSize(text.c_str()), rowContentHeight, centerX);
+	ImGui::TextUnformatted(text.c_str());
 }
 
 #ifdef TARGET_UWP
@@ -985,20 +1090,34 @@ static void gui_display_content()
 
     ImGui::Begin("##main", nullptr, ImGuiWindowFlags_NoDecoration);
 
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ScaledVec2(20, 8));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(20, 8));
+	ImGui::PushFont(largeFont, 18.5f);
     ImGui::AlignTextToFramePadding();
     // Position "GAMES" text and search bar below the menu bar (window is already positioned below menu bar)
     ImGui::SetCursorPosY(ImGui::GetStyle().FramePadding.y);
-    ImGui::Indent(uiScaled(10));
+    ImGui::Indent(10);
     ImGui::Text("%s", T("GAMES"));
-    ImGui::Unindent(uiScaled(10));
+    ImGui::Unindent(10);
 
     static ImGuiTextFilter filter;
+	int libraryIconScale = std::clamp(config::LibraryIconScale.get(), 100, 500);
     IconButton settingsBtn(ICON_FA_GEAR, T("Settings"));
 #if !defined(__ANDROID__) && !defined(TARGET_IPHONE) && !defined(TARGET_UWP) && !defined(__SWITCH__)
-	ImGui::SameLine(0, uiScaled(32));
-	filter.Draw(T("Filter"), ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x
-			- settingsBtn.width() - ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize(T("Filter")).x);
+	const float iconScaleSliderWidth = 135.0f;
+	const float iconScaleControlWidth = iconScaleSliderWidth + ImGui::GetStyle().ItemInnerSpacing.x
+			+ ImGui::CalcTextSize("Icon Size").x;
+	const float settingsLeft = ImGui::GetContentRegionMax().x - settingsBtn.width();
+	const float sliderLeft = settingsLeft - 24.0f - iconScaleControlWidth;
+	ImGui::SameLine(0, 32);
+	const float availableFilterWidth = sliderLeft - ImGui::GetCursorPosX()
+			- ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize(T("Filter")).x;
+	const float maxFilterWidth = std::max(80.0f, std::min(availableFilterWidth, 520.0f));
+	const float filterWidth = std::clamp(availableFilterWidth * 0.5f, 80.0f, maxFilterWidth);
+	filter.Draw(T("Filter"), filterWidth);
+	ImGui::SameLine(0, 24.0f);
+	ImGui::SetNextItemWidth(iconScaleSliderWidth);
+	if (ImGui::SliderInt("Icon Size", &libraryIconScale, 100, 500, "%d%%"))
+		config::LibraryIconScale.set(libraryIconScale);
 #endif
     if (gui_state != GuiState::SelectDisk)
     {
@@ -1030,6 +1149,7 @@ static void gui_display_content()
 		if (cancelBtn.realize())
 			gui_setState(GuiState::Commands);
     }
+	ImGui::PopFont();
     ImGui::PopStyleVar();
 
     scanner.fetch_game_list();
@@ -1037,87 +1157,256 @@ static void gui_display_content()
 	// Only if Filter and Settings aren't focused... ImGui::SetNextWindowFocus();
 	ImGui::BeginChild(ImGui::GetID("library"), ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_DragScrolling);
     {
+		const bool useListStyle = config::LibraryDisplayStyle.get() == static_cast<int>(config::LibraryDisplayStyleMode::List);
 		const float totalWidth = ImGui::GetContentRegionMax().x - (!ImGui::GetCurrentWindow()->ScrollbarY ? ImGui::GetStyle().ScrollbarSize : 0);
-		const int itemsPerLine = std::max<int>(totalWidth / (uiScaled(150) + ImGui::GetStyle().ItemSpacing.x), 1);
-		const float responsiveBoxSize = totalWidth / itemsPerLine - ImGui::GetStyle().FramePadding.x * 2;
-		const ImVec2 responsiveBoxVec2 = ImVec2(responsiveBoxSize, responsiveBoxSize);
+		const float libraryIconScaleFactor = libraryIconScale / 100.0f;
+		const ImVec2 iconSize(32.0f * libraryIconScaleFactor, 32.0f * libraryIconScaleFactor);
+		const double iconAnimationClock = getLibraryIconAnimationClock();
 
-		if (config::BoxartDisplayMode)
+		if (useListStyle)
+			ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(5, 4));
+		else if (config::BoxartDisplayMode)
 			ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.5f, 0.5f));
 		else
-			ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ScaledVec2(8, 20));
+			ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 20));
+		const float tableTextSize = 18.5f;
+		const float tableRowContentHeight = std::max(iconSize.y, tableTextSize);
+		const float tableRowHeight = tableRowContentHeight + ImGui::GetStyle().CellPadding.y * 2.0f;
+		auto calcLibraryTextWidth = [&](const char *text) {
+			return largeFont != nullptr ? largeFont->CalcTextSizeA(tableTextSize, FLT_MAX, -1.0f, text).x
+					: ImGui::CalcTextSize(text).x;
+		};
+		const float iconColumnWidth = std::max(iconSize.x, calcLibraryTextWidth("Icon"))
+				+ ImGui::GetStyle().CellPadding.x * 2.0f;
+		const float lastBootedColumnWidth = calcLibraryTextWidth("12/31/2026 12:59:59 PM")
+				+ ImGui::GetStyle().CellPadding.x * 2.0f;
 
 		int counter = 0;
 		bool gameListEmpty = false;
 		{
 			scanner.get_mutex().lock();
 			gameListEmpty = scanner.get_game_list().empty();
-			for (const auto& game : scanner.get_game_list())
+			if (useListStyle)
 			{
-				if (gui_state == GuiState::SelectDisk)
+				ImGui::PushFont(largeFont, tableTextSize);
+				if (ImGui::BeginTable("libraryTable", 8, ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_Borders
+						| ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit
+						| ImGuiTableFlags_ScrollY, ImVec2(0.0f, 0.0f)))
 				{
-					std::string extension = get_file_extension(game.path);
-					if (!game.device && extension != "gdi" && extension != "chd"
-							&& extension != "cdi" && extension != "cue")
-						// Only dreamcast disks
-						continue;
-					if (game.path.empty())
-						// Dreamcast BIOS isn't a disk
-						continue;
-				}
-				std::string gameName = game.name;
-				bool passFilter = filter.PassFilter(gameName.c_str());
-				GameBoxart art;
-				if (config::BoxartDisplayMode && !game.device)
-				{
-					art = boxart.getBoxartAndLoad(game);
-					gameName = art.name;
-					passFilter = passFilter || filter.PassFilter(gameName.c_str());
-				}
-				if (passFilter)
-				{
-					ImguiID _(game.path.empty() ? "bios" : game.path);
-					bool pressed = false;
-					if (config::BoxartDisplayMode)
+					ImGui::TableSetupColumn("Icon", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, iconColumnWidth);
+					ImGui::TableSetupColumn("Product ID", ImGuiTableColumnFlags_WidthFixed, 96.0f);
+					ImGui::TableSetupColumn("Title", ImGuiTableColumnFlags_WidthStretch);
+					ImGui::TableSetupColumn("Region", ImGuiTableColumnFlags_WidthFixed, 78.0f);
+					ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+					ImGui::TableSetupColumn("Time Played", ImGuiTableColumnFlags_WidthFixed, 94.0f);
+					ImGui::TableSetupColumn("Last Booted", ImGuiTableColumnFlags_WidthFixed, lastBootedColumnWidth);
+					ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 78.0f);
+					ImGui::TableSetColumnWidth(0, iconColumnWidth);
+					ImGui::TableSetupScrollFreeze(0, 1);
+					ImGui::TableHeadersRow();
+
+					const auto& gameList = scanner.get_game_list();
+					auto drawTableGame = [&](const GameMedia& game, int rowIndex) -> bool
 					{
-						if (counter % itemsPerLine != 0)
-							ImGui::SameLine();
-						counter++;
-						// Put the image inside a child window so we can detect when it's fully clipped and doesn't need to be loaded
-						if (ImGui::BeginChild("img", ImVec2(0, 0), ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_NavFlattened))
+						if (gui_state == GuiState::SelectDisk)
+						{
+							std::string extension = get_file_extension(game.path);
+							if (!game.device && extension != "gdi" && extension != "chd"
+									&& extension != "cdi" && extension != "cue")
+								// Only dreamcast disks
+								return false;
+							if (game.path.empty())
+								// Dreamcast BIOS isn't a disk
+								return false;
+						}
+
+						std::string gameName = game.name;
+						bool passFilter = filter.PassFilter(gameName.c_str());
+						GameBoxart art;
+						if (!game.device)
+						{
+							art = getLibraryDisplayArtwork(game, iconAnimationClock);
+							if (!art.name.empty())
+								gameName = art.name;
+							passFilter = passFilter || filter.PassFilter(gameName.c_str());
+						}
+
+						if (!passFilter)
+							return false;
+
+						std::string productId;
+						std::string region = "Unknown";
+						if (!art.uniqueId.empty())
+							productId = art.uniqueId;
+						if (art.region != 0)
+							region = formatLibraryRegion(art.region);
+
+						std::string format = "Unknown";
+						if (game.path.empty())
+							format = "BIOS";
+						else if (game.device)
+							format = "Device";
+						else
+						{
+							const std::string extension = get_file_extension(game.path);
+							if (!extension.empty())
+								format = extension;
+						}
+
+						ImguiID _(game.path.empty() ? "bios" : (game.path + "_row"));
+						ImGui::TableNextRow(ImGuiTableRowFlags_None, tableRowHeight);
+						ImGui::TableSetColumnIndex(0);
+						const ImVec2 iconCellPos = ImGui::GetCursorScreenPos();
+						const bool rowPressed = ImGui::Selectable(("##row_" + std::to_string(rowIndex)).c_str(),
+								false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap, ImVec2(0.0f, tableRowContentHeight));
+						ImGui::SetCursorScreenPos(iconCellPos);
+						if (!game.device && !art.boxartPath.empty())
 						{
 							ImguiFileTexture tex(art.boxartPath);
-							pressed = gameImageButton(tex, game.name, responsiveBoxVec2, gameName);
+							centerTableCellCursor(iconSize, tableRowContentHeight, true);
+							tex.draw(iconSize);
 						}
-						ImGui::EndChild();
+
+						ImGui::TableSetColumnIndex(1);
+						textTableCellCentered(productId, tableRowContentHeight);
+						ImGui::TableSetColumnIndex(2);
+						textTableCellCentered(gameName, tableRowContentHeight, false);
+						ImGui::TableSetColumnIndex(3);
+						textTableCellCentered(region, tableRowContentHeight);
+						ImGui::TableSetColumnIndex(4);
+						textTableCellCentered(format, tableRowContentHeight);
+						ImGui::TableSetColumnIndex(6);
+						const time_t lastBootedTime = getLibraryGameLastBooted(game, art.uniqueId);
+						const std::string lastBooted = lastBootedTime == 0 ? std::string() : formatShortDateTime(lastBootedTime);
+						textTableCellCentered(lastBooted, tableRowContentHeight);
+						ImGui::TableSetColumnIndex(7);
+						const std::string size = formatLibrarySize(game.size);
+						textTableCellCentered(size, tableRowContentHeight);
+
+						if (rowPressed)
+						{
+							settings.content.title = art.name;
+							if (settings.content.title.empty() || settings.content.title == game.fileName)
+								settings.content.title = get_file_basename(game.fileName);
+							if (gui_state == GuiState::SelectDisk)
+							{
+								try {
+									emu.insertGdrom(game.path);
+									gui_setState(GuiState::Closed);
+								} catch (const FlycastException& e) {
+									gui_error(e.what());
+								}
+							}
+							else
+							{
+								std::string gamePath(game.path);
+								scanner.get_mutex().unlock();
+								gui_start_game(gamePath);
+								scanner.get_mutex().lock();
+								return true;
+							}
+						}
+						return false;
+					};
+
+					if (!filter.IsActive() && gui_state != GuiState::SelectDisk)
+					{
+						ImGuiListClipper clipper;
+						clipper.Begin(static_cast<int>(gameList.size()), tableRowHeight);
+						bool gameStartedFromRow = false;
+						while (clipper.Step() && !gameStartedFromRow)
+							for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
+								if (drawTableGame(gameList[i], i))
+								{
+									gameStartedFromRow = true;
+									break;
+								}
 					}
 					else
 					{
-						pressed = ImGui::Selectable(gameName.c_str());
+						for (int i = 0; i < static_cast<int>(gameList.size()); i++)
+							if (drawTableGame(gameList[i], i))
+								break;
 					}
-					if (pressed)
+					ImGui::EndTable();
+				}
+				ImGui::PopFont();
+			}
+			else
+			{
+				const float gridBoxBaseSize = 112.0f * libraryIconScaleFactor;
+				const int itemsPerLine = std::max<int>(totalWidth / (gridBoxBaseSize + ImGui::GetStyle().ItemSpacing.x), 1);
+				const float responsiveBoxSize = totalWidth / itemsPerLine - ImGui::GetStyle().FramePadding.x * 2;
+				const ImVec2 responsiveBoxVec2 = ImVec2(responsiveBoxSize, responsiveBoxSize);
+				const float gridTextSize = std::clamp(responsiveBoxSize * 0.105f, 9.0f, 24.0f);
+
+				for (const auto& game : scanner.get_game_list())
+				{
+					if (gui_state == GuiState::SelectDisk)
 					{
-						if (!config::BoxartDisplayMode)
-							art = boxart.getBoxart(game);
-						settings.content.title = art.name;
-						if (settings.content.title.empty() || settings.content.title == game.fileName)
-							settings.content.title = get_file_basename(game.fileName);
-						if (gui_state == GuiState::SelectDisk)
+						std::string extension = get_file_extension(game.path);
+						if (!game.device && extension != "gdi" && extension != "chd"
+								&& extension != "cdi" && extension != "cue")
+							// Only dreamcast disks
+							continue;
+						if (game.path.empty())
+							// Dreamcast BIOS isn't a disk
+							continue;
+					}
+					std::string gameName = game.name;
+					bool passFilter = filter.PassFilter(gameName.c_str());
+					GameBoxart art;
+					if (config::BoxartDisplayMode && !game.device)
+					{
+						art = getLibraryDisplayArtwork(game, iconAnimationClock);
+						gameName = art.name;
+						passFilter = passFilter || filter.PassFilter(gameName.c_str());
+					}
+					if (passFilter)
+					{
+						ImguiID _(game.path.empty() ? "bios" : game.path);
+						bool pressed = false;
+						if (config::BoxartDisplayMode)
 						{
-							try {
-								emu.insertGdrom(game.path);
-								gui_setState(GuiState::Closed);
-							} catch (const FlycastException& e) {
-								gui_error(e.what());
+							if (counter % itemsPerLine != 0)
+								ImGui::SameLine();
+							counter++;
+							// Put the image inside a child window so we can detect when it's fully clipped and doesn't need to be loaded
+							if (ImGui::BeginChild("img", ImVec2(0, 0), ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_NavFlattened))
+							{
+								ImguiFileTexture tex(art.boxartPath);
+								pressed = gameImageButton(tex, game.name, responsiveBoxVec2, gameName, gridTextSize);
 							}
+							ImGui::EndChild();
 						}
 						else
 						{
-							std::string gamePath(game.path);
-							scanner.get_mutex().unlock();
-							gui_start_game(gamePath);
-							scanner.get_mutex().lock();
-							break;
+							pressed = ImGui::Selectable(gameName.c_str());
+						}
+						if (pressed)
+						{
+							if (!config::BoxartDisplayMode)
+								art = boxart.getBoxart(game);
+							settings.content.title = art.name;
+							if (settings.content.title.empty() || settings.content.title == game.fileName)
+								settings.content.title = get_file_basename(game.fileName);
+							if (gui_state == GuiState::SelectDisk)
+							{
+								try {
+									emu.insertGdrom(game.path);
+									gui_setState(GuiState::Closed);
+								} catch (const FlycastException& e) {
+									gui_error(e.what());
+								}
+							}
+							else
+							{
+								std::string gamePath(game.path);
+								scanner.get_mutex().unlock();
+								gui_start_game(gamePath);
+								scanner.get_mutex().lock();
+								break;
+							}
 						}
 					}
 				}

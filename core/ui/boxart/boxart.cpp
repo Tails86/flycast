@@ -67,6 +67,19 @@ std::string makeBoxartKey(const std::string& filepath)
 	return normalizeBoxartKey(get_file_basename(filepath));
 }
 
+bool isGeneratedVmuIconPath(const std::string& root, const std::string& path)
+{
+	if (path.size() <= root.size() || path.compare(0, root.size(), root) != 0)
+		return false;
+
+	std::string relative = path.substr(root.size());
+	while (!relative.empty() && (relative.front() == '/' || relative.front() == '\\'))
+		relative.erase(relative.begin());
+	const size_t slash = relative.find_first_of("/\\");
+	const std::string firstComponent = slash == std::string::npos ? relative : relative.substr(0, slash);
+	return firstComponent == "vmu-icons";
+}
+
 } // namespace
 
 GameBoxart Boxart::getBoxart(const GameMedia& media)
@@ -406,6 +419,8 @@ void Boxart::refreshCustomBoxartIndex(bool force)
 			{
 				const hostfs::FileInfo& entry = *it;
 				if (entry.isDirectory)
+					continue;
+				if (isGeneratedVmuIconPath(root, entry.path))
 					continue;
 				const std::string ext = get_file_extension(entry.name);
 				if (!isSupportedBoxartExtension(ext))

@@ -1,5 +1,6 @@
 /*
 	Copyright 2021 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -368,6 +369,30 @@ extern Option<bool> ForceFreePlay;
 extern Option<bool, false> FetchBoxart;
 extern Option<bool, false> BoxartDisplayMode;
 extern Option<int, false> BoxartSourceMode; // 0 -> Scraped, 1 -> Physical Media, 2 -> Custom with scraped fallback
+enum class LibraryDisplayStyleMode
+{
+	Classic = 0,
+	List = 1,
+};
+
+enum class LibraryImageSourceMode
+{
+	CurrentArtwork = 0,
+	VmuSaveIcon = 1,
+	VmuThenCurrentArtwork = 2,
+	CurrentArtworkThenVmu = 3,
+};
+
+enum class VmuIconPlaybackMode
+{
+	Static = 0,
+	Active = 1,
+};
+
+extern Option<int, false> LibraryDisplayStyle;
+extern Option<int, false> LibraryImageSource;
+extern Option<int, false> LibraryIconScale;
+extern Option<int, false> VmuIconMode;
 extern Option<int, false> UIScaling;
 extern Option<int, false> UITheme;          // 0 -> Dark, 1 -> Light, 2 -> Dreamcast, 3 -> High Contrast, 4 -> Nintendo, 5 -> Aqua Chill
 

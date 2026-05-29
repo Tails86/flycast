@@ -1,5 +1,6 @@
 /*
 	Copyright 2019 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of reicast.
 
@@ -665,11 +666,49 @@ void ImguiTexture::draw(ImDrawList *drawList, const ImVec2& pos, const ImVec2& s
 }
 
 bool ImguiTexture::button(const char* str_id, const ImVec2& image_size, const std::string& title,
-		const ImVec4& bg_col, const ImVec4& tint_col)
+		const ImVec4& bg_col, const ImVec4& tint_col, float fallbackTitleSize)
 {
 	ImTextureID id = getId();
 	if (id == ImTextureID{})
-		return ImGui::Button(title.c_str(), image_size);
+	{
+		if (fallbackTitleSize <= 0.0f || title.empty())
+			return ImGui::Button(title.c_str(), image_size);
+
+		ImGui::PushFont(nullptr, fallbackTitleSize);
+		const bool pressed = ImGui::Button(str_id, image_size);
+		const ImVec2 min = ImGui::GetItemRectMin() + ImGui::GetStyle().FramePadding;
+		const ImVec2 max = ImGui::GetItemRectMax() - ImGui::GetStyle().FramePadding;
+		const float wrapWidth = std::max(1.0f, max.x - min.x);
+		const ImVec4 clipRect(min.x, min.y, max.x, max.y);
+		ImFont *font = ImGui::GetFont();
+		const float fontSize = ImGui::GetFontSize();
+		const char *text = title.c_str();
+		const char *textEnd = text + title.size();
+		std::vector<std::pair<const char *, const char *>> lines;
+		for (const char *line = text; line < textEnd; )
+		{
+			const char *lineEnd = font->CalcWordWrapPosition(fontSize, line, textEnd, wrapWidth);
+			if (lineEnd == line)
+				lineEnd = textEnd;
+			lines.emplace_back(line, lineEnd);
+			line = ImTextCalcWordWrapNextLineStart(lineEnd, textEnd);
+		}
+
+		const float lineHeight = ImGui::GetTextLineHeight();
+		float y = min.y + std::max(0.0f, (max.y - min.y - lineHeight * lines.size()) * 0.5f);
+		for (const auto& line : lines)
+		{
+			const float lineWidth = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, line.first, line.second).x;
+			const ImVec2 textPos(min.x + std::max(0.0f, (max.x - min.x - lineWidth) * 0.5f), y);
+			ImGui::GetWindowDrawList()->AddText(font, fontSize, textPos, ImGui::GetColorU32(ImGuiCol_Text),
+					line.first, line.second, 0.0f, &clipRect);
+			y += lineHeight;
+			if (y > max.y)
+				break;
+		}
+		ImGui::PopFont();
+		return pressed;
+	}
 	else
 	{
 		const float ar = imguiDriver->getAspectRatio(id);

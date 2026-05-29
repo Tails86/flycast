@@ -1,5 +1,6 @@
 /*
 	Copyright 2021 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -41,6 +42,10 @@ Option<bool> ForceFreePlay("ForceFreePlay", true);
 Option<bool, false> FetchBoxart("FetchBoxart", true);
 Option<bool, false> BoxartDisplayMode("BoxartDisplayMode", true);
 Option<int, false> BoxartSourceMode("BoxartSourceMode", 0);
+Option<int, false> LibraryDisplayStyle("Dreamcast.LibraryDisplayStyle", 0);
+Option<int, false> LibraryImageSource("Dreamcast.LibraryImageSource", 0);
+Option<int, false> LibraryIconScale("Dreamcast.LibraryIconScale", 100);
+Option<int, false> VmuIconMode("Dreamcast.VmuIconMode", 0);
 Option<int, false> UIScaling("UIScaling", 100);
 Option<int, false> UITheme("UITheme", 0);
 

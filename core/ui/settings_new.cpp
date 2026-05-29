@@ -1,5 +1,6 @@
 /*
 	Copyright 2019 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -2214,6 +2215,9 @@ void renderGeneralTab()
 			uiScalingCfg.slider.format = "%d%%";
 			uiScalingCfg.slider.valueWidth = 220.0f;
 			uiScalingCfg.slider.showApplyFlag = &showApplyButtonForUIScaling;
+			uiScalingCfg.slider.onValueChange = [&]() {
+				uiUserScaleUpdated = true;
+			};
 		uiScalingCfg.slider.onApply = [&]() {
 			mainui_reinit();
 			uiUserScaleUpdated = false;
@@ -2367,6 +2371,69 @@ void renderGeneralTab()
 		if (refreshPressed)
 			gui_refresh_custom_boxart(true);
 	}
+
+		static const char* libraryDisplayStyles[] = { "Classic", "List" };
+		SettingsUI::PopupConfig libraryDisplayStyleCfg {};
+		libraryDisplayStyleCfg.type = SettingsUI::PopupType::Options;
+		libraryDisplayStyleCfg.options.label = "Library Display Style";
+		libraryDisplayStyleCfg.options.icon = ICON_FA_LIST;
+		libraryDisplayStyleCfg.options.popupID = "LibraryDisplayStylePopup";
+		libraryDisplayStyleCfg.options.options = libraryDisplayStyles;
+		libraryDisplayStyleCfg.options.optionCount = IM_ARRAYSIZE(libraryDisplayStyles);
+		libraryDisplayStyleCfg.options.currentValue = &config::LibraryDisplayStyle.get();
+		libraryDisplayStyleCfg.options.valueWidth = 220.0f;
+		libraryDisplayStyleCfg.options.onChange = [](int) { return true; };
+		RenderGeneralPopupSettingRow(
+			"LibraryDisplayStyle",
+			"Choose how the game library is displayed.",
+			libraryDisplayStyleCfg,
+			"Library Display Style\n"
+			"Selects the visual layout for the game library.\n"
+			"Classic keeps the existing gallery/list behavior.\n"
+			"List uses a compact row/table layout with title and metadata columns.");
+
+		static const char* libraryImageSources[] = {
+			"Current Artwork",
+			"VMU Save Icon",
+			"VMU Save Icon, then Current Artwork",
+			"Current Artwork, then VMU Save Icon",
+		};
+		SettingsUI::PopupConfig libraryImageSourceCfg {};
+		libraryImageSourceCfg.type = SettingsUI::PopupType::Options;
+		libraryImageSourceCfg.options.label = "Library Image Source";
+		libraryImageSourceCfg.options.icon = ICON_FA_IMAGE;
+		libraryImageSourceCfg.options.popupID = "LibraryImageSourcePopup";
+		libraryImageSourceCfg.options.options = libraryImageSources;
+		libraryImageSourceCfg.options.optionCount = IM_ARRAYSIZE(libraryImageSources);
+		libraryImageSourceCfg.options.currentValue = &config::LibraryImageSource.get();
+		libraryImageSourceCfg.options.valueWidth = 240.0f;
+		libraryImageSourceCfg.options.onChange = [](int) { return true; };
+		RenderGeneralPopupSettingRow(
+			"LibraryImageSource",
+			"Select the image source for library icons.",
+			libraryImageSourceCfg,
+			"Library Image Source\n"
+			"Controls which icon source the table/list view uses for each row.\n"
+			"VMU icon options use the selected normal artwork fallback until a game has cached VMU icons.");
+
+		static const char* vmuIconModes[] = { "Static", "Active / Animated" };
+		SettingsUI::PopupConfig vmuIconModeCfg {};
+		vmuIconModeCfg.type = SettingsUI::PopupType::Options;
+		vmuIconModeCfg.options.label = "VMU Icon Mode";
+		vmuIconModeCfg.options.icon = ICON_FA_BATTERY_FULL;
+		vmuIconModeCfg.options.popupID = "VMUIconModePopup";
+		vmuIconModeCfg.options.options = vmuIconModes;
+		vmuIconModeCfg.options.optionCount = IM_ARRAYSIZE(vmuIconModes);
+		vmuIconModeCfg.options.currentValue = &config::VmuIconMode.get();
+		vmuIconModeCfg.options.valueWidth = 220.0f;
+		vmuIconModeCfg.options.onChange = [](int) { return true; };
+		RenderGeneralPopupSettingRow(
+			"VMUIconMode",
+			"Set VMU icon playback behavior.",
+			vmuIconModeCfg,
+			"VMU Icon Mode\n"
+			"Controls how cached VMU icons play after they have been captured from saves.\n"
+			"Static shows one frame; Active / Animated plays the BIOS-style icon frames.");
 
 		RenderGeneralToggleSettingRow(
 			"BoxartDisplayMode",
