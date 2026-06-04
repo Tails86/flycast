@@ -4937,7 +4937,9 @@ void renderNetworkTab()
 					"Network Role\n"
 					"Selects the active network role:\n"
 					"Server to create a local server for Naomi network games, client to connect to a server, "
-					"satellite to monitor games that support it (Virtual-On Oratorio Tangram and Club Kart)");
+					"satellite to monitor games that support it (Virtual-On Oratorio Tangram and Club Kart)\n\n"
+					"If you cannot connect to each other, check firewalls/NAT rules and confirm both players are using the same game/version.\n"
+					"Use the Local Port setting if you need to match a specific port or avoid conflicts.");
 
 				// Server Address (only when not acting as server)
 				if (!config::ActAsServer)
@@ -4992,8 +4994,6 @@ void renderNetworkTab()
 				if (g_twoLineRowExtraGapPx > 0.0f)
 					ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 			}
-
-
 		}
 		}
 	}
