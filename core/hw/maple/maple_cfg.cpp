@@ -328,7 +328,13 @@ static void createNaomiDevices()
 	createDreamLinkDevices(-1, {1,2}, {0, MAPLE_MAIN_DEV_IDX});
 
 	const std::string& gameId = settings.content.gameId;
+<<<<<<< HEAD
 	mcfg_Create(MDT_NaomiJamma, 0, MAPLE_MAIN_DEV_IDX);
+=======
+	mcfg_Create(MDT_NaomiJamma, 0, 5);
+	if (settings.naomi.slave)
+		return;
+>>>>>>> flycast/dev
 	if (gameId == "THE TYPING OF THE DEAD"
 			|| gameId == " LUPIN THE THIRD  -THE TYPING-"
 			|| gameId == "------La Keyboardxyu------")
@@ -364,9 +370,10 @@ static void createNaomiDevices()
 		mcfg_Create(MDT_SegaController, 2, MAPLE_MAIN_DEV_IDX);
 		mcfg_Create(MDT_SegaVMU, 2, 0);
 	}
-	if (gameId == " DERBY OWNERS CLUB WE ---------"
-			|| gameId == " DERBY OWNERS CLUB ------------"
-			|| gameId == " DERBY OWNERS CLUB II-----------")
+	if (config::MultiboardSlaves <= 1
+			&& (gameId == " DERBY OWNERS CLUB WE ---------"
+				|| gameId == " DERBY OWNERS CLUB ------------"
+				|| gameId == " DERBY OWNERS CLUB II-----------"))
 		card_reader::derbyInit();
 }
 
