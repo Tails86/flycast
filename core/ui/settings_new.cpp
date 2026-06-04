@@ -4682,7 +4682,7 @@ void renderNetworkTab()
 			netType = 0;
 
 		static const char* const networkTypeOptions[] = {
-			"Disabled",
+			"Native",
 			"GGPO",
 			"Naomi",
 			"Battle Cable"
@@ -4894,17 +4894,50 @@ void renderNetworkTab()
 			// Naomi Network Settings
 			else if (config::NetworkEnable)
 			{
-				RenderGeneralToggleSettingRow(
-					"ActAsServer",
-					ICON_FA_SERVER,
-					"Act as Server",
-					"Host Naomi network game",
-					static_cast<bool>(config::ActAsServer),
-					[](bool enabled) { config::ActAsServer = enabled; },
-					"Naomi Netplay: Act as Server\n"
-					"When enabled, this device hosts the Naomi network session and waits for another player to connect.\n\n"
-					"If you cannot connect to each other, check firewalls/NAT rules and confirm both players are using the same game/version.\n"
-					"Use the Local Port setting if you need to match a specific port or avoid conflicts.");
+				int role = 0;
+				if (!config::ActAsServer)
+					role = config::NaomiSatellite ? 2 : 1;
+
+				static const char* const networkRoles[] = {
+					"Server",
+					"Client",
+					"Satellite"
+				};
+
+				SettingsUI::PopupConfig networkRoleCfg {};
+				networkRoleCfg.type = SettingsUI::PopupType::Options;
+				networkRoleCfg.options.label = "Network Role";
+				networkRoleCfg.options.icon = ICON_FA_GLOBE;
+				networkRoleCfg.options.popupID = "NetworkRolePopup";
+				networkRoleCfg.options.options = networkRoles;
+				networkRoleCfg.options.optionCount = IM_ARRAYSIZE(networkRoles);
+				networkRoleCfg.options.currentValue = &role;
+				networkRoleCfg.options.valueWidth = 220.0f;
+				networkRoleCfg.options.onChange = [](int selectedType) {
+					switch (selectedType) {
+					case 0:
+						config::ActAsServer = true;
+						config::NaomiSatellite = false;
+						break;
+					case 1:
+						config::ActAsServer = false;
+						config::NaomiSatellite = false;
+						break;
+					case 2:
+						config::ActAsServer = false;
+						config::NaomiSatellite = true;
+						break;
+					}
+					return true;
+				};
+				RenderGeneralPopupSettingRow(
+					"NetworkRoleSetting",
+					"Choose the network role.",
+					networkRoleCfg,
+					"Network Role\n"
+					"Selects the active network role:\n"
+					"Server to create a local server for Naomi network games, client to connect to a server, "
+					"satellite to monitor games that support it (Virtual-On Oratorio Tangram and Club Kart)");
 
 				// Server Address (only when not acting as server)
 				if (!config::ActAsServer)
@@ -4959,6 +4992,8 @@ void renderNetworkTab()
 				if (g_twoLineRowExtraGapPx > 0.0f)
 					ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 			}
+
+
 		}
 		}
 	}
@@ -5199,11 +5234,11 @@ void renderNetworkTab()
 
 	if (ImGui::CollapsingHeader(ICON_FA_TABLE " Multiboard##Section", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		OptionRadioButton<int>("1 (Twin)", config::MultiboardSlaves, 1,
-			"One screen configuration (F355 Twin)");
+		OptionRadioButton<int>("1 (Twin, Satellite)", config::MultiboardSlaves, 1,
+			"One screen configuration (F355 Twin, Derby Owners Club satellite)");
 		ImGui::SameLine();
-		OptionRadioButton<int>("3 (Deluxe)", config::MultiboardSlaves, 2,
-			"Three screens configuration");
+		OptionRadioButton<int>("2+ (Deluxe, Main screen)", config::MultiboardSlaves, 2,
+			"Two or three screens configuration (Airline Pilot, Derby Owners Club main screen, F355 Deluxe, Sega Strike Fighter)");
 	}
 #endif
 }
