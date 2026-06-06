@@ -2,20 +2,20 @@
 	Copyright 2019 flyinghead
 	Portions Copyright 2026 The Hollycast Authors
 
-	This file is part of Flycast.
+	This file is part of Hollycast.
 
-    Flycast is free software: you can redistribute it and/or modify
+    Hollycast is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 2 of the License, or
     (at your option) any later version.
 
-    Flycast is distributed in the hope that it will be useful,
+    Hollycast is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
+    along with Hollycast.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "gui.h"
 #include "rend/osd.h"
@@ -411,11 +411,11 @@ TimeSeries vblankTimes;
 void gui_plot_render_time(int width, int height)
 {
 	std::vector<float> v = renderTimes.data();
-	ImGui::PlotLines("Render Times", v.data(), v.size(), 0, "", 0.0, 1.0 / 30.0, ImVec2(300, 50));
-	ImGui::Text("StdDev: %.1f%%", renderTimes.stddev() * 100.f / 0.01666666667f);
+	ImGui::PlotLines(T("Render Times"), v.data(), v.size(), 0, "", 0.0, 1.0 / 30.0, ImVec2(300, 50));
+	ImGui::Text(T("StdDev: %.1f%%"), renderTimes.stddev() * 100.f / 0.01666666667f);
 	v = vblankTimes.data();
-	ImGui::PlotLines("VBlank", v.data(), v.size(), 0, "", 0.0, 1.0 / 30.0, ImVec2(300, 50));
-	ImGui::Text("StdDev: %.1f%%", vblankTimes.stddev() * 100.f / 0.01666666667f);
+	ImGui::PlotLines(T("VBlank"), v.data(), v.size(), 0, "", 0.0, 1.0 / 30.0, ImVec2(300, 50));
+	ImGui::Text(T("StdDev: %.1f%%"), vblankTimes.stddev() * 100.f / 0.01666666667f);
 }
 #endif
 
@@ -554,29 +554,33 @@ static void render_exit_save_dialog()
 	// Only open popup if it's not already open and this is a new request
 	if (showExitSaveDialog && !wasDialogShown)
 	{
-		ImGui::OpenPopup("Exit Game?");
+		ImGui::OpenPopup(Tnop("Exit Game?"));
 		wasDialogShown = true;
 	}
 
-	if (ImGui::BeginPopupModal("Exit Game?", NULL,
+	const std::string exitGamePopup = std::string(T("Exit Game?")) + "###Exit Game?";
+	if (ImGui::BeginPopupModal(exitGamePopup.c_str(), NULL,
 		ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar))
 	{
-		ImGui::Text("Do you want to save state before exiting?");
+		ImGui::TextUnformatted(T("Do you want to save state before exiting?"));
 		ImGui::NewLine();
 
 		// Button styling (consistent with existing dialogs)
 		ImguiStyleVar _(ImGuiStyleVar_ItemSpacing, ImVec2(uiScaled(20), ImGui::GetStyle().ItemSpacing.y));
 		ImguiStyleVar _1(ImGuiStyleVar_FramePadding, ScaledVec2(10, 10));
+		const char *saveAndExit = T("Save & Exit");
+		const char *exitWithoutSaving = T("Exit Without Saving");
+		const char *cancelButton = T("Cancel");
 		const float buttonWidth = std::max({
-			ImGui::CalcTextSize("Save & Exit").x,
-			ImGui::CalcTextSize("Exit Without Saving").x,
-			ImGui::CalcTextSize("Cancel").x
+			ImGui::CalcTextSize(saveAndExit).x,
+			ImGui::CalcTextSize(exitWithoutSaving).x,
+			ImGui::CalcTextSize(cancelButton).x
 		}) + ImGui::GetStyle().FramePadding.x * 2 + uiScaled(24.f);
 
 		// Check if save is allowed
 		bool canSave = dc_savestateAllowed();
 
-		if (ImGui::Button("Save & Exit", ImVec2(buttonWidth, 0)))
+		if (ImGui::Button(saveAndExit, ImVec2(buttonWidth, 0)))
 		{
 			if (canSave)
 			{
@@ -588,34 +592,35 @@ static void render_exit_save_dialog()
 			else
 			{
 				// Show error that save isn't allowed
-				ImGui::OpenPopup("Save Not Allowed");
+				ImGui::OpenPopup(Tnop("Save Not Allowed"));
 			}
 		}
 		ImGui::SameLine();
-		if (ImGui::Button("Exit Without Saving", ImVec2(buttonWidth, 0)))
+		if (ImGui::Button(exitWithoutSaving, ImVec2(buttonWidth, 0)))
 		{
 			ImGui::CloseCurrentPopup();
 			showExitSaveDialog = false;
 			gui_stop_game();
 		}
 		ImGui::SameLine();
-		if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0)))
+		if (ImGui::Button(cancelButton, ImVec2(buttonWidth, 0)))
 		{
 			ImGui::CloseCurrentPopup();
 			showExitSaveDialog = false;
 		}
 
 		// Error popup for save not allowed
-		if (ImGui::BeginPopupModal("Save Not Allowed", NULL,
+		const std::string saveNotAllowedPopup = std::string(T("Save Not Allowed")) + "###Save Not Allowed";
+		if (ImGui::BeginPopupModal(saveNotAllowedPopup.c_str(), NULL,
 			ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
 		{
-			ImGui::Text("Cannot save state in current mode.");
-			ImGui::Text("Possible reasons:");
-			ImGui::BulletText("No game loaded");
-			ImGui::BulletText("Network play active");
-			ImGui::BulletText("Multi-board arcade mode");
+			ImGui::TextUnformatted(T("Cannot save state in current mode."));
+			ImGui::TextUnformatted(T("Possible reasons:"));
+			ImGui::BulletText("%s", T("No game loaded"));
+			ImGui::BulletText("%s", T("Network play active"));
+			ImGui::BulletText("%s", T("Multi-board arcade mode"));
 			ImGui::NewLine();
-			if (ImGui::Button("OK", ImVec2(120, 0)))
+			if (ImGui::Button(T("OK"), ImVec2(120, 0)))
 			{
 				ImGui::CloseCurrentPopup();
 			}
@@ -733,7 +738,7 @@ static void gui_display_commands()
 			}
 		}
 			// Settings
-			if (ImGui::Button(ICON_FA_GEAR "  Settings", ScaledVec2(buttonWidth, 50)))
+			if (ImGui::Button((std::string(ICON_FA_GEAR "  ") + T("Settings")).c_str(), ScaledVec2(buttonWidth, 50)))
 			{
 				gui_setState(GuiState::Settings);
 			}
@@ -797,8 +802,9 @@ void error_popup()
 		ImVec2 padding = ScaledVec2(20, 20);
 		ImguiStyleVar _(ImGuiStyleVar_WindowPadding, padding);
 		ImguiStyleVar _1(ImGuiStyleVar_ItemSpacing, padding);
-		ImGui::OpenPopup("Error");
-		if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar))
+		ImGui::OpenPopup(Tnop("Error"));
+		const std::string errorPopup = std::string(T("Error")) + "###Error";
+		if (ImGui::BeginPopupModal(errorPopup.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar))
 		{
 			ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + uiScaled(400.f));
 			ImGui::TextWrapped("%s", error_msg.c_str());
@@ -826,8 +832,9 @@ static void contentpath_warning_popup()
 
     if (scanner.content_path_looks_incorrect)
     {
-        ImGui::OpenPopup(T("Incorrect Content Location?"));
-        if (ImGui::BeginPopupModal(T("Incorrect Content Location?"), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
+        ImGui::OpenPopup(Tnop("Incorrect Content Location?"));
+        const std::string incorrectContentPopup = std::string(T("Incorrect Content Location?")) + "###Incorrect Content Location?";
+        if (ImGui::BeginPopupModal(incorrectContentPopup.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
         {
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + uiScaled(400.f));
             ImGui::TextWrapped((std::string("  ") + T("Scanned %d folders but no game can be found!") + std::string("  ")).c_str(), scanner.empty_folders_scanned);
@@ -1629,7 +1636,8 @@ void gui_display_profiler()
 	gui_newFrame();
 	ImGui::NewFrame();
 
-	ImGui::Begin("Profiler", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground);
+	const std::string profilerWindowTitle = std::string(T("Profiler")) + "###Profiler";
+	ImGui::Begin(profilerWindowTitle.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground);
 
 	{
 		ImguiStyleColor _(ImGuiCol_Text, ImVec4(0.8f, 0.8f, 0.8f, 1.0f));
@@ -1692,7 +1700,7 @@ void fatal_error(const char* text, ...)
     va_end(args);
     ERROR_LOG(COMMON, "%s", temp);
 
-    os_notify("Fatal Error", 20000, temp);
+    os_notify(T("Fatal Error"), 20000, temp);
 }
 
 extern bool subfolders_read;
@@ -1739,7 +1747,7 @@ void gui_loadState(bool inRam)
 		// User feedback when load not allowed
 		WARN_LOG(COMMON, "Load state not allowed: network=%d, multiboard=%d",
 				 settings.network.online, settings.naomi.multiboard);
-		os_notify("Cannot load state during online play", 3000);
+		os_notify(T("Cannot load state during online play"), 3000);
 	}
 }
 
@@ -1942,20 +1950,20 @@ static void clearThumbnailCache()
 static std::string format_save_state_menu_time(time_t timestamp)
 {
 	if (timestamp <= 0)
-		return "Unknown";
+		return T("Unknown");
 
 	struct tm tmInfo {};
 #ifdef _WIN32
 	if (localtime_s(&tmInfo, &timestamp) != 0)
-		return "Unknown";
+		return T("Unknown");
 #else
 	if (localtime_r(&timestamp, &tmInfo) == nullptr)
-		return "Unknown";
+		return T("Unknown");
 #endif
 
 	char timeStr[64];
 	if (strftime(timeStr, sizeof(timeStr), "%m/%d/%Y %I:%M %p", &tmInfo) == 0)
-		return "Unknown";
+		return T("Unknown");
 
 	return timeStr;
 }
@@ -1977,9 +1985,10 @@ void render_save_state_slots(bool isSaving)
 
         hasEntries = true;
 
-        std::string dateStr = isEmpty ? "Empty" : format_save_state_menu_time(timestamp);
-        std::string label = (isSaving ? "Save Slot " : "Load Slot ")
-                          + std::to_string(slot + 1) + " (" + dateStr + ")";
+        std::string dateStr = isEmpty ? T("Empty") : format_save_state_menu_time(timestamp);
+        std::string label = isSaving
+                          ? strprintf(T("Save Slot %d (%s)"), slot + 1, dateStr.c_str())
+                          : strprintf(T("Load Slot %d (%s)"), slot + 1, dateStr.c_str());
 
         draw_save_state_menu_thumbnail(slot, thumbnailSize);
         ImGui::SameLine(0, uiScaled(6.0f));
@@ -1995,7 +2004,7 @@ void render_save_state_slots(bool isSaving)
     }
 
     if (!isSaving && !hasEntries) {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No Save States");
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", T("No Save States"));
     }
 }
 
