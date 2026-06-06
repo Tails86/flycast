@@ -347,7 +347,7 @@ void renderHelpMenu()
 
 		ImGui::Separator();
 
-		if (ImGui::MenuItem("About Flycast", nullptr, false, true))
+		if (ImGui::MenuItem("About Hollycast", nullptr, false, true))
 		{
 			gui_prepare_settings_tab(GuiSettingsTab::About);
 			gui_setState(GuiState::Settings);

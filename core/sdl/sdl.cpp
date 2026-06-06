@@ -1,3 +1,5 @@
+// Portions Copyright 2026 The Hollycast Authors
+
 #if defined(USE_SDL)
 #include "types.h"
 #include "cfg/cfg.h"
@@ -121,7 +123,7 @@ static void setWindowTitleGame()
 		else
 			title = settings.content.title;
 	}
-	SDL_SetWindowTitle(window, ("Flycast - " + title).c_str());
+	SDL_SetWindowTitle(window, ("Hollycast - " + title).c_str());
 }
 
 static void captureMouse(bool capture)
@@ -144,7 +146,7 @@ static void captureMouse(bool capture)
 		{
 			if (config::UseRawInput)
 				SDL_ShowCursor(SDL_DISABLE);
-			SDL_SetWindowTitle(window, "Flycast - mouse capture");
+			SDL_SetWindowTitle(window, "Hollycast - mouse capture");
 			mouseCaptured = true;
 		}
 	}
@@ -155,7 +157,7 @@ static void emuEventCallback(Event event, void *)
 	switch (event)
 	{
 	case Event::Terminate:
-		SDL_SetWindowTitle(window, "Flycast");
+		SDL_SetWindowTitle(window, "Hollycast");
 		sdl_stopHaptic(0);
 		break;
 	case Event::Pause:
@@ -821,7 +823,7 @@ bool sdl_recreate_window(u32 flags)
 	flags |= SDL_WINDOW_FULLSCREEN;
 #endif
 
-	window = SDL_CreateWindow("Flycast", windowPos.x, windowPos.y,
+	window = SDL_CreateWindow("Hollycast", windowPos.x, windowPos.y,
 			windowPos.w * hdpiScaling, windowPos.h * hdpiScaling, flags);
 	if (window == nullptr)
 	{
@@ -953,7 +955,7 @@ void sdl_window_create()
 	try {
 		initRenderApi();
 	} catch (const FlycastException& e) {
-		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, i18n::T("Flycast Error"), e.what(), nullptr);
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, i18n::T("Hollycast Error"), e.what(), nullptr);
 		throw;
 	}
 	// ImGui copy & paste
