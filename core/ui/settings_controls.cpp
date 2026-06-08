@@ -58,19 +58,6 @@ static char *maple_device_types[] =
 //	Tnop("Dreameye"),
 };
 
-constexpr int MDT_DreamPotato = 100;
-constexpr int MDT_DreamLink = 101;
-
-static char *maple_expansion_device_types[] =
-{
-	Tnop("None"),
-	Tnop("Sega VMU"),
-	Tnop("Vibration Pack"),
-	Tnop("Microphone"),
-	Tnop("DreamPotato"),
-	Tnop("DreamLink"), // not shown unless a DreamLink controller is present
-};
-
 static const char *maple_device_name(MapleDeviceType type)
 {
 	switch (type)
@@ -144,26 +131,6 @@ static MapleDeviceType maple_device_type_from_index(int idx)
 	case 0:
 	default:
 		return MDT_None;
-	}
-}
-
-static const char *maple_expansion_device_name(MapleDeviceType type)
-{
-	switch ((int)type)
-	{
-	case MDT_SegaVMU:
-		return maple_expansion_device_types[1];
-	case MDT_PurupuruPack:
-		return maple_expansion_device_types[2];
-	case MDT_Microphone:
-		return maple_expansion_device_types[3];
-	case MDT_DreamPotato:
-		return maple_expansion_device_types[4];
-	case MDT_DreamLink:
-		return maple_expansion_device_types[5];
-	case MDT_None:
-	default:
-		return maple_expansion_device_types[0];
 	}
 }
 
@@ -299,34 +266,12 @@ static void staticInit()
 	inited = true;
 	for (auto& label : maple_device_types)
 		label = (char *)T(label);
-	for (auto& label : maple_expansion_device_types)
-		label = (char *)T(label);
 	maple_ports[0] = (char *)T(maple_ports[0]);
 	maple_ports[5] = (char *)T(maple_ports[5]);
 	for (auto&  button : dcButtons)
 		button.name = (char *)T(button.name);
 	for (auto&  button : arcadeButtons)
 		button.name = (char *)T(button.name);
-}
-
-static MapleDeviceType maple_expansion_device_type_from_index(int idx)
-{
-	switch (idx)
-	{
-	case 1:
-		return MDT_SegaVMU;
-	case 2:
-		return MDT_PurupuruPack;
-	case 3:
-		return MDT_Microphone;
-	case 4:
-		return (MapleDeviceType)MDT_DreamPotato;
-	case 5:
-		return (MapleDeviceType)MDT_DreamLink;
-	case 0:
-	default:
-		return MDT_None;
-	}
 }
 
 static std::shared_ptr<GamepadDevice> currentGamepad;
@@ -975,7 +920,7 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 		{
 			ImGui::TableSetupColumn(T("System"), ImGuiTableColumnFlags_WidthFixed);
 			ImGui::TableSetupColumn(T("Name"), ImGuiTableColumnFlags_WidthStretch);
-			ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+			ImGui::TableSetupColumn(T("Status"), ImGuiTableColumnFlags_WidthFixed);
 			ImGui::TableSetupColumn(T("Port"), ImGuiTableColumnFlags_WidthFixed);
 			ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
 
@@ -988,6 +933,9 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 
 			ImGui::TableSetColumnIndex(1);
 			ImGui::TextColored(gray, "%s", T("Name"));
+
+			ImGui::TableSetColumnIndex(2);
+			ImGui::TextColored(gray, "%s", T("Status"));
 
 			ImGui::TableSetColumnIndex(3);
 			ImGui::TextColored(gray, "%s", T("Port"));
@@ -1008,7 +956,7 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 				ImGui::TableSetColumnIndex(2);
 				DreamLinkGamepad* dreamLinkGamepad = dynamic_cast<DreamLinkGamepad*>(gamepad.get());
 				if (dreamLinkGamepad != nullptr) {
-					ImGui::Text(T("DreamLink: %s"), dreamLinkGamepad->dreamLinkStatus());
+					ImGui::Text(T("%s"), dreamLinkGamepad->dreamLinkStatus());
 				}
 #endif
 
@@ -1077,30 +1025,61 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 		if (ImGui::BeginTable("dreamcastDevices", 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings,
 				ImVec2(0, 0), uiScaled(8)))
 		{
+			const float comboWidthPadding = ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetFrameHeight();
+			float mainComboWidth = 0;
+			for (int i = 0; i < IM_ARRAYSIZE(maple_device_types); i++)
+			{
+				mainComboWidth = std::max(
+					ImGui::CalcTextSize(maple_device_types[i]).x + comboWidthPadding,
+					mainComboWidth
+				);
+			}
+
 			// DreamLink device names for main device
 			const char* dream_link_names[MAPLE_PORTS]{};
 			for (int bus = 0; bus < MAPLE_PORTS; bus++)
 			{
 				auto link = MapleLinkRegistry::GetMapleLink(bus, MAPLE_MAIN_DEV_IDX); // Registered controller, if any
 				if (link && (link->dreamlink->getIssueDescription() == nullptr))
+				{
 					dream_link_names[bus] = link->dreamlink->getName();
+					mainComboWidth = std::max(
+						ImGui::CalcTextSize(dream_link_names[bus]).x + comboWidthPadding,
+						mainComboWidth
+					);
+				}
 				else
+				{
 					dream_link_names[bus] = "";
+				}
 			}
 
-			const float mainComboWidth = std::max(
-				calcComboWidth((const char **)maple_device_types, std::size(maple_device_types)),
-				calcComboWidth((const char **)dream_link_names, std::size(dream_link_names))
-			);
-			const float expComboWidth = calcComboWidth((const char **)maple_expansion_device_types, std::size(maple_expansion_device_types));
+			// Externally managed expansion device types
+			static constexpr int MDT_DreamPotato = MDT_Count;
+			static constexpr int MDT_DreamLink = MDT_Count + 1;
+
+			struct MapleExpansionDeviceDesc
+			{
+				int deviceType;
+				const char* name;
+			};
+
+			std::list<MapleExpansionDeviceDesc> maple_expansion_device_types = {
+				{MDT_None, T("None")},
+				{MDT_SegaVMU, T("Sega VMU")},
+				{MDT_PurupuruPack, T("Vibration Pack")},
+				{MDT_Microphone, T("Microphone")},
+				{MDT_DreamPotato, T("DreamPotato")},
+			};
 
 			for (int bus = 0; bus < MAPLE_PORTS; bus++)
 			{
-				const bool has_dream_link = (*dream_link_names[bus] != '\0');
+				const char* dream_link_name = dream_link_names[bus];
+				const bool has_dream_link = (*dream_link_name != '\0');
 				const char* selected_name = nullptr;
 
 				if (has_dream_link)
-					selected_name = dream_link_names[bus];
+					selected_name = dream_link_name;
 				else
 					selected_name = maple_device_name(config::MapleMainDevices[bus]);
 
@@ -1143,13 +1122,17 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 				{
 					ImGui::EndDisabled();
 					port_count = 2;
-					port_type_count = IM_ARRAYSIZE(maple_expansion_device_types);
+					maple_expansion_device_types.push_back({MDT_DreamLink, dream_link_name});
 				}
 				else
 				{
 					port_count = maple_getPortCount(config::MapleMainDevices[bus]);
-					// Remove DreamLink as an option
-					port_type_count = IM_ARRAYSIZE(maple_expansion_device_types) - 1;
+				}
+
+				float expComboWidth = comboWidthPadding;
+				for (const auto& devIter : maple_expansion_device_types)
+				{
+					expComboWidth = std::max(ImGui::CalcTextSize(devIter.name).x + comboWidthPadding, expComboWidth);
 				}
 
 				for (int port = 0; port < port_count; port++)
@@ -1168,14 +1151,22 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 						subtype = MDT_DreamLink;
 					}
 
-					if (ImGui::BeginCombo(device_name, maple_expansion_device_name((MapleDeviceType)subtype), ImGuiComboFlags_None))
+					auto selectedDevIter = std::find_if(
+						maple_expansion_device_types.begin(),
+						maple_expansion_device_types.end(),
+						[subtype](const MapleExpansionDeviceDesc& dev){return subtype == dev.deviceType;}
+					);
+					if (selectedDevIter == maple_expansion_device_types.end())
+						selectedDevIter = maple_expansion_device_types.begin(); // Use None as default
+
+					if (ImGui::BeginCombo(device_name, selectedDevIter->name, ImGuiComboFlags_None))
 					{
-						for (int i = 0; i < port_type_count; i++)
+						for (const auto& devIter : maple_expansion_device_types)
 						{
-							bool is_selected = subtype == maple_expansion_device_type_from_index(i);
-							if (ImGui::Selectable(maple_expansion_device_types[i], &is_selected))
+							bool is_selected = (subtype == devIter.deviceType);
+							if (ImGui::Selectable(devIter.name, &is_selected))
 							{
-								subtype = maple_expansion_device_type_from_index(i);
+								subtype = devIter.deviceType;
 								if (subtype == MDT_DreamLink) {
 									config::DreamLinkSelect[bus][port] = true;
 								}
