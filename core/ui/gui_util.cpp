@@ -840,7 +840,8 @@ void ImguiVmuTexture::displayVmus(const ImVec2& pos)
 {
 	const ScaledVec2 size(VMU_WIDTH, VMU_HEIGHT);
 	const float padding = uiScaled(VMU_PADDING);
-	ImDrawList *dl = ImGui::GetForegroundDrawList();
+	assert((ImGui::GetCurrentWindow()->Flags & ImGuiWindowFlags_ChildWindow) == 0);
+	ImDrawList *dl = ImGui::GetWindowDrawList();
 	ImVec2 cpos(pos + ScaledVec2(2.f, 0));	// 96 pixels wide + 2 * 2 -> 100
 	for (int i = 0; i < 8; i++)
 	{
@@ -1637,7 +1638,7 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
             ImGui::PushID("SliderTypedValue");
             if (ImGui::IsWindowAppearing())
                 ImGui::SetKeyboardFocusHere();
-            const bool typedChanged = ImGui::InputInt("##TypedValue", &typedValue, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue);
+            const bool typedChanged = ImGui::InputInt("##TypedValue", &typedValue, 0, 0);
             const bool accept = typedChanged || ImGui::IsItemDeactivatedAfterEdit();
             ImGui::PopID();
 

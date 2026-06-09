@@ -40,7 +40,8 @@ bool DXContext::init(bool keepCurrentWindow)
 	}
 #endif
 
-	decltype(Direct3DCreate9) *pDirect3DCreate9 = d3d9Library.getFunc("Direct3DCreate9", pDirect3DCreate9);
+	decltype(Direct3DCreate9) *pDirect3DCreate9 = nullptr;
+	pDirect3DCreate9 = d3d9Library.getFunc("Direct3DCreate9", pDirect3DCreate9);
 	if (pDirect3DCreate9 == nullptr)
 	{
 		ERROR_LOG(RENDERER, "Cannot load D3D9.DLL");
@@ -131,12 +132,7 @@ void DXContext::Present()
 		if (swapOnVSync != (!settings.input.fastForwardMode && config::VSync))
 		{
 			DEBUG_LOG(RENDERER, "Switch vsync %d", !swapOnVSync);
-			if (renderer != nullptr)
-			{
-				renderer->Term();
-				delete renderer;
-				renderer = nullptr;
-			}
+			rend_term_renderer();
 			term();
 			if (init(true))
 			{
