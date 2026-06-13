@@ -385,6 +385,18 @@ enum class LibraryImageSourceMode
 	CurrentArtworkThenVmu = 3,
 };
 
+enum class LibraryCoverMediaMode
+{
+	CurrentArtwork = 0,
+	MixImage = 1,
+	Cover = 2,
+	Case = 3,
+	Screenshot = 4,
+	Title = 5,
+	Physical = 6,
+	Count = 7,
+};
+
 enum class VmuIconPlaybackMode
 {
 	Static = 0,
@@ -393,6 +405,7 @@ enum class VmuIconPlaybackMode
 
 extern Option<int, false> LibraryDisplayStyle;
 extern Option<int, false> LibraryImageSource;
+extern Option<int, false> LibraryCoverMedia;
 extern Option<int, false> LibraryIconScale;
 extern Option<int, false> VmuIconMode;
 extern Option<int, false> UIScaling;
@@ -526,6 +539,7 @@ extern Option<bool> OpenGlChecks;
 extern Option<std::vector<std::string>, false> ContentPath;
 extern Option<std::vector<std::string>, false> BiosPath;
 extern Option<std::string, false> VMUPath;
+extern Option<std::string, false> GameListPath;
 extern Option<std::vector<std::string>, false> SavestatePath;
 extern Option<std::string, false> SavePath;
 extern Option<std::vector<std::string>, false> TexturePath;

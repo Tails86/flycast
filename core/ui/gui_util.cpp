@@ -22,6 +22,7 @@
 #include <vector>
 #include <algorithm>
 #include <cstdlib>
+#include <memory>
 
 #include "types.h"
 #include "stdclass.h"
@@ -30,6 +31,7 @@
 #include "oslib/storage.h"
 #include "oslib/http_client.h"
 #include "oslib/i18n.h"
+#include "stbi.h"
 #include "imgui_driver.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -721,15 +723,13 @@ bool ImguiTexture::button(const char* str_id, const ImVec2& image_size, const st
 
 static u8 *loadImage(const std::string& path, int& width, int& height)
 {
-	FILE *file = nowide::fopen(path.c_str(), "rb");
+	std::unique_ptr<hostfs::File> file(hostfs::storage().openFile(path, "rb"));
 	if (file == nullptr)
 		return nullptr;
 
 	int channels;
 	stbi_set_flip_vertically_on_load_thread(0);
-	u8 *imgData = stbi_load_from_file(file, &width, &height, &channels, STBI_rgb_alpha);
-	std::fclose(file);
-	return imgData;
+	return stbi_load_from_file(file.get(), &width, &height, &channels, STBI_rgb_alpha);
 }
 
 int ImguiFileTexture::textureLoadCount;

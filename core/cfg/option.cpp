@@ -46,6 +46,7 @@ Option<bool, false> BoxartDisplayMode("BoxartDisplayMode", true);
 Option<int, false> BoxartSourceMode("BoxartSourceMode", 0);
 Option<int, false> LibraryDisplayStyle("Dreamcast.LibraryDisplayStyle", 0);
 Option<int, false> LibraryImageSource("Dreamcast.LibraryImageSource", 0);
+Option<int, false> LibraryCoverMedia("Dreamcast.LibraryCoverMedia", 0);
 Option<int, false> LibraryIconScale("Dreamcast.LibraryIconScale", 100);
 Option<int, false> VmuIconMode("Dreamcast.VmuIconMode", 0);
 Option<int, false> UIScaling("UIScaling", 100);
@@ -150,6 +151,7 @@ Option<bool> OpenGlChecks("OpenGlChecks", false, "validate");
 Option<std::vector<std::string>, false> ContentPath("Dreamcast.ContentPath");
 Option<std::vector<std::string>, false> BiosPath("Dreamcast.BiosPath");
 Option<std::string, false> VMUPath("Dreamcast.VMUPath");
+Option<std::string, false> GameListPath("Dreamcast.GameListPath");
 #ifdef DREAMPOTATO_INTEGRATED_MODE
 Option<std::string, false> DreamPotatoFolderPath("Dreamcast.DreamPotatoPath");
 #endif

@@ -193,7 +193,8 @@ json loadIconCache(const std::string& path)
 		};
 
 	try {
-		json j = json::parse(data.begin(), data.end());
+		const char *jsonStart = reinterpret_cast<const char *>(data.data());
+		json j = json::parse(jsonStart, jsonStart + data.size());
 		if (!j.contains("games") || !j["games"].is_object())
 			j["games"] = json::object();
 		j["version"] = 1;

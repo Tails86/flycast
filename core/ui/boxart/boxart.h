@@ -1,5 +1,6 @@
 /*
 	Copyright 2022 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -24,6 +25,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <array>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -42,20 +44,23 @@ class Boxart
 public:
 	GameBoxart getBoxartAndLoad(const GameMedia& media);
 	GameBoxart getBoxart(const GameMedia& media);
+	std::string getLibraryCoverMediaPath(const GameMedia& media);
+	std::string getCustomMediaPath(const GameMedia& media, config::LibraryCoverMediaMode mediaMode);
 	void term();
 	void refreshCustomBoxartIndex(bool force = false);
 
 private:
 	GameBoxart getPhysicalBoxart(const GameMedia& media);
 	std::string getCustomBoxartPath(const GameMedia& media);
+	std::string getCustomBoxartPathForMediaMode(const GameMedia& media, config::LibraryCoverMediaMode mediaMode);
 	bool shouldFetchOnline() const;
 	void loadDatabase();
 	void saveDatabase();
 	std::string getSaveDirectory() const {
-		// *must* end with a path separator
+		// File-system paths must end with a separator; Android SAF URIs must stay unchanged.
 		if (!config::BoxartPath.get().empty()) {
 			std::string path = config::BoxartPath.get();
-			if (!path.empty() && path.back() != '/' && path.back() != '\\')
+			if (!path.empty() && path.find("content://") != 0 && path.back() != '/' && path.back() != '\\')
 				path += '/';
 			return path;
 		}
@@ -63,9 +68,11 @@ private:
 	}
 	void fetchBoxart();
 
+	using CustomBoxartIndex = std::array<std::unordered_map<std::string, std::string>,
+			static_cast<size_t>(config::LibraryCoverMediaMode::Count)>;
 	std::unordered_map<std::string, GameBoxart> games;
 	std::unordered_map<std::string, GameBoxart> physicalCache;
-	std::unordered_map<std::string, std::string> customBoxartByName;
+	CustomBoxartIndex customBoxartByName;
 	std::string customBoxartRoot;
 	std::mutex mutex;
 	std::unique_ptr<Scraper> scraper;

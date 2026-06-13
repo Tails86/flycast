@@ -1611,7 +1611,8 @@ static void RenderGeneralInfoRow(const char* id, const char* icon, const char* l
 		ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 }
 
-static void manageSinglePath(const char* label, config::Option<std::string, false>& pathOption, const char* helpText)
+static void manageSinglePath(const char* label, config::Option<std::string, false>& pathOption, const char* helpText,
+		bool selectFile = false, const std::string& extension = "")
 {
 	ImGui::PushID(label);
 	const bool rowActivated = BeginTwoLineSettingRow("##row", helpText);
@@ -1661,9 +1662,25 @@ static void manageSinglePath(const char* label, config::Option<std::string, fals
 		if (!cancelled)
 			pathOption.get() = selection;
 		return true;
-	});
+	}, selectFile, extension);
+#ifdef __ANDROID__
+	if (openPopup)
+	{
+		const StoragePopupResult storageResult = select_storage_popup(!selectFile, false, popupName, [&pathOption](bool cancelled, const std::string& selection) {
+			if (!cancelled)
+			{
+				pathOption.get() = selection;
+				SaveSettings();
+			}
+			return true;
+		}, selectFile ? "*/*" : "");
+		if (storageResult == StoragePopupResult::Unsupported)
+			ImGui::OpenPopup(popupName.c_str());
+	}
+#else
 	if (openPopup)
 		ImGui::OpenPopup(popupName.c_str());
+#endif
 }
 
 static void managePathList(const char* label, const std::string& singularLabel, std::vector<std::string>& paths, const char* helpText)
@@ -2506,8 +2523,8 @@ void renderGeneralTab()
 				"##row",
 				T(
 					"Custom Boxart Folder\n"
-					"Folder containing custom box art images (png/jpg).\n"
-					"File names should match game names.\n"
+					"Folder containing custom box art or custom media images (png/jpg).\n"
+					"Files and supported media subfolders should match game names.\n"
 					"Use Refresh to rescan artwork sources."
 				)
 			);
@@ -2556,20 +2573,47 @@ void renderGeneralTab()
 			RenderGeneralRightValue(T("Set Path"), 280.0f, 0.0f, true);
 		}
 
-		RenderTwoLineSettingDescription(line1Start, T("Folder containing custom box art images (png/jpg). File names should match game names"));
+		RenderTwoLineSettingDescription(line1Start, T("Folder containing custom box art/media images (png/jpg). File names should match game names."));
 		ImGui::PopID();
 		ImGui::Spacing();
 		if (g_twoLineRowExtraGapPx > 0.0f)
 			ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 
 		const std::string popupName = T("Select Custom Boxart Folder");
+#ifdef __ANDROID__
+		const auto isRawAndroidStoragePath = [](const std::string& path) {
+			return path.find("/storage/") == 0 || path.find("/sdcard/") == 0;
+		};
+		if (refreshPressed && isRawAndroidStoragePath(config::BoxartPath.get()))
+		{
+			openPopup = true;
+			refreshPressed = false;
+		}
+#else
 		select_file_popup(popupName.c_str(), [](bool cancelled, const std::string& selection) {
 			if (!cancelled)
 				config::BoxartPath.get() = selection;
 			return true;
 		}, false, "");
+#endif
+#ifdef __ANDROID__
+		if (openPopup)
+		{
+			const StoragePopupResult storageResult = select_storage_popup(true, false, popupName, [](bool cancelled, const std::string& selection) {
+				if (!cancelled)
+				{
+					config::BoxartPath.get() = selection;
+					SaveSettings();
+				}
+				return true;
+			});
+			if (storageResult == StoragePopupResult::Unsupported)
+				ImGui::OpenPopup(popupName.c_str());
+		}
+#else
 		if (openPopup)
 			ImGui::OpenPopup(popupName.c_str());
+#endif
 
 		static std::string lastBoxartPath;
 		if (lastBoxartPath != config::BoxartPath.get())
@@ -2623,6 +2667,33 @@ void renderGeneralTab()
 			"Library Image Source\n"
 			"Controls which icon source the table/list view uses for each row.\n"
 			"VMU icon options use the selected normal artwork fallback until a game has cached VMU icons.");
+
+		static const char* libraryCoverMediaSources[] = {
+			"Current Artwork",
+			"Mix Image",
+			"Cover",
+			"Case",
+			"Screenshot",
+			"Title",
+			"Physical",
+		};
+		SettingsUI::PopupConfig libraryCoverMediaCfg {};
+		libraryCoverMediaCfg.type = SettingsUI::PopupType::Options;
+		libraryCoverMediaCfg.options.label = "What Media To Use For Library Covers";
+		libraryCoverMediaCfg.options.icon = ICON_FA_IMAGE;
+		libraryCoverMediaCfg.options.popupID = "LibraryCoverMediaPopup";
+		libraryCoverMediaCfg.options.options = libraryCoverMediaSources;
+		libraryCoverMediaCfg.options.optionCount = IM_ARRAYSIZE(libraryCoverMediaSources);
+		libraryCoverMediaCfg.options.currentValue = &config::LibraryCoverMedia.get();
+		libraryCoverMediaCfg.options.valueWidth = 240.0f;
+		libraryCoverMediaCfg.options.onChange = [](int) { return true; };
+		RenderGeneralPopupSettingRow(
+			"LibraryCoverMedia",
+			"Choose local media type for library covers.",
+			libraryCoverMediaCfg,
+			"What Media To Use For Library Covers\n"
+			"Select the local media type used when loading local custom media for library covers.\n"
+			"Hollycast will look for matching Skraper/custom media folders inside the configured custom media root.");
 
 		static const char* vmuIconModes[] = { "Static", "Active / Animated" };
 		SettingsUI::PopupConfig vmuIconModeCfg {};
@@ -2918,6 +2989,18 @@ void renderGeneralTab()
 		);
 		ImGui::Spacing();
 #endif
+
+		manageSinglePath(T("Gamelist XML"), config::GameListPath,
+			T(
+				"Gamelist XML\n"
+				"Path to an ES-DE / EmulationStation `gamelist.xml` file.\n\n"
+				"Metadata (description, developer, publisher, genre, players, release date, manual path) from matching ROM entries is loaded into each game's metadata.\n"
+				"This does not affect ROM scanning by itself."
+			),
+			true,
+			"xml"
+		);
+		ImGui::Spacing();
 
 		managePathList(T("Texture Pack Folders"), T("Texture Pack Folder"), config::TexturePath.get(),
 			T(

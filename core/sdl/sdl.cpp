@@ -371,6 +371,14 @@ void input_sdl_handle()
 							return (sdl_keyboard->get_input_mapping()->get_button_id(0, inputSet) != EMU_BTN_NONE);
 						}
 					};
+
+#if defined(__ANDROID__)
+					if (event.key.keysym.scancode == SDL_SCANCODE_AC_BACK)
+					{
+						gui_keyboard_key(0x29, event.type == SDL_KEYDOWN);
+						break;
+					}
+#endif
 					if (event.type == SDL_KEYDOWN)
 					{
 						// Alt-Return and F11 toggle full screen

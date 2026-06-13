@@ -1,5 +1,6 @@
 /*
 	Copyright 2022 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -23,7 +24,12 @@
 #include "oslib/storage.h"
 #include "cfg/option.h"
 #include "arcade_scraper.h"
+#include <algorithm>
+#include <array>
 #include <chrono>
+#include <cctype>
+#include <cstring>
+#include <string_view>
 
 namespace {
 
@@ -65,6 +71,115 @@ std::string normalizeBoxartKey(const std::string& value)
 std::string makeBoxartKey(const std::string& filepath)
 {
 	return normalizeBoxartKey(get_file_basename(filepath));
+}
+
+int hexValue(char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
+std::string decodeUriComponent(const std::string& value)
+{
+	std::string decoded;
+	decoded.reserve(value.size());
+	for (size_t i = 0; i < value.size(); ++i)
+	{
+		if (value[i] == '%' && i + 2 < value.size())
+		{
+			const int hi = hexValue(value[i + 1]);
+			const int lo = hexValue(value[i + 2]);
+			if (hi >= 0 && lo >= 0)
+			{
+				decoded.push_back(static_cast<char>((hi << 4) | lo));
+				i += 2;
+				continue;
+			}
+		}
+		decoded.push_back(value[i]);
+	}
+	return decoded;
+}
+
+std::string getAndroidDocumentId(const std::string& uri, const char* marker)
+{
+	const std::string decoded = decodeUriComponent(uri);
+	const size_t markerPos = decoded.find(marker);
+	if (markerPos == std::string::npos)
+		return {};
+	const size_t idStart = markerPos + std::strlen(marker);
+	const size_t idEnd = std::strcmp(marker, "/tree/") == 0 ? decoded.find("/document/", idStart) : std::string::npos;
+	return decoded.substr(idStart, idEnd == std::string::npos ? std::string::npos : idEnd - idStart);
+}
+
+std::string getFolderFirstComponent(const std::string& root, const std::string& path)
+{
+	if (root.find("content://") == 0 || path.find("content://") == 0)
+	{
+		const std::string rootId = getAndroidDocumentId(root, "/tree/");
+		const std::string pathId = getAndroidDocumentId(path, "/document/");
+		if (rootId.empty() || pathId.size() <= rootId.size() || pathId.compare(0, rootId.size(), rootId) != 0)
+			return {};
+		std::string relative = pathId.substr(rootId.size());
+		while (!relative.empty() && relative.front() == '/')
+			relative.erase(relative.begin());
+		const size_t slash = relative.find('/');
+		return slash == std::string::npos ? std::string{} : relative.substr(0, slash);
+	}
+
+	if (path.size() <= root.size() || path.compare(0, root.size(), root) != 0)
+		return {};
+
+	std::string relative = path.substr(root.size());
+	while (!relative.empty() && (relative.front() == '/' || relative.front() == '\\'))
+		relative.erase(relative.begin());
+	const size_t slash = relative.find_first_of("/\\");
+	return slash == std::string::npos ? std::string{} : relative.substr(0, slash);
+}
+
+struct MediaFolderAlias
+{
+	config::LibraryCoverMediaMode mode;
+	std::vector<std::string_view> aliases;
+};
+
+std::string toLowerString(std::string_view value)
+{
+	std::string lower(value);
+	std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+		return static_cast<char>(std::tolower(c));
+	});
+	return lower;
+}
+
+const MediaFolderAlias* findMediaFolderAlias(const std::string& folder)
+{
+	static const std::array<MediaFolderAlias, 6> mediaAliases{
+		MediaFolderAlias {config::LibraryCoverMediaMode::MixImage,
+				{"miximg", "miximgs", "miximage", "miximages", "mix", "mixrbv1", "image", "images"}},
+		MediaFolderAlias {config::LibraryCoverMediaMode::Cover,
+				{"box2dfront", "cover", "covers", "boxfront", "box-2d", "box2d"}},
+		MediaFolderAlias {config::LibraryCoverMediaMode::Case,
+				{"boxtexture", "box-texture", "boxtextures", "case", "cases", "insert", "3dbox", "3dboxes", "box3d"}},
+		MediaFolderAlias {config::LibraryCoverMediaMode::Screenshot,
+				{"screenshots", "screenshot", "ss", "sstitle", "titlescreen", "titlescreens"}},
+		MediaFolderAlias {config::LibraryCoverMediaMode::Title,
+				{"wheelhd", "wheel-hd", "wheel", "wheels", "marquee", "marquees", "screenmarquee", "screenmarqueesmall", "title"}},
+		MediaFolderAlias {config::LibraryCoverMediaMode::Physical,
+				{"support2d", "support-2d", "supporttexture", "support-texture", "support", "physical", "physicalmedia", "physical-media", "disc"}},
+	};
+
+	const std::string folderLower = toLowerString(folder);
+	for (const MediaFolderAlias& aliasGroup : mediaAliases)
+		for (const std::string_view alias : aliasGroup.aliases)
+			if (folderLower == alias)
+				return &aliasGroup;
+	return nullptr;
 }
 
 bool isGeneratedVmuIconPath(const std::string& root, const std::string& path)
@@ -201,6 +316,30 @@ GameBoxart Boxart::getPhysicalBoxart(const GameMedia& media)
 
 std::string Boxart::getCustomBoxartPath(const GameMedia& media)
 {
+	return getCustomBoxartPathForMediaMode(media, config::LibraryCoverMediaMode::CurrentArtwork);
+}
+
+std::string Boxart::getLibraryCoverMediaPath(const GameMedia& media)
+{
+	const auto coverMediaMode = static_cast<config::LibraryCoverMediaMode>(config::LibraryCoverMedia.get());
+	if (coverMediaMode == config::LibraryCoverMediaMode::CurrentArtwork)
+		return {};
+	if (static_cast<size_t>(coverMediaMode) >= customBoxartByName.size())
+		return {};
+	return getCustomBoxartPathForMediaMode(media, coverMediaMode);
+}
+
+std::string Boxart::getCustomMediaPath(const GameMedia& media, config::LibraryCoverMediaMode mediaMode)
+{
+	return getCustomBoxartPathForMediaMode(media, mediaMode);
+}
+
+std::string Boxart::getCustomBoxartPathForMediaMode(const GameMedia& media, config::LibraryCoverMediaMode mediaMode)
+{
+	const size_t modeIndex = static_cast<size_t>(mediaMode);
+	if (modeIndex >= customBoxartByName.size())
+		return {};
+
 	refreshCustomBoxartIndex(false);
 
 	const std::string fileKey = makeBoxartKey(media.fileName);
@@ -208,22 +347,23 @@ std::string Boxart::getCustomBoxartPath(const GameMedia& media)
 	const std::string gameNameKey = makeBoxartKey(media.gameName);
 
 	std::lock_guard<std::mutex> guard(mutex);
+	const auto& mediaIndex = customBoxartByName[modeIndex];
 	if (!fileKey.empty())
 	{
-		auto it = customBoxartByName.find(fileKey);
-		if (it != customBoxartByName.end())
+		auto it = mediaIndex.find(fileKey);
+		if (it != mediaIndex.end())
 			return it->second;
 	}
 	if (!nameKey.empty())
 	{
-		auto it = customBoxartByName.find(nameKey);
-		if (it != customBoxartByName.end())
+		auto it = mediaIndex.find(nameKey);
+		if (it != mediaIndex.end())
 			return it->second;
 	}
 	if (!gameNameKey.empty())
 	{
-		auto it = customBoxartByName.find(gameNameKey);
-		if (it != customBoxartByName.end())
+		auto it = mediaIndex.find(gameNameKey);
+		if (it != mediaIndex.end())
 			return it->second;
 	}
 	return {};
@@ -411,7 +551,8 @@ void Boxart::refreshCustomBoxartIndex(bool force)
 		return;
 
 	std::unordered_map<std::string, std::string> newIndex;
-	if (!root.empty() && file_exists(root))
+	CustomBoxartIndex mediaModeIndexes;
+	if (!root.empty() && hostfs::storage().exists(root))
 	{
 		try {
 			hostfs::DirectoryTree tree(root);
@@ -429,6 +570,15 @@ void Boxart::refreshCustomBoxartIndex(bool force)
 				if (key.empty())
 					continue;
 				newIndex[key] = entry.path;
+
+				const std::string firstFolder = toLowerString(getFolderFirstComponent(root, entry.path));
+				const MediaFolderAlias* alias = findMediaFolderAlias(firstFolder);
+				if (alias == nullptr)
+					continue;
+
+				const size_t modeIndex = static_cast<size_t>(alias->mode);
+				if (mediaModeIndexes[modeIndex].find(key) == mediaModeIndexes[modeIndex].end())
+					mediaModeIndexes[modeIndex][key] = entry.path;
 			}
 		} catch (const std::exception& e) {
 			WARN_LOG(COMMON, "Custom boxart scan failed: %s", e.what());
@@ -440,7 +590,9 @@ void Boxart::refreshCustomBoxartIndex(bool force)
 		if (root != customBoxartRoot)
 			physicalCache.clear();
 		customBoxartRoot = root;
-		customBoxartByName.swap(newIndex);
+		for (size_t i = 0; i < customBoxartByName.size(); ++i)
+			customBoxartByName[i].swap(mediaModeIndexes[i]);
+		customBoxartByName[static_cast<size_t>(config::LibraryCoverMediaMode::CurrentArtwork)] = std::move(newIndex);
 		customIndexLoaded = true;
 	}
 }

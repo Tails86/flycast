@@ -68,6 +68,7 @@ using namespace i18n;
 #endif
 #include <mutex>
 #include <algorithm>
+#include <array>
 
 bool game_started;
 
@@ -103,6 +104,19 @@ static constexpr int NUM_SAVE_SLOTS = 10;
 
 static Toast toast;
 static ScheduledThreadRunner<std::chrono::steady_clock::time_point> uiThreadRunner;
+
+static constexpr float GAME_INFO_LONG_PRESS_SECONDS = 3.f;
+struct LibraryLongPressState
+{
+	std::string gameId;
+	GameMedia game;
+	float startTime = 0.f;
+	bool tracking = false;
+	bool opened = false;
+};
+static LibraryLongPressState libraryLongPress;
+static GameMedia selectedGameForInfo;
+static bool touchedLibraryItemThisFrame = false;
 
 static void emuEventCallback(Event event, void *)
 {
@@ -464,6 +478,10 @@ void gui_open_settings()
 	else if (gui_state == GuiState::Pause)
 	{
 		gui_setState(GuiState::Commands);
+	}
+	else if (gui_state == GuiState::GameInfo)
+	{
+		gui_setState(GuiState::Main);
 	}
 }
 
@@ -944,6 +962,195 @@ static void gameTooltip(const std::string& tip)
     }
 }
 
+static GameBoxart getLibraryDisplayArtwork(const GameMedia& game, double animationClock);
+
+static const char *game_info_value(const std::string& value)
+{
+	return value.empty() ? T("Unknown") : value.c_str();
+}
+
+static void draw_game_info_stat(const char *label, const std::string& value)
+{
+	ImGui::TextDisabled("%s", T(label));
+	ImGui::TextWrapped("%s", game_info_value(value));
+}
+
+static void draw_game_info_media_label(const char *label, bool present)
+{
+	const ImVec4 presentColor(0.35f, 0.95f, 0.45f, 1.0f);
+	const ImVec4 missingColor(0.45f, 0.45f, 0.52f, 1.0f);
+	ImGui::TextColored(present ? presentColor : missingColor, "%s", label);
+	ImGui::SameLine(0.0f, uiScaled(10.0f));
+}
+
+static bool draw_game_info_image(const std::string& path, const ImVec2& size)
+{
+	if (path.empty())
+		return false;
+	ImguiFileTexture tex(path);
+	tex.draw(size);
+	return true;
+}
+
+static void gui_display_game_info()
+{
+	const GameMedia game = selectedGameForInfo;
+	const GameBoxart art = getLibraryDisplayArtwork(game, 0.0);
+	const std::string mixImagePath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::MixImage);
+	const std::string titleImagePath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Title);
+	const std::string coverPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Cover);
+	const std::string casePath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Case);
+	const std::string screenshotPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Screenshot);
+	const std::string physicalPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Physical);
+	const std::string primaryImagePath = !mixImagePath.empty() ? mixImagePath : art.boxartPath;
+	std::string title = game.name;
+	if (title.empty() || title == game.fileName)
+		title = art.name;
+	if (title.empty())
+		title = game.fileName;
+
+	ImVec2 windowPos(static_cast<float>(insetLeft), static_cast<float>(insetTop));
+	ImVec2 windowSize(std::max(0, settings.display.width - insetLeft - insetRight),
+			std::max(0, settings.display.height - insetTop - insetBottom));
+	ImGui::SetNextWindowPos(windowPos);
+	ImGui::SetNextWindowSize(windowSize);
+	ImguiStyleVar _1(ImGuiStyleVar_WindowRounding, 0);
+	ImguiStyleVar _2(ImGuiStyleVar_WindowBorderSize, 0);
+
+	if (ImGui::Begin("##gameInfo", nullptr, ImGuiWindowFlags_NoDecoration))
+	{
+		ImguiStyleVar _3(ImGuiStyleVar_FramePadding, ScaledVec2(18, 12));
+		ImguiStyleVar _4(ImGuiStyleVar_ItemSpacing, ScaledVec2(0, 10));
+
+		if (ImGui::Button(T("Close")))
+			gui_setState(GuiState::Main);
+		if (ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight))
+			gui_setState(GuiState::Main);
+
+		ImGui::Dummy(ScaledVec2(0, 4));
+		if (!titleImagePath.empty())
+		{
+			const float headerWidth = std::min(windowSize.x - ImGui::GetStyle().WindowPadding.x * 2.0f, uiScaled(520.0f));
+			draw_game_info_image(titleImagePath, ImVec2(headerWidth, uiScaled(92.0f)));
+		}
+		else
+		{
+			ImGui::PushFont(nullptr, uiLargeFontSize());
+			ImGui::TextWrapped("%s", title.c_str());
+			ImGui::PopFont();
+		}
+		ImGui::Separator();
+
+		const float contentWidth = ImGui::GetContentRegionAvail().x;
+		const float leftWidth = std::min(contentWidth * 0.42f, uiScaled(430.0f));
+		const float rightWidth = std::max(uiScaled(260.0f), contentWidth - leftWidth - ImGui::GetStyle().ItemSpacing.x);
+		const float panelHeight = ImGui::GetContentRegionAvail().y - uiScaled(8.0f);
+
+		if (ImGui::BeginChild("##gameInfoMedia", ImVec2(leftWidth, panelHeight), false))
+		{
+			const float previewSize = std::min(leftWidth, panelHeight * 0.78f);
+			if (!draw_game_info_image(primaryImagePath, ImVec2(previewSize, previewSize)))
+			{
+				ImGui::Dummy(ImVec2(previewSize, previewSize * 0.6f));
+				ImGui::TextDisabled("%s", T("No media preview"));
+			}
+		}
+		ImGui::EndChild();
+
+		ImGui::SameLine();
+
+		if (ImGui::BeginChild("##gameInfoDetails", ImVec2(rightWidth, panelHeight), false))
+		{
+			if (ImGui::BeginTable("##gameInfoStats", 2, ImGuiTableFlags_SizingStretchSame))
+			{
+				ImGui::TableNextColumn();
+				draw_game_info_stat("Players", game.players);
+				ImGui::TableNextColumn();
+				draw_game_info_stat("Released", game.releaseDate);
+				ImGui::TableNextColumn();
+				draw_game_info_stat("Genre", game.genre);
+				ImGui::TableNextColumn();
+				draw_game_info_stat("Developer", game.developer);
+				ImGui::EndTable();
+			}
+
+			ImGui::Separator();
+			ImGui::TextDisabled("%s", T("Description"));
+			if (game.desc.empty())
+				ImGui::TextDisabled("%s", T("No description available."));
+			else
+				ImGui::TextWrapped("%s", game.desc.c_str());
+
+			ImGui::Separator();
+			ImGui::TextDisabled("%s", T("MEDIA:"));
+			ImGui::SameLine(0.0f, uiScaled(10.0f));
+			draw_game_info_media_label("Mix", !mixImagePath.empty());
+			draw_game_info_media_label("Cover", !coverPath.empty());
+			draw_game_info_media_label("Case", !casePath.empty());
+			draw_game_info_media_label("Screenshot", !screenshotPath.empty());
+			draw_game_info_media_label("Title", !titleImagePath.empty());
+			draw_game_info_media_label("Physical", !physicalPath.empty());
+			draw_game_info_media_label("Manual", !game.manualPath.empty());
+			ImGui::NewLine();
+
+			if (!game.manualPath.empty())
+			{
+				ImGui::TextDisabled("%s", T("Manual"));
+				ImGui::TextWrapped("%s", game.manualPath.c_str());
+			}
+		}
+		ImGui::EndChild();
+	}
+	ImGui::End();
+}
+
+static void gui_set_library_game_info(const GameMedia& game)
+{
+	selectedGameForInfo = game;
+	gui_setState(GuiState::GameInfo);
+}
+
+static void resetLibraryLongPress()
+{
+	libraryLongPress = {};
+	touchedLibraryItemThisFrame = false;
+}
+
+static void updateLibraryLongPress(const GameMedia& game, const std::string& gameId, bool itemActive)
+{
+#if defined(__ANDROID__)
+	if (!mouseTouchscreen || gui_state != GuiState::Main)
+		return;
+#else
+	(void)game;
+	(void)gameId;
+	(void)itemActive;
+#endif
+
+#if defined(__ANDROID__)
+	if (!itemActive)
+		return;
+
+	touchedLibraryItemThisFrame = true;
+	if (!libraryLongPress.tracking || libraryLongPress.gameId != gameId)
+	{
+		libraryLongPress = {};
+		libraryLongPress.tracking = true;
+		libraryLongPress.startTime = ImGui::GetTime();
+		libraryLongPress.gameId = gameId;
+		libraryLongPress.game = game;
+		return;
+	}
+
+	if (!libraryLongPress.opened && (ImGui::GetTime() - libraryLongPress.startTime >= GAME_INFO_LONG_PRESS_SECONDS))
+	{
+		libraryLongPress.opened = true;
+		libraryLongPress.tracking = false;
+		gui_set_library_game_info(game);
+	}
+#endif
+}
+
 static bool gameImageButton(ImguiTexture& texture, const std::string& tooltip, ImVec2 size,
 		const std::string& gameName, float fallbackTitleSize = 0.0f)
 {
@@ -973,6 +1180,9 @@ static GameBoxart getLibraryDisplayArtwork(const GameMedia& game, double animati
 		return art;
 
 	art = boxart.getBoxartAndLoad(game);
+	const std::string localCoverOverride = boxart.getLibraryCoverMediaPath(game);
+	if (!localCoverOverride.empty())
+		art.boxartPath = localCoverOverride;
 	const auto source = static_cast<config::LibraryImageSourceMode>(config::LibraryImageSource.get());
 	switch (source)
 	{
@@ -1092,6 +1302,9 @@ void gui_load_game()
 
 static void gui_display_content()
 {
+#if defined(__ANDROID__)
+	touchedLibraryItemThisFrame = false;
+#endif
 	fullScreenWindow(false);
 	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
 	ImguiStyleVar _1(ImGuiStyleVar_WindowBorderSize, 0);
@@ -1267,6 +1480,7 @@ static void gui_display_content()
 						const ImVec2 iconCellPos = ImGui::GetCursorScreenPos();
 						const bool rowPressed = ImGui::Selectable(("##row_" + std::to_string(rowIndex)).c_str(),
 								false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap, ImVec2(0.0f, tableRowContentHeight));
+						updateLibraryLongPress(game, game.path.empty() ? "bios" : game.path, ImGui::IsItemActive());
 						ImGui::SetCursorScreenPos(iconCellPos);
 						if (!game.device && !art.boxartPath.empty())
 						{
@@ -1384,12 +1598,14 @@ static void gui_display_content()
 							{
 								ImguiFileTexture tex(art.boxartPath);
 								pressed = gameImageButton(tex, game.name, responsiveBoxVec2, gameName, gridTextSize);
+								updateLibraryLongPress(game, game.path.empty() ? "bios" : game.path, ImGui::IsItemActive());
 							}
 							ImGui::EndChild();
 						}
 						else
 						{
 							pressed = ImGui::Selectable(gameName.c_str());
+							updateLibraryLongPress(game, game.path.empty() ? "bios" : game.path, ImGui::IsItemActive());
 						}
 						if (pressed)
 						{
@@ -1421,6 +1637,11 @@ static void gui_display_content()
 			}
 			scanner.get_mutex().unlock();
 		}
+
+#if defined(__ANDROID__)
+		if (gui_state == GuiState::Main && (!ImGui::GetIO().MouseDown[ImGuiMouseButton_Left] || !touchedLibraryItemThisFrame))
+			resetLibraryLongPress();
+#endif
 		bool addContent = false;
 #if !defined(TARGET_IPHONE)
 		if (gameListEmpty && gui_state != GuiState::SelectDisk)
@@ -1750,9 +1971,10 @@ void gui_display_ui()
 		ImguiFileTexture::resetLoadCount();
 	};
 
-	// Render menu bar BEFORE any early returns
-	// This ensures menu bar is visible in library mode and during auto-start
-	GuiMenu::renderMainMenuBar();
+	// Render menu bar BEFORE any early returns.
+	// Hide it for the full-screen GameInfo screen on Android.
+	if (gui_state != GuiState::GameInfo)
+		GuiMenu::renderMainMenuBar();
 
 	// Check for auto-start after menu bar is rendered
 	if (gui_state == GuiState::Main)
@@ -1799,6 +2021,9 @@ void gui_display_ui()
 	case GuiState::Main:
 		//gui_display_demo();
 		gui_display_content();
+		break;
+	case GuiState::GameInfo:
+		gui_display_game_info();
 		break;
 	case GuiState::Closed:
 		break;
@@ -2100,6 +2325,8 @@ void gui_togglePause()
 
 void gui_setState(GuiState newState)
 {
+	if (gui_state != newState)
+		resetLibraryLongPress();
 	gui_state = newState;
 	if (newState == GuiState::Closed)
 	{
