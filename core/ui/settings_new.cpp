@@ -1364,7 +1364,7 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 			for (u32 j = 0; j < MAPLE_PORTS; j++)
 			{
 				bool is_selected = g_gamepad_port_for_mapping == j;
-				if (ImGui::Selectable(kMaplePorts[j + 1]), &is_selected)
+				if (ImGui::Selectable(kMaplePorts[j + 1], &is_selected))
 					g_gamepad_port_for_mapping = j;
 				if (is_selected)
 					ImGui::SetItemDefaultFocus();
@@ -1931,6 +1931,8 @@ static void renderContentArea()
 		break;
 	}
 
+	scrollWhenDraggingOnVoid();
+	windowDragScroll();
 	ImGui::EndChild();
 	ImGui::Dummy(ImVec2(0.0f, footerGap));
 	RenderSettingsFooterBar();
@@ -2509,12 +2511,13 @@ void renderGeneralTab()
 
 		RenderGeneralPopupSettingRow(
 			Tnop("BoxartSourceSetting"),
-			T("Choose which box art source to display."),
+			T("Choose where Hollycast gets normal library artwork."),
 			boxartSourceCfg,
 			T(
 				"Box Art Source\n"
-				"Selects which artwork source is shown in the game list.\n"
-				"Use Custom Boxart if you maintain your own images, or Original/Physical depending on your preference."
+				"Original Box Art uses Hollycast's normal scraped box art database.\n"
+				"Physical Media uses the disc/media image pulled from the game when available.\n"
+				"Custom Boxart uses the folder you set below. Pick this when you already scraped artwork with ES-DE, Skraper, or another frontend."
 			)
 		);
 
@@ -2523,9 +2526,10 @@ void renderGeneralTab()
 				"##row",
 				T(
 					"Custom Boxart Folder\n"
-					"Folder containing custom box art or custom media images (png/jpg).\n"
-					"Files and supported media subfolders should match game names.\n"
-					"Use Refresh to rescan artwork sources."
+					"Choose the folder that contains your already-scraped game media.\n\n"
+					"For ES-DE, choose the system media folder, for example `downloaded_media/dreamcast`.\n"
+					"Hollycast reads supported subfolders inside it, such as `covers`, `miximages`, `physicalmedia`, `marquees`, `titlescreens`, `screenshots`, `fanart`, and `manuals`.\n\n"
+					"Image/manual file names should match your ROM names. Use Refresh after adding or changing media files."
 				)
 			);
 		const ImVec2 line1Start = BeginTwoLineSettingRowContent();
@@ -2557,7 +2561,7 @@ void renderGeneralTab()
 			ImGui::SetCursorPos(ImVec2(buttonPos.x, buttonPos.y + verticalOffset));
 			refreshPressed = ImGui::Button(ICON_FA_ARROWS_ROTATE "##BoxartRefreshBtn", ImVec2(buttonWidth, buttonHeight));
 			if (ImGui::IsItemHovered() || ImGui::IsItemFocused())
-				SetSettingsFooterText(T("Refresh downloaded box art and rescan artwork sources."));
+				SetSettingsFooterText(T("Refresh custom media after adding, removing, or renaming files in the selected Custom Boxart Folder."));
 
 			ImGui::SameLine(0, buttonSpacing);
 			ImVec2 deletePos = ImGui::GetCursorPos();
@@ -2573,7 +2577,7 @@ void renderGeneralTab()
 			RenderGeneralRightValue(T("Set Path"), 280.0f, 0.0f, true);
 		}
 
-		RenderTwoLineSettingDescription(line1Start, T("Folder containing custom box art/media images (png/jpg). File names should match game names."));
+		RenderTwoLineSettingDescription(line1Start, T("Folder containing custom artwork/media subfolders. For ES-DE, select `downloaded_media/dreamcast`."));
 		ImGui::PopID();
 		ImGui::Spacing();
 		if (g_twoLineRowExtraGapPx > 0.0f)
@@ -2672,10 +2676,12 @@ void renderGeneralTab()
 			"Current Artwork",
 			"Mix Image",
 			"Cover",
-			"Case",
+			"Case / 3D Box",
 			"Screenshot",
-			"Title",
-			"Physical",
+			"Marquee",
+			"Physical Media",
+			"Fan Art",
+			"Title Screen",
 		};
 		SettingsUI::PopupConfig libraryCoverMediaCfg {};
 		libraryCoverMediaCfg.type = SettingsUI::PopupType::Options;
@@ -2689,11 +2695,12 @@ void renderGeneralTab()
 		libraryCoverMediaCfg.options.onChange = [](int) { return true; };
 		RenderGeneralPopupSettingRow(
 			"LibraryCoverMedia",
-			"Choose local media type for library covers.",
+			"Choose which custom media type is used as the main library image.",
 			libraryCoverMediaCfg,
 			"What Media To Use For Library Covers\n"
-			"Select the local media type used when loading local custom media for library covers.\n"
-			"Hollycast will look for matching Skraper/custom media folders inside the configured custom media root.");
+			"This only changes the main image shown in the library grid/list.\n\n"
+			"Use Mix Image for ES-DE/Skraper miximages, Cover for front covers, Marquee for transparent logo/title art, Title Screen for title-screen images, Screenshot for gameplay shots, Fan Art for background art, Physical Media for disc images, or Case / 3D Box for 3D/back-cover style art.\n\n"
+			"Other media can still appear in the game info hover/profile when the matching folders and files are present.");
 
 		static const char* vmuIconModes[] = { "Static", "Active / Animated" };
 		SettingsUI::PopupConfig vmuIconModeCfg {};
@@ -2993,9 +3000,10 @@ void renderGeneralTab()
 		manageSinglePath(T("Gamelist XML"), config::GameListPath,
 			T(
 				"Gamelist XML\n"
-				"Path to an ES-DE / EmulationStation `gamelist.xml` file.\n\n"
-				"Metadata (description, developer, publisher, genre, players, release date, manual path) from matching ROM entries is loaded into each game's metadata.\n"
-				"This does not affect ROM scanning by itself."
+				"Choose the exact `gamelist.xml` file that belongs to your Dreamcast ROM set.\n\n"
+				"This file provides the game info used by the library hover/profile screen: description, developer, genre, players, release date, and manual path.\n\n"
+				"For ES-DE, this is usually in a separate folder from the images, for example `gamelists/dreamcast/gamelist.xml`.\n"
+				"Hollycast will not guess this path. Set it here if you want game descriptions and details."
 			),
 			true,
 			"xml"

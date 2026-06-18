@@ -42,6 +42,15 @@ bool isSupportedBoxartExtension(const std::string& ext)
 	return lowerExt == "png" || lowerExt == "jpg" || lowerExt == "jpeg" || lowerExt == "bmp";
 }
 
+bool isSupportedManualExtension(const std::string& ext)
+{
+	std::string lowerExt = ext;
+	std::transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), [](unsigned char c) {
+		return static_cast<char>(std::tolower(c));
+	});
+	return isSupportedBoxartExtension(lowerExt) || lowerExt == "pdf" || lowerExt == "cbz" || lowerExt == "cbr";
+}
+
 std::string normalizeBoxartKey(const std::string& value)
 {
 	std::string out;
@@ -159,19 +168,25 @@ std::string toLowerString(std::string_view value)
 
 const MediaFolderAlias* findMediaFolderAlias(const std::string& folder)
 {
-	static const std::array<MediaFolderAlias, 6> mediaAliases{
+	static const std::array<MediaFolderAlias, 9> mediaAliases{
 		MediaFolderAlias {config::LibraryCoverMediaMode::MixImage,
-				{"miximg", "miximgs", "miximage", "miximages", "mix", "mixrbv1", "image", "images"}},
+				{"miximages", "miximage", "miximg", "miximgs", "mix", "mixrbv1", "image", "images"}},
 		MediaFolderAlias {config::LibraryCoverMediaMode::Cover,
-				{"box2dfront", "cover", "covers", "boxfront", "box-2d", "box2d"}},
+				{"covers", "cover", "box2dfront", "boxfront", "box-2d", "box2d"}},
 		MediaFolderAlias {config::LibraryCoverMediaMode::Case,
-				{"boxtexture", "box-texture", "boxtextures", "case", "cases", "insert", "3dbox", "3dboxes", "box3d"}},
+				{"3dboxes", "3dbox", "box3d", "backcovers", "backcover", "boxtexture", "box-texture", "boxtextures", "case", "cases", "insert", "custom"}},
+		MediaFolderAlias {config::LibraryCoverMediaMode::FanArt,
+				{"fanart", "fanarts", "fan-art", "background", "backgrounds"}},
 		MediaFolderAlias {config::LibraryCoverMediaMode::Screenshot,
-				{"screenshots", "screenshot", "ss", "sstitle", "titlescreen", "titlescreens"}},
+				{"screenshots", "screenshot", "ss"}},
+		MediaFolderAlias {config::LibraryCoverMediaMode::TitleScreen,
+				{"titlescreens", "titlescreen", "title-screens", "title-screen", "sstitle"}},
 		MediaFolderAlias {config::LibraryCoverMediaMode::Title,
-				{"wheelhd", "wheel-hd", "wheel", "wheels", "marquee", "marquees", "screenmarquee", "screenmarqueesmall", "title"}},
+				{"marquees", "marquee", "wheelhd", "wheel-hd", "wheel", "wheels", "screenmarquee", "screenmarqueesmall", "title"}},
 		MediaFolderAlias {config::LibraryCoverMediaMode::Physical,
-				{"support2d", "support-2d", "supporttexture", "support-texture", "support", "physical", "physicalmedia", "physical-media", "disc"}},
+				{"physicalmedia", "physical-media", "support2d", "support-2d", "supporttexture", "support-texture", "support", "physical", "disc"}},
+		MediaFolderAlias {config::LibraryCoverMediaMode::Manual,
+				{"manuals", "manual", "manualss"}},
 	};
 
 	const std::string folderLower = toLowerString(folder);
@@ -180,6 +195,13 @@ const MediaFolderAlias* findMediaFolderAlias(const std::string& folder)
 			if (folderLower == alias)
 				return &aliasGroup;
 	return nullptr;
+}
+
+bool isSupportedCustomMediaExtension(config::LibraryCoverMediaMode mediaMode, const std::string& ext)
+{
+	return mediaMode == config::LibraryCoverMediaMode::Manual
+			? isSupportedManualExtension(ext)
+			: isSupportedBoxartExtension(ext);
 }
 
 bool isGeneratedVmuIconPath(const std::string& root, const std::string& path)
@@ -564,17 +586,22 @@ void Boxart::refreshCustomBoxartIndex(bool force)
 				if (isGeneratedVmuIconPath(root, entry.path))
 					continue;
 				const std::string ext = get_file_extension(entry.name);
-				if (!isSupportedBoxartExtension(ext))
-					continue;
 				const std::string key = makeBoxartKey(entry.name);
 				if (key.empty())
 					continue;
-				newIndex[key] = entry.path;
 
 				const std::string firstFolder = toLowerString(getFolderFirstComponent(root, entry.path));
 				const MediaFolderAlias* alias = findMediaFolderAlias(firstFolder);
 				if (alias == nullptr)
+				{
+					if (isSupportedBoxartExtension(ext))
+						newIndex[key] = entry.path;
 					continue;
+				}
+				if (!isSupportedCustomMediaExtension(alias->mode, ext))
+					continue;
+				if (isSupportedBoxartExtension(ext))
+					newIndex[key] = entry.path;
 
 				const size_t modeIndex = static_cast<size_t>(alias->mode);
 				if (mediaModeIndexes[modeIndex].find(key) == mediaModeIndexes[modeIndex].end())

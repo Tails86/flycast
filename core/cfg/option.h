@@ -394,7 +394,10 @@ enum class LibraryCoverMediaMode
 	Screenshot = 4,
 	Title = 5,
 	Physical = 6,
-	Count = 7,
+	FanArt = 7,
+	TitleScreen = 8,
+	Manual = 9,
+	Count = 10,
 };
 
 enum class VmuIconPlaybackMode
