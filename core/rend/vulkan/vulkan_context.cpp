@@ -36,6 +36,9 @@
 #include "rend/transform_matrix.h"
 <<<<<<< HEAD
 #include "rend/osd.h"
+||||||| merged common ancestor
+#include "rend/osd.h"
+#include "swappyvk.h"
 =======
 #include "swappyvk.h"
 >>>>>>> flycast/dev
@@ -519,7 +522,7 @@ bool VulkanContext::InitDevice()
 		{
 			featuresChain.pNext = &provokingVertexFeatures;
 		}
-		
+
 		// Get the physical device's features
 		if (getPhysicalDeviceProperties2Supported && featuresChain.pNext)
 		{
@@ -1124,7 +1127,7 @@ void VulkanContext::DrawFrame(vk::ImageView imageView, const vk::Extent2D& exten
 	int dx = 0;
 	int dy = 0;
 	getWindowboxDimensions(width, outheight, aspectRatio, dx, dy, config::Rotate90);
-	
+
 	vk::Viewport viewport(dx, dy + topInset, width - dx * 2, outheight - dy * 2);
 	commandBuffer.setViewport(0, viewport);
 	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(dx, dy + topInset), vk::Extent2D(width - dx * 2, outheight - dy * 2)));
@@ -1196,7 +1199,7 @@ void VulkanContext::PresentFrame(vk::Image image, vk::ImageView imageView, const
 			imguiDriver->renderDrawData(ImGui::GetDrawData(), false);
 			EndFrame(overlayCmdBuffer);
 			static_cast<BaseVulkanRenderer*>(renderer)->RenderVideoRouting();
-			
+
 		} catch (const InvalidVulkanContext&) {
 			// Re-create swap chain
 			resized = true;

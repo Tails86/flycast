@@ -25,6 +25,8 @@ void gui_settings_video()
 {
 <<<<<<< HEAD
 	SettingsNew::renderVideoTab();
+||||||| merged common ancestor
+	SettingsNew::renderVideoTab();
 =======
 	int renderApi;
 	bool perPixel;
