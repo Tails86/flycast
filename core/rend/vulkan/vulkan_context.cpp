@@ -34,14 +34,8 @@
 #include "oslib/directory.h"
 #include "vulkan_driver.h"
 #include "rend/transform_matrix.h"
-<<<<<<< HEAD
-#include "rend/osd.h"
-||||||| merged common ancestor
 #include "rend/osd.h"
 #include "swappyvk.h"
-=======
-#include "swappyvk.h"
->>>>>>> flycast/dev
 #if defined(__ANDROID__) && HOST_CPU == CPU_ARM64
 #include "adreno.h"
 #endif
