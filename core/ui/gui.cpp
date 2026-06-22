@@ -107,7 +107,8 @@ static Toast toast;
 static ScheduledThreadRunner<std::chrono::steady_clock::time_point> uiThreadRunner;
 
 static constexpr float GAME_INFO_LONG_PRESS_SECONDS = 3.f;
-static constexpr double LIBRARY_GAME_INFO_HOVER_SECONDS = 2.0;
+static constexpr double LIBRARY_GAME_INFO_HOVER_SECONDS = 1.0;
+static bool resetLibraryGameInfoHoverState;
 struct LibraryLongPressState
 {
 	std::string gameId;
@@ -1452,6 +1453,18 @@ static void draw_library_game_info_hover(const GameMedia& game, const GameBoxart
 	static ImVec2 hoverPanelMax;
 	static bool hasHoverPanelPos = false;
 
+	if (resetLibraryGameInfoHoverState)
+	{
+		hoveredGameId.clear();
+		hoverStartTime = 0.0;
+		hoverStartMousePos = ImVec2();
+		hoverCache = {};
+		hasHoverPanelPos = false;
+		hoverPanelMin = ImVec2();
+		hoverPanelMax = ImVec2();
+		resetLibraryGameInfoHoverState = false;
+	}
+
 	const std::string gameId = !game.path.empty() ? game.path : (!game.fileName.empty() ? game.fileName : game.name);
 	const ImVec2 mousePos = ImGui::GetMousePos();
 	const ImGuiHoveredFlags hoverFlags = ImGuiHoveredFlags_RectOnly | ImGuiHoveredFlags_NoNavOverride;
@@ -1533,7 +1546,6 @@ static void draw_library_game_info_hover(const GameMedia& game, const GameBoxart
 	ImguiStyleColor windowBgColor(ImGuiCol_WindowBg, ImVec4(0.015f, 0.018f, 0.022f, 0.97f));
 	const ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoDecoration
 			| ImGuiWindowFlags_NoSavedSettings
-			| ImGuiWindowFlags_NoFocusOnAppearing
 			| ImGuiWindowFlags_NoNav
 			| ImGuiWindowFlags_NoMove;
 	if (!ImGui::Begin("##libraryGameInfoHover", nullptr, windowFlags))
@@ -1691,6 +1703,11 @@ static void resetLibraryLongPress()
 {
 	libraryLongPress = {};
 	touchedLibraryItemThisFrame = false;
+}
+
+static void resetLibraryGameInfoHover()
+{
+	resetLibraryGameInfoHoverState = true;
 }
 
 static void updateLibraryLongPress(const GameMedia& game, const std::string& gameId, bool itemActive)
@@ -1899,6 +1916,38 @@ static void gui_display_content()
 
     static ImGuiTextFilter filter;
 	int libraryIconScale = std::clamp(config::LibraryIconScale.get(), 100, 1000);
+	static bool libraryHoverSettingsInitialized = false;
+	static int lastLibraryIconScale = libraryIconScale;
+	static int lastLibraryDisplayStyle = config::LibraryDisplayStyle.get();
+	static int lastLibraryImageSource = config::LibraryImageSource.get();
+	static int lastLibraryCoverMedia = config::LibraryCoverMedia.get();
+	static bool lastBoxartDisplayMode = config::BoxartDisplayMode.get();
+	const int currentLibraryDisplayStyle = config::LibraryDisplayStyle.get();
+	const int currentLibraryImageSource = config::LibraryImageSource.get();
+	const int currentLibraryCoverMedia = config::LibraryCoverMedia.get();
+	const bool currentBoxartDisplayMode = config::BoxartDisplayMode.get();
+	if (!libraryHoverSettingsInitialized)
+	{
+		libraryHoverSettingsInitialized = true;
+		lastLibraryIconScale = libraryIconScale;
+		lastLibraryDisplayStyle = currentLibraryDisplayStyle;
+		lastLibraryImageSource = currentLibraryImageSource;
+		lastLibraryCoverMedia = currentLibraryCoverMedia;
+		lastBoxartDisplayMode = currentBoxartDisplayMode;
+	}
+	else if (lastLibraryIconScale != libraryIconScale
+			|| lastLibraryDisplayStyle != currentLibraryDisplayStyle
+			|| lastLibraryImageSource != currentLibraryImageSource
+			|| lastLibraryCoverMedia != currentLibraryCoverMedia
+			|| lastBoxartDisplayMode != currentBoxartDisplayMode)
+	{
+		resetLibraryGameInfoHover();
+		lastLibraryIconScale = libraryIconScale;
+		lastLibraryDisplayStyle = currentLibraryDisplayStyle;
+		lastLibraryImageSource = currentLibraryImageSource;
+		lastLibraryCoverMedia = currentLibraryCoverMedia;
+		lastBoxartDisplayMode = currentBoxartDisplayMode;
+	}
     IconButton settingsBtn(ICON_FA_GEAR, T("Settings"));
 #if !defined(__ANDROID__) && !defined(TARGET_IPHONE) && !defined(TARGET_UWP) && !defined(__SWITCH__)
 	const float iconScaleSliderWidth = 135.0f;
@@ -2909,7 +2958,10 @@ void gui_togglePause()
 void gui_setState(GuiState newState)
 {
 	if (gui_state != newState)
+	{
 		resetLibraryLongPress();
+		resetLibraryGameInfoHover();
+	}
 	gui_state = newState;
 	if (newState == GuiState::Closed)
 	{

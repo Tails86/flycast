@@ -733,7 +733,6 @@ static u8 *loadImage(const std::string& path, int& width, int& height)
 }
 
 int ImguiFileTexture::textureLoadCount;
-std::chrono::steady_clock::time_point ImguiFileTexture::frameLoadStartTime;
 
 ImTextureID ImguiFileTexture::getId()
 {
@@ -743,11 +742,7 @@ ImTextureID ImguiFileTexture::getId()
 	if (id == ImTextureID())
 	{
 		constexpr int MaxTextureLoadsPerFrame = 5;
-		constexpr auto MaxTextureLoadBudget = std::chrono::milliseconds(10);
-		const auto now = std::chrono::steady_clock::now();
-		if (textureLoadCount == 0)
-			frameLoadStartTime = now;
-		if (textureLoadCount < MaxTextureLoadsPerFrame && now - frameLoadStartTime <= MaxTextureLoadBudget)
+		if (textureLoadCount < MaxTextureLoadsPerFrame)
 		{
 			textureLoadCount++;
 			int width, height;
