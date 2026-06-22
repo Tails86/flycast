@@ -29,6 +29,7 @@
 
 struct GameListMetadata
 {
+	std::string name;
 	std::string desc;
 	std::string developer;
 	std::string publisher;

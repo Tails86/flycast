@@ -733,25 +733,34 @@ static u8 *loadImage(const std::string& path, int& width, int& height)
 }
 
 int ImguiFileTexture::textureLoadCount;
+std::chrono::steady_clock::time_point ImguiFileTexture::frameLoadStartTime;
 
 ImTextureID ImguiFileTexture::getId()
 {
 	if (path.empty())
 		return {};
 	ImTextureID id = imguiDriver->getTexture(path);
-	if (id == ImTextureID() && textureLoadCount < 10)
+	if (id == ImTextureID())
 	{
-		textureLoadCount++;
-		int width, height;
-		u8 *imgData = loadImage(path, width, height);
-		if (imgData != nullptr)
+		constexpr int MaxTextureLoadsPerFrame = 5;
+		constexpr auto MaxTextureLoadBudget = std::chrono::milliseconds(10);
+		const auto now = std::chrono::steady_clock::now();
+		if (textureLoadCount == 0)
+			frameLoadStartTime = now;
+		if (textureLoadCount < MaxTextureLoadsPerFrame && now - frameLoadStartTime <= MaxTextureLoadBudget)
 		{
-			try {
-				id = imguiDriver->updateTextureAndAspectRatio(path, imgData, width, height, nearestSampling);
-			} catch (...) {
-				// vulkan can throw during resizing
+			textureLoadCount++;
+			int width, height;
+			u8 *imgData = loadImage(path, width, height);
+			if (imgData != nullptr)
+			{
+				try {
+					id = imguiDriver->updateTextureAndAspectRatio(path, imgData, width, height, nearestSampling);
+				} catch (...) {
+					// vulkan can throw during resizing
+				}
+				free(imgData);
 			}
-			free(imgData);
 		}
 	}
 	return id;

@@ -69,6 +69,7 @@ using namespace i18n;
 #include <mutex>
 #include <algorithm>
 #include <array>
+#include <cctype>
 
 bool game_started;
 
@@ -106,6 +107,7 @@ static Toast toast;
 static ScheduledThreadRunner<std::chrono::steady_clock::time_point> uiThreadRunner;
 
 static constexpr float GAME_INFO_LONG_PRESS_SECONDS = 3.f;
+static constexpr double LIBRARY_GAME_INFO_HOVER_SECONDS = 2.0;
 struct LibraryLongPressState
 {
 	std::string gameId;
@@ -969,18 +971,67 @@ static const char *game_info_value(const std::string& value)
 	return value.empty() ? T("Unknown") : value.c_str();
 }
 
+static ImFont *game_info_title_font()
+{
+	return settingsRightValueFont != nullptr ? settingsRightValueFont : (largeFont != nullptr ? largeFont : ImGui::GetFont());
+}
+
+static ImFont *game_info_body_font()
+{
+	return settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+}
+
+static std::string format_game_info_release_date(const std::string& value)
+{
+	if (value.size() < 8 || !std::all_of(value.begin(), value.begin() + 8, [](unsigned char c) { return std::isdigit(c); }))
+		return value;
+	return value.substr(0, 4) + "-" + value.substr(4, 2) + "-" + value.substr(6, 2);
+}
+
 static void draw_game_info_stat(const char *label, const std::string& value)
 {
-	ImGui::TextDisabled("%s", T(label));
+	ImGui::PushFont(game_info_body_font());
+	ImGui::TextColored(ImVec4(0.52f, 0.70f, 0.82f, 1.0f), "%s", T(label));
 	ImGui::TextWrapped("%s", game_info_value(value));
+	ImGui::PopFont();
 }
+
+struct GameInfoMediaEntry
+{
+	const char *label;
+	std::string path;
+	bool selected = false;
+};
+
+struct HoverGameInfoCache
+{
+	std::string gameId;
+	GameBoxart art;
+	std::string mixImagePath;
+	std::string titleImagePath;
+	std::string coverPath;
+	std::string casePath;
+	std::string screenshotPath;
+	std::string fanArtPath;
+	std::string titleScreenPath;
+	std::string physicalPath;
+	std::string manualPath;
+	std::string primaryImagePath;
+	std::string title;
+	int selectedMediaIndex = 0;
+	bool ready = false;
+};
 
 static void draw_game_info_media_label(const char *label, bool present)
 {
 	const ImVec4 presentColor(0.35f, 0.95f, 0.45f, 1.0f);
 	const ImVec4 missingColor(0.45f, 0.45f, 0.52f, 1.0f);
+	ImGui::PushFont(game_info_body_font());
 	ImGui::TextColored(present ? presentColor : missingColor, "%s", label);
-	ImGui::SameLine(0.0f, uiScaled(10.0f));
+	const bool hasRoomForNextLabel = ImGui::GetContentRegionAvail().x > ImGui::CalcTextSize("Title Screen").x + uiScaled(18.0f);
+	ImGui::PopFont();
+	if (hasRoomForNextLabel)
+		ImGui::SameLine(0.0f, uiScaled(10.0f));
 }
 
 static bool draw_game_info_image(const std::string& path, const ImVec2& size)
@@ -992,96 +1043,523 @@ static bool draw_game_info_image(const std::string& path, const ImVec2& size)
 	return true;
 }
 
-static void draw_library_game_info_hover(const GameMedia& game)
+static ImVec2 fit_game_info_image(float aspectRatio, ImVec2 boxSize, ImVec2 maxSize)
 {
-#if defined(__ANDROID__)
-	(void)game;
-#else
-	if (!ImGui::IsItemHovered(ImGuiHoveredFlags_Stationary | ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)
-			|| ImGui::IsMouseDown(ImGuiMouseButton_Left))
-		return;
+	if (aspectRatio <= 0.0f || boxSize.x <= 0.0f || boxSize.y <= 0.0f)
+		return ImVec2(0.0f, 0.0f);
 
-	const GameBoxart art = getLibraryDisplayArtwork(game, 0.0);
-	const std::string mixImagePath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::MixImage);
-	const std::string titleImagePath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Title);
-	const std::string coverPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Cover);
-	const std::string casePath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Case);
-	const std::string screenshotPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Screenshot);
-	const std::string fanArtPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::FanArt);
-	const std::string titleScreenPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::TitleScreen);
-	const std::string physicalPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Physical);
-	const std::string manualPath = !game.manualPath.empty()
-			? game.manualPath : boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Manual);
-	const std::string primaryImagePath = !mixImagePath.empty() ? mixImagePath : art.boxartPath;
-	std::string title = game.name;
-	if (title.empty() || title == game.fileName)
-		title = art.name;
-	if (title.empty())
-		title = game.fileName;
+	ImVec2 drawSize(std::min(boxSize.x, maxSize.x), std::min(boxSize.y, maxSize.y));
+	if (drawSize.x / drawSize.y > aspectRatio)
+		drawSize.x = drawSize.y * aspectRatio;
+	else
+		drawSize.y = drawSize.x / aspectRatio;
+	return drawSize;
+}
 
-	ImGui::SetNextWindowSize(ScaledVec2(720.0f, 390.0f));
-	if (!ImGui::BeginTooltip())
-		return;
+static std::string game_info_path_filename(const std::string& path)
+{
+	const size_t pos = path.find_last_of("/\\");
+	return pos == std::string::npos ? path : path.substr(pos + 1);
+}
 
-	ImguiStyleVar spacing(ImGuiStyleVar_ItemSpacing, ScaledVec2(10.0f, 8.0f));
-	const float width = ImGui::GetContentRegionAvail().x;
-	if (!titleImagePath.empty())
-		draw_game_info_image(titleImagePath, ImVec2(std::min(width, uiScaled(420.0f)), uiScaled(70.0f)));
+static ImTextureID get_game_info_texture_id(const std::string& path)
+{
+	if (path.empty())
+		return {};
+	ImguiFileTexture tex(path);
+	return tex.getId();
+}
+
+static bool draw_game_info_image_contained(const std::string& path, const ImVec2& boxSize, const ImVec2& maxDrawSize, ImVec2 *actualDrawSize = nullptr)
+{
+	const ImVec2 start = ImGui::GetCursorScreenPos();
+	ImGui::Dummy(boxSize);
+
+	ImTextureID id = get_game_info_texture_id(path);
+	if (id == ImTextureID{})
+		return false;
+
+	const ImVec2 drawSize = fit_game_info_image(imguiDriver->getAspectRatio(id), boxSize, maxDrawSize);
+	if (drawSize.x <= 0.0f || drawSize.y <= 0.0f)
+		return false;
+
+	if (actualDrawSize != nullptr)
+		*actualDrawSize = drawSize;
+	const ImVec2 drawPos(start.x + (boxSize.x - drawSize.x) * 0.5f, start.y + (boxSize.y - drawSize.y) * 0.5f);
+	ImGui::GetWindowDrawList()->AddImage(id, drawPos, drawPos + drawSize);
+	return true;
+}
+
+static bool draw_game_info_image_cover_cropped(const std::string& path, ImDrawList *drawList, const ImVec2& pMin, const ImVec2& pMax, ImU32 tint)
+{
+	ImTextureID id = get_game_info_texture_id(path);
+	if (id == ImTextureID{})
+		return false;
+
+	const float boxW = pMax.x - pMin.x;
+	const float boxH = pMax.y - pMin.y;
+	const float imageAspect = imguiDriver->getAspectRatio(id);
+	if (boxW <= 0.0f || boxH <= 0.0f || imageAspect <= 0.0f)
+		return false;
+
+	const float boxAspect = boxW / boxH;
+	ImVec2 uv0(0.0f, 0.0f);
+	ImVec2 uv1(1.0f, 1.0f);
+	if (imageAspect > boxAspect)
+	{
+		const float visibleWidth = boxAspect / imageAspect;
+		const float crop = (1.0f - visibleWidth) * 0.5f;
+		uv0.x = crop;
+		uv1.x = 1.0f - crop;
+	}
 	else
 	{
-		ImGui::PushFont(nullptr, uiLargeFontSize());
-		ImGui::TextWrapped("%s", title.c_str());
-		ImGui::PopFont();
+		const float visibleHeight = imageAspect / boxAspect;
+		const float crop = (1.0f - visibleHeight) * 0.5f;
+		uv0.y = crop;
+		uv1.y = 1.0f - crop;
 	}
+	drawList->AddImage(id, pMin, pMax, uv0, uv1, tint);
+	return true;
+}
 
-	ImGui::Separator();
-	const float mediaWidth = uiScaled(210.0f);
-	const float panelHeight = uiScaled(250.0f);
-	if (ImGui::BeginChild("##libraryHoverMedia", ImVec2(mediaWidth, panelHeight), false))
+static std::vector<GameInfoMediaEntry> make_game_info_media_entries(const HoverGameInfoCache& cache)
+{
+	std::vector<GameInfoMediaEntry> entries {
+		{ "Mix", cache.mixImagePath, false },
+		{ "Cover", !cache.coverPath.empty() ? cache.coverPath : cache.art.boxartPath, false },
+		{ "Case", cache.casePath, false },
+		{ "Screenshot", cache.screenshotPath, false },
+		{ "Marquee", cache.titleImagePath, false },
+		{ "Title Screen", cache.titleScreenPath, false },
+		{ "Fan Art", cache.fanArtPath, false },
+		{ "Physical", cache.physicalPath, false },
+		{ "Manual", cache.manualPath, false },
+	};
+	if (!entries.empty())
+		entries[std::clamp(cache.selectedMediaIndex, 0, (int)entries.size() - 1)].selected = true;
+	return entries;
+}
+
+static std::string selected_game_info_media_path(const std::vector<GameInfoMediaEntry>& mediaEntries)
+{
+	for (const GameInfoMediaEntry& media : mediaEntries)
+		if (media.selected)
+			return media.path;
+	return {};
+}
+
+static const GameInfoMediaEntry *selected_game_info_media(const std::vector<GameInfoMediaEntry>& mediaEntries)
+{
+	for (const GameInfoMediaEntry& media : mediaEntries)
+		if (media.selected)
+			return &media;
+	return mediaEntries.empty() ? nullptr : &mediaEntries[0];
+}
+
+static int default_game_info_media_index(const HoverGameInfoCache& cache)
+{
+	std::vector<GameInfoMediaEntry> mediaEntries = make_game_info_media_entries(cache);
+	for (int i = 0; i < (int)mediaEntries.size(); i++)
+		if (!mediaEntries[i].path.empty())
+			return i;
+	return 0;
+}
+
+static std::string best_game_info_hero_background_path(const HoverGameInfoCache& cache)
+{
+	if (!cache.fanArtPath.empty())
+		return cache.fanArtPath;
+	if (!cache.screenshotPath.empty())
+		return cache.screenshotPath;
+	if (!cache.titleScreenPath.empty())
+		return cache.titleScreenPath;
+	if (!cache.mixImagePath.empty())
+		return cache.mixImagePath;
+	if (!cache.coverPath.empty())
+		return cache.coverPath;
+	if (!cache.casePath.empty())
+		return cache.casePath;
+	return {};
+}
+
+static void draw_game_info_chip(const std::string& text)
+{
+	if (text.empty())
+		return;
+	ImguiStyleVar rounding(ImGuiStyleVar_FrameRounding, uiScaled(10.0f));
+	ImguiStyleVar padding(ImGuiStyleVar_FramePadding, ScaledVec2(10.0f, 4.0f));
+	ImguiStyleColor button(ImGuiCol_Button, ImVec4(0.06f, 0.12f, 0.16f, 0.92f));
+	ImguiStyleColor buttonHovered(ImGuiCol_ButtonHovered, ImVec4(0.08f, 0.18f, 0.22f, 0.95f));
+	ImguiStyleColor buttonActive(ImGuiCol_ButtonActive, ImVec4(0.08f, 0.18f, 0.22f, 0.95f));
+	ImguiStyleColor textColor(ImGuiCol_Text, ImVec4(0.72f, 0.86f, 0.92f, 1.0f));
+	ImGui::Button(text.c_str());
+}
+
+static void draw_game_info_chip_row(const GameMedia& game)
+{
+	std::vector<std::string> chips;
+	if (!game.players.empty())
+		chips.push_back(game.players);
+	if (!game.releaseDate.empty())
+		chips.push_back(format_game_info_release_date(game.releaseDate).substr(0, 4));
+	if (!game.genre.empty())
+		chips.push_back(game.genre);
+	if (!game.developer.empty())
+		chips.push_back(game.developer);
+
+	const float spacing = ImGui::GetStyle().ItemSpacing.x;
+	const float padding = ImGui::GetStyle().FramePadding.x * 2.0f;
+	const float avail = ImGui::GetContentRegionAvail().x;
+	while (!chips.empty())
 	{
-		if (!draw_game_info_image(primaryImagePath, ImVec2(mediaWidth, mediaWidth)))
-			ImGui::TextDisabled("%s", T("No media preview"));
+		float totalWidth = spacing * static_cast<float>(chips.size() - 1);
+		for (const std::string& chip : chips)
+			totalWidth += ImGui::CalcTextSize(chip.c_str()).x + padding;
+		if (totalWidth <= avail || chips.size() <= 2)
+		{
+			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (avail - totalWidth) * 0.5f));
+			for (size_t i = 0; i < chips.size(); i++)
+			{
+				if (i != 0)
+					ImGui::SameLine();
+				draw_game_info_chip(chips[i]);
+			}
+			break;
+		}
+		chips.pop_back();
+	}
+}
+
+static bool draw_game_info_badge(const GameInfoMediaEntry& media, int index)
+{
+	const bool found = !media.path.empty();
+	ImVec4 bg = media.selected ? ImVec4(0.08f, 0.34f, 0.45f, 1.0f)
+			: found ? ImVec4(0.04f, 0.20f, 0.10f, 0.88f)
+			: ImVec4(0.13f, 0.14f, 0.16f, 0.84f);
+	ImVec4 text = media.selected ? ImVec4(0.90f, 0.98f, 1.0f, 1.0f)
+			: found ? ImVec4(0.32f, 0.94f, 0.48f, 1.0f)
+			: ImVec4(0.50f, 0.53f, 0.58f, 1.0f);
+
+	ImguiStyleVar rounding(ImGuiStyleVar_FrameRounding, uiScaled(11.0f));
+	ImguiStyleVar padding(ImGuiStyleVar_FramePadding, ScaledVec2(9.0f, 4.0f));
+	ImguiStyleColor button(ImGuiCol_Button, bg);
+	ImguiStyleColor buttonHovered(ImGuiCol_ButtonHovered, bg);
+	ImguiStyleColor buttonActive(ImGuiCol_ButtonActive, bg);
+	ImguiStyleColor textColor(ImGuiCol_Text, text);
+	const std::string label = std::string(found ? ICON_FA_CIRCLE " " : ICON_FA_CIRCLE_DOT " ") + media.label
+			+ "##library_media_badge_" + std::to_string(index);
+	const bool clicked = ImGui::Button(label.c_str());
+	if (!found && ImGui::IsItemHovered())
+		ImGui::SetTooltip("%s media missing", media.label);
+	return clicked;
+}
+
+static int draw_game_info_badge_wrap(const std::vector<GameInfoMediaEntry>& mediaEntries)
+{
+	int clickedIndex = -1;
+	for (size_t i = 0; i < mediaEntries.size(); i++)
+	{
+		const float nextWidth = ImGui::CalcTextSize(mediaEntries[i].label).x + ImGui::GetStyle().FramePadding.x * 2.0f + uiScaled(26.0f);
+		if (i != 0 && ImGui::GetContentRegionAvail().x > nextWidth + uiScaled(12.0f))
+			ImGui::SameLine();
+		if (draw_game_info_badge(mediaEntries[i], (int)i))
+			clickedIndex = (int)i;
+	}
+	return clickedIndex;
+}
+
+static void draw_game_info_detail_row(const char *label, const std::string& value)
+{
+	ImGui::PushFont(game_info_body_font());
+	ImGui::TextColored(ImVec4(0.44f, 0.64f, 0.72f, 1.0f), "%s", T(label));
+	ImGui::SameLine(uiScaled(110.0f));
+	ImGui::TextColored(ImVec4(0.86f, 0.89f, 0.92f, 1.0f), "%s", game_info_value(value));
+	ImGui::PopFont();
+}
+
+static void draw_library_hover_hero(const HoverGameInfoCache& cache, const GameMedia& game, float width)
+{
+	const ImVec2 heroSize(width, uiScaled(144.0f));
+	const ImVec2 p = ImGui::GetCursorScreenPos();
+	ImDrawList *dl = ImGui::GetWindowDrawList();
+	dl->AddRectFilled(p + ScaledVec2(0.0f, 4.0f), p + heroSize + ScaledVec2(0.0f, 4.0f),
+			IM_COL32(0, 0, 0, 120), uiScaled(14.0f));
+	dl->AddRectFilled(p, p + heroSize, IM_COL32(5, 8, 11, 245), uiScaled(14.0f));
+	if (draw_game_info_image_cover_cropped(best_game_info_hero_background_path(cache), dl, p, p + heroSize, IM_COL32(255, 255, 255, 62)))
+		dl->AddRectFilled(p, p + heroSize, IM_COL32(0, 0, 0, 142), uiScaled(14.0f));
+	dl->AddRectFilled(ImVec2(p.x, p.y + heroSize.y - uiScaled(48.0f)), p + heroSize,
+			IM_COL32(0, 0, 0, 112), uiScaled(14.0f));
+	dl->AddRectFilled(p + ScaledVec2(24.0f, 16.0f), ImVec2(p.x + heroSize.x - uiScaled(24.0f), p.y + uiScaled(84.0f)),
+			IM_COL32(0, 170, 220, 24), uiScaled(18.0f));
+	dl->AddRect(p, p + heroSize, IM_COL32(18, 145, 205, 135), uiScaled(14.0f), 0, uiScaled(1.0f));
+
+	if (ImGui::BeginChild("##libraryHoverHero", heroSize, false,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+	{
+		ImGui::SetCursorPosY(uiScaled(14.0f));
+		ImVec2 titleDrawSize;
+		const bool drewLogo = draw_game_info_image_contained(cache.titleImagePath,
+				ImVec2(ImGui::GetContentRegionAvail().x, uiScaled(78.0f)),
+				ImVec2(std::min(width * 0.68f, uiScaled(680.0f)), uiScaled(78.0f)),
+				&titleDrawSize);
+		if (!drewLogo)
+		{
+			ImGui::PushFont(game_info_title_font());
+			const ImVec2 textSize = ImGui::CalcTextSize(cache.title.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x);
+			ImGui::SetCursorPosX(std::max(uiScaled(10.0f), (ImGui::GetContentRegionAvail().x - textSize.x) * 0.5f));
+			ImGui::TextWrapped("%s", cache.title.c_str());
+			ImGui::PopFont();
+		}
+		ImGui::SetCursorPosY(uiScaled(106.0f));
+		draw_game_info_chip_row(game);
 	}
 	ImGui::EndChild();
+}
 
-	ImGui::SameLine();
-	if (ImGui::BeginChild("##libraryHoverDetails", ImVec2(0.0f, panelHeight), false))
+static void draw_library_hover_media_card(const HoverGameInfoCache& cache, const std::vector<GameInfoMediaEntry>& mediaEntries, float width, float height)
+{
+	if (!ImGui::BeginChild("##libraryHoverMedia", ImVec2(width, height), true,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
 	{
-		if (ImGui::BeginTable("##libraryHoverStats", 2, ImGuiTableFlags_SizingStretchSame))
-		{
-			ImGui::TableNextColumn();
-			draw_game_info_stat("Players", game.players);
-			ImGui::TableNextColumn();
-			draw_game_info_stat("Released", game.releaseDate);
-			ImGui::TableNextColumn();
-			draw_game_info_stat("Genre", game.genre);
-			ImGui::TableNextColumn();
-			draw_game_info_stat("Developer", game.developer);
-			ImGui::EndTable();
-		}
+		ImGui::EndChild();
+		return;
+	}
 
-		ImGui::Separator();
-		ImGui::TextDisabled("%s", T("Description"));
+	ImGui::PushFont(game_info_body_font());
+	ImGui::TextColored(ImVec4(0.45f, 0.66f, 0.74f, 1.0f), "%s", T("Media Preview"));
+	ImGui::PopFont();
+	const GameInfoMediaEntry *selected = selected_game_info_media(mediaEntries);
+	const std::string selectedPath = selected != nullptr ? selected->path : selected_game_info_media_path(mediaEntries);
+	const char *selectedLabel = selected != nullptr ? selected->label : T("Media");
+	const bool found = !selectedPath.empty();
+	const float previewHeight = std::max(uiScaled(180.0f), height - uiScaled(158.0f));
+	const ImVec2 previewSize(ImGui::GetContentRegionAvail().x, previewHeight);
+	const ImVec2 previewPos = ImGui::GetCursorScreenPos();
+	ImDrawList *dl = ImGui::GetWindowDrawList();
+	dl->AddRectFilled(previewPos, previewPos + previewSize, IM_COL32(4, 6, 8, 180), uiScaled(9.0f));
+	dl->AddRect(previewPos, previewPos + previewSize, IM_COL32(18, 145, 205, 80), uiScaled(9.0f));
+	if (!draw_game_info_image_contained(selectedPath, previewSize, previewSize - ScaledVec2(14.0f, 14.0f)))
+	{
+		const std::string missingText = std::string(selectedLabel) + " missing";
+		const char *missing = missingText.c_str();
+		const ImVec2 textSize = ImGui::CalcTextSize(missing);
+		dl->AddCircle(previewPos + previewSize * 0.5f - ScaledVec2(0.0f, 22.0f), uiScaled(14.0f),
+				IM_COL32(120, 128, 140, 220), 32, uiScaled(2.0f));
+		dl->AddText(previewPos + (previewSize - textSize) * 0.5f + ScaledVec2(0.0f, 18.0f),
+				IM_COL32(135, 140, 150, 255), missing);
+	}
+
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
+	ImGui::PushFont(game_info_body_font());
+	ImGui::TextColored(ImVec4(0.44f, 0.64f, 0.72f, 1.0f), "%s", T("Current Media"));
+	ImGui::SameLine(uiScaled(128.0f));
+	ImGui::TextColored(ImVec4(0.86f, 0.89f, 0.92f, 1.0f), "%s", selectedLabel);
+	ImGui::TextColored(ImVec4(0.44f, 0.64f, 0.72f, 1.0f), "%s", T("Status"));
+	ImGui::SameLine(uiScaled(128.0f));
+	ImGui::TextColored(found ? ImVec4(0.32f, 0.94f, 0.48f, 1.0f) : ImVec4(0.50f, 0.53f, 0.58f, 1.0f),
+			"%s", found ? T("Found") : T("Missing"));
+	if (found)
+	{
+		ImGui::TextColored(ImVec4(0.44f, 0.64f, 0.72f, 1.0f), "%s", T("File"));
+		ImGui::SameLine(uiScaled(128.0f));
+		ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+		ImGui::TextColored(ImVec4(0.66f, 0.72f, 0.76f, 1.0f), "%s", game_info_path_filename(selectedPath).c_str());
+		ImGui::PopTextWrapPos();
+	}
+	ImGui::PopFont();
+	ImGui::EndChild();
+}
+
+static void draw_library_hover_description_card(const GameMedia& game, float height)
+{
+	if (!ImGui::BeginChild("##libraryHoverDetails", ImVec2(0.0f, height), true))
+	{
+		ImGui::EndChild();
+		return;
+	}
+
+	ImGui::TextColored(ImVec4(0.45f, 0.66f, 0.74f, 1.0f), "%s", T("Details"));
+	ImGui::Spacing();
+	draw_game_info_detail_row("Players", game.players);
+	draw_game_info_detail_row("Released", format_game_info_release_date(game.releaseDate));
+	draw_game_info_detail_row("Genre", game.genre);
+	draw_game_info_detail_row("Developer", game.developer);
+
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
+	ImGui::TextColored(ImVec4(0.45f, 0.66f, 0.74f, 1.0f), "%s", T("Description"));
+	ImGui::Spacing();
+	const float wrapWidth = std::min(ImGui::GetContentRegionAvail().x, uiScaled(760.0f));
+	if (ImGui::BeginChild("##libraryHoverDescriptionText", ImVec2(0.0f, 0.0f), false))
+	{
+		ImGui::PushFont(game_info_body_font());
+		ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
 		if (game.desc.empty())
 			ImGui::TextDisabled("%s", T("No description available."));
 		else
-			ImGui::TextWrapped("%s", game.desc.c_str());
+			ImGui::TextUnformatted(game.desc.c_str());
+		ImGui::PopTextWrapPos();
+		ImGui::PopFont();
 	}
 	ImGui::EndChild();
+	ImGui::EndChild();
+}
 
-	ImGui::Separator();
-	ImGui::TextDisabled("%s", T("MEDIA:"));
-	ImGui::SameLine(0.0f, uiScaled(10.0f));
-	draw_game_info_media_label("Mix", !mixImagePath.empty());
-	draw_game_info_media_label("Cover", !coverPath.empty());
-	draw_game_info_media_label("Case", !casePath.empty());
-	draw_game_info_media_label("Screenshot", !screenshotPath.empty());
-	draw_game_info_media_label("Marquee", !titleImagePath.empty());
-	draw_game_info_media_label("Title Screen", !titleScreenPath.empty());
-	draw_game_info_media_label("Fan Art", !fanArtPath.empty());
-	draw_game_info_media_label("Physical", !physicalPath.empty());
-	draw_game_info_media_label("Manual", !manualPath.empty());
-	ImGui::EndTooltip();
+static int draw_library_hover_status_strip(const std::vector<GameInfoMediaEntry>& mediaEntries)
+{
+	int foundCount = 0;
+	for (const GameInfoMediaEntry& media : mediaEntries)
+		if (!media.path.empty())
+			foundCount++;
+
+	if (!ImGui::BeginChild("##libraryHoverMediaStatus", ImVec2(0.0f, uiScaled(76.0f)), true,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+	{
+		ImGui::EndChild();
+		return -1;
+	}
+
+	ImGui::PushFont(game_info_body_font());
+	ImGui::TextColored(ImVec4(0.45f, 0.66f, 0.74f, 1.0f), "%s", T("Media"));
+	ImGui::SameLine();
+	ImGui::TextColored(ImVec4(0.70f, 0.78f, 0.82f, 1.0f), "%d / %d found", foundCount, (int)mediaEntries.size());
+	ImGui::PopFont();
+	int clickedIndex = -1;
+	if (ImGui::BeginChild("##libraryHoverMediaBadges", ImVec2(0.0f, uiScaled(34.0f)), false,
+			ImGuiWindowFlags_HorizontalScrollbar))
+		clickedIndex = draw_game_info_badge_wrap(mediaEntries);
+	ImGui::EndChild();
+	ImGui::EndChild();
+	return clickedIndex;
+}
+
+static void draw_library_game_info_hover(const GameMedia& game, const GameBoxart* displayArt = nullptr)
+{
+#if defined(__ANDROID__)
+	(void)game;
+	(void)displayArt;
+#else
+	static std::string hoveredGameId;
+	static double hoverStartTime = 0.0;
+	static ImVec2 hoverStartMousePos;
+	static HoverGameInfoCache hoverCache;
+	static ImVec2 hoverPanelPos;
+	static ImVec2 hoverPanelMin;
+	static ImVec2 hoverPanelMax;
+	static bool hasHoverPanelPos = false;
+
+	const std::string gameId = !game.path.empty() ? game.path : (!game.fileName.empty() ? game.fileName : game.name);
+	const ImVec2 mousePos = ImGui::GetMousePos();
+	const ImGuiHoveredFlags hoverFlags = ImGuiHoveredFlags_RectOnly | ImGuiHoveredFlags_NoNavOverride;
+	const bool itemHovered = ImGui::IsItemHovered(hoverFlags) && !ImGui::IsMouseDown(ImGuiMouseButton_Left);
+	const bool panelHovered = hoveredGameId == gameId
+			&& mousePos.x >= hoverPanelMin.x && mousePos.x <= hoverPanelMax.x
+			&& mousePos.y >= hoverPanelMin.y && mousePos.y <= hoverPanelMax.y;
+	if (!itemHovered && !panelHovered)
+		return;
+
+	const float mouseDeltaX = mousePos.x - hoverStartMousePos.x;
+	const float mouseDeltaY = mousePos.y - hoverStartMousePos.y;
+	const float movementThreshold = uiScaled(6.0f);
+	if (itemHovered && (hoveredGameId != gameId || mouseDeltaX * mouseDeltaX + mouseDeltaY * mouseDeltaY > movementThreshold * movementThreshold))
+	{
+		hoveredGameId = gameId;
+		hoverStartTime = ImGui::GetTime();
+		hoverStartMousePos = mousePos;
+		hoverCache = {};
+		hasHoverPanelPos = false;
+	}
+	const double hoverElapsed = ImGui::GetTime() - hoverStartTime;
+	if (hoverElapsed >= 1.0 && (!hoverCache.ready || hoverCache.gameId != gameId))
+	{
+		hoverCache.gameId = gameId;
+		hoverCache.art = displayArt != nullptr ? *displayArt : getLibraryDisplayArtwork(game, 0.0);
+		hoverCache.mixImagePath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::MixImage);
+		hoverCache.titleImagePath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Title);
+		hoverCache.coverPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Cover);
+		hoverCache.casePath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Case);
+		hoverCache.screenshotPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Screenshot);
+		hoverCache.fanArtPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::FanArt);
+		hoverCache.titleScreenPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::TitleScreen);
+		hoverCache.physicalPath = boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Physical);
+		hoverCache.manualPath = !game.manualPath.empty()
+				? game.manualPath : boxart.getCustomMediaPath(game, config::LibraryCoverMediaMode::Manual);
+		hoverCache.primaryImagePath = !hoverCache.mixImagePath.empty() ? hoverCache.mixImagePath : hoverCache.art.boxartPath;
+		hoverCache.title = game.name;
+		if (hoverCache.title.empty() || hoverCache.title == game.fileName)
+			hoverCache.title = hoverCache.art.name;
+		if (hoverCache.title.empty())
+			hoverCache.title = game.fileName;
+		hoverCache.selectedMediaIndex = default_game_info_media_index(hoverCache);
+		hoverCache.ready = true;
+	}
+	if (hoverElapsed < LIBRARY_GAME_INFO_HOVER_SECONDS || !hoverCache.ready)
+		return;
+
+	const ImGuiViewport *viewport = ImGui::GetMainViewport();
+	const ImVec2 displaySize = viewport->Size;
+	const float hoverWidth = std::clamp(displaySize.x * 0.72f, uiScaled(820.0f), uiScaled(1180.0f));
+	const float hoverHeight = std::clamp(displaySize.y * 0.74f, uiScaled(560.0f), uiScaled(720.0f));
+	if (itemHovered || !hasHoverPanelPos)
+	{
+		hoverPanelPos = ImGui::GetMousePos() + ScaledVec2(18.0f, 18.0f);
+		if (hoverPanelPos.x + hoverWidth > viewport->Pos.x + displaySize.x - uiScaled(12.0f))
+			hoverPanelPos.x = ImGui::GetMousePos().x - hoverWidth - uiScaled(18.0f);
+		if (hoverPanelPos.y + hoverHeight > viewport->Pos.y + displaySize.y - uiScaled(12.0f))
+			hoverPanelPos.y = viewport->Pos.y + displaySize.y - hoverHeight - uiScaled(12.0f);
+		hoverPanelPos.x = std::max(viewport->Pos.x + uiScaled(12.0f), hoverPanelPos.x);
+		hoverPanelPos.y = std::max(viewport->Pos.y + uiScaled(12.0f), hoverPanelPos.y);
+		hasHoverPanelPos = true;
+	}
+	hoverPanelMin = hoverPanelPos;
+	hoverPanelMax = hoverPanelPos + ImVec2(hoverWidth, hoverHeight);
+
+	ImGui::GetBackgroundDrawList()->AddRectFilled(viewport->Pos, viewport->Pos + viewport->Size, IM_COL32(0, 0, 0, 138));
+	ImGui::SetNextWindowPos(hoverPanelPos, ImGuiCond_Always);
+	ImGui::SetNextWindowSize(ImVec2(hoverWidth, hoverHeight), ImGuiCond_Always);
+	ImguiStyleVar windowPadding(ImGuiStyleVar_WindowPadding, ScaledVec2(18.0f, 16.0f));
+	ImguiStyleVar framePadding(ImGuiStyleVar_FramePadding, ScaledVec2(10.0f, 6.0f));
+	ImguiStyleVar itemSpacing(ImGuiStyleVar_ItemSpacing, ScaledVec2(12.0f, 8.0f));
+	ImguiStyleVar windowRounding(ImGuiStyleVar_WindowRounding, uiScaled(12.0f));
+	ImguiStyleVar childRounding(ImGuiStyleVar_ChildRounding, uiScaled(10.0f));
+	ImguiStyleVar frameRounding(ImGuiStyleVar_FrameRounding, uiScaled(8.0f));
+	ImguiStyleVar borderSize(ImGuiStyleVar_WindowBorderSize, 0.0f);
+	ImguiStyleColor borderColor(ImGuiCol_Border, ImVec4(0.10f, 0.55f, 0.82f, 0.55f));
+	ImguiStyleColor childBgColor(ImGuiCol_ChildBg, ImVec4(0.035f, 0.040f, 0.045f, 0.94f));
+	ImguiStyleColor windowBgColor(ImGuiCol_WindowBg, ImVec4(0.015f, 0.018f, 0.022f, 0.97f));
+	const ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoDecoration
+			| ImGuiWindowFlags_NoSavedSettings
+			| ImGuiWindowFlags_NoFocusOnAppearing
+			| ImGuiWindowFlags_NoNav
+			| ImGuiWindowFlags_NoMove;
+	if (!ImGui::Begin("##libraryGameInfoHover", nullptr, windowFlags))
+	{
+		ImGui::End();
+		return;
+	}
+
+	const float width = ImGui::GetContentRegionAvail().x;
+	const std::vector<GameInfoMediaEntry> mediaEntries = make_game_info_media_entries(hoverCache);
+	draw_library_hover_hero(hoverCache, game, width);
+
+	ImGui::Spacing();
+	const float mediaWidth = std::clamp(width * 0.31f, uiScaled(300.0f), uiScaled(390.0f));
+	const float statusHeight = uiScaled(76.0f);
+	const float mainHeight = std::max(uiScaled(300.0f), ImGui::GetContentRegionAvail().y - statusHeight - uiScaled(10.0f));
+	draw_library_hover_media_card(hoverCache, mediaEntries, mediaWidth, mainHeight);
+
+	ImGui::SameLine(0.0f, uiScaled(14.0f));
+	draw_library_hover_description_card(game, mainHeight);
+
+	ImGui::Spacing();
+	const int clickedMediaIndex = draw_library_hover_status_strip(mediaEntries);
+	if (clickedMediaIndex >= 0)
+		hoverCache.selectedMediaIndex = clickedMediaIndex;
+	ImGui::End();
 #endif
 }
 
@@ -1163,7 +1641,7 @@ static void gui_display_game_info()
 				ImGui::TableNextColumn();
 				draw_game_info_stat("Players", game.players);
 				ImGui::TableNextColumn();
-				draw_game_info_stat("Released", game.releaseDate);
+				draw_game_info_stat("Released", format_game_info_release_date(game.releaseDate));
 				ImGui::TableNextColumn();
 				draw_game_info_stat("Genre", game.genre);
 				ImGui::TableNextColumn();
@@ -1253,9 +1731,9 @@ static void updateLibraryLongPress(const GameMedia& game, const std::string& gam
 static bool gameImageButton(ImguiTexture& texture, const std::string& tooltip, ImVec2 size,
 		const std::string& gameName, float fallbackTitleSize = 0.0f)
 {
+	(void)tooltip;
 	bool pressed = texture.button("##imagebutton", size, gameName, ImVec4(0, 0, 0, 0), ImVec4(1, 1, 1, 1),
 			fallbackTitleSize);
-	gameTooltip(tooltip);
 
     return pressed;
 }
@@ -1581,7 +2059,7 @@ static void gui_display_content()
 						const bool rowPressed = ImGui::Selectable(("##row_" + std::to_string(rowIndex)).c_str(),
 								false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap, ImVec2(0.0f, tableRowContentHeight));
 						updateLibraryLongPress(game, game.path.empty() ? "bios" : game.path, ImGui::IsItemActive());
-						draw_library_game_info_hover(game);
+						draw_library_game_info_hover(game, !game.device ? &art : nullptr);
 						ImGui::SetCursorScreenPos(iconCellPos);
 						if (!game.device && !art.boxartPath.empty())
 						{
@@ -1700,7 +2178,7 @@ static void gui_display_content()
 								ImguiFileTexture tex(art.boxartPath);
 								pressed = gameImageButton(tex, game.name, responsiveBoxVec2, gameName, gridTextSize);
 								updateLibraryLongPress(game, game.path.empty() ? "bios" : game.path, ImGui::IsItemActive());
-								draw_library_game_info_hover(game);
+								draw_library_game_info_hover(game, !game.device ? &art : nullptr);
 							}
 							ImGui::EndChild();
 						}

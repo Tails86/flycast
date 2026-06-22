@@ -257,11 +257,13 @@ public:
 
 	static void resetLoadCount() {
 		textureLoadCount = 0;
+		frameLoadStartTime = std::chrono::steady_clock::now();
 	}
 
 private:
 	std::string path;
 	static int textureLoadCount;
+	static std::chrono::steady_clock::time_point frameLoadStartTime;
 };
 
 class ImguiStateTexture : public ImguiTexture

@@ -195,6 +195,7 @@ GameListMetadataMap parseGamelistMetadata(const std::string& gamelistPath)
 		}
 
 		GameListMetadata data;
+		data.name = extractTagValue(gameBlock, "name");
 		data.desc = extractTagValue(gameBlock, "desc");
 		data.developer = extractTagValue(gameBlock, "developer");
 		data.publisher = extractTagValue(gameBlock, "publisher");
@@ -252,6 +253,8 @@ void populateMetadata(GameMedia& media, const GameListMetadataMap& metadata, con
 	if (it != metadata.end())
 	{
 		const GameListMetadata& entry = it->second;
+		if (!entry.name.empty())
+			media.name = entry.name;
 		media.desc = entry.desc;
 		media.developer = entry.developer;
 		media.publisher = entry.publisher;
