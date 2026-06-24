@@ -1076,7 +1076,7 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 						mainComboWidth
 					);
 
-					dream_link_ext_labels[bus] = link->dreamlink->getExpansionDeviceLabel();
+					dream_link_ext_labels[bus] = link->dreamlink->getProductName();
 					expComboWidth = std::max(
 						ImGui::CalcTextSize(dream_link_ext_labels[bus]).x + comboWidthPadding,
 						expComboWidth

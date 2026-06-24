@@ -136,7 +136,7 @@ struct DppMapleLinkDevice : public MapleLinkDeviceBase<maple_base>
 	//! The supported functions mask for this device
 	const u32 supportedFns;
 	//! The linked DreamPicoPort
-	std::shared_ptr<class DreamPicoPort> linkedDpp;
+	std::weak_ptr<class DreamPicoPort> linkedDppWptr;
 	//! The last time write was performed
 	std::chrono::steady_clock::time_point lastWriteTime;
 	//! Mutex serializing write operations
@@ -218,46 +218,25 @@ public:
 		}
 
 		if (!dpp_api_device) {
-			dpp_api::DppDevice::Filter dppFilter;
-			dppFilter.serial = serial_number;
-			dpp_api_device = dpp_api::DppDevice::find(dppFilter);
+			dpp_api_device = makeNewDppDevice(serial_number);
 			if (!dpp_api_device) {
-				dppFilter.minBcdDevice = 0;
-				dpp_api_device = dpp_api::DppDevice::find(dppFilter);
-				if (dpp_api_device) {
-					upgrade_required = true;
-					std::array<std::uint8_t, 3> ver = dpp_api_device->getVersion();
-					WARN_LOG(
-						INPUT,
-						"DreamPicoPort[%s] API connect failed: device with serial \"%s\" uses version %i.%i.%i\n"
-						"Update DreamPicoPort firmware to version 1.2.1 or later to enable peripheral connection",
-						getLocDesc().c_str(),
-						serial_number.c_str(),
-						static_cast<int>(ver[0]),
-						static_cast<int>(ver[1]),
-						static_cast<int>(ver[2])
-					);
-				}
-				else {
-					WARN_LOG(
-						INPUT,
-						"DreamPicoPort[%s] API connect failed: find failed for serial %s",
-						getLocDesc().c_str(),
-						serial_number.c_str()
-					);
-				}
+				return; // Failed to make the new device
 			}
-			else if (!dpp_api_device->connect()) {
+
+			// Save this instance to the map
+			all_dpp_api_devices.insert(std::make_pair(serial_number, dpp_api_device));
+		}
+		else if (!dpp_api_device->isConnected()) {
+			// Note: it is possible to reach here if DreamPicoPort is connected, removed from USB, and then reattached
+			//       all while the emulator is paused.
+			if (!dpp_api_device->connect()) {
 				WARN_LOG(
 					INPUT,
-					"DreamPicoPort[%s] API connect failed: %s",
+					"DreamPicoPort[%s] API reconnect failed: %s",
 					getLocDesc().c_str(),
 					dpp_api_device->getLastErrorStr().c_str()
 				);
 				dpp_api_device.reset();
-			} else {
-				// Save this instance to the map
-				all_dpp_api_devices.insert(std::make_pair(serial_number, dpp_api_device));
 			}
 		}
 	}
@@ -332,7 +311,7 @@ public:
 		return (id != 0);
 	}
 
-    bool send(const MapleMsg& txMsg, MapleMsg& rxMsg, std::chrono::milliseconds timeout_ms) {
+	bool send(const MapleMsg& txMsg, MapleMsg& rxMsg, std::chrono::milliseconds timeout_ms) {
 		if (!isConnected()) {
 			return false;
 		}
@@ -375,6 +354,56 @@ public:
 			software_bus = this->software_bus;
 		}
 		return getBusDescription(software_bus, hardware_bus);
+	}
+
+private:
+	std::shared_ptr<dpp_api::DppDevice> makeNewDppDevice(const std::string& serial_number)
+	{
+		std::shared_ptr<dpp_api::DppDevice> newDev;
+		dpp_api::DppDevice::Filter dppFilter;
+		dppFilter.serial = serial_number;
+		newDev = dpp_api::DppDevice::find(dppFilter);
+		if (!newDev) {
+			dppFilter.minBcdDevice = 0;
+			newDev = dpp_api::DppDevice::find(dppFilter);
+			if (newDev) {
+				upgrade_required = true;
+				std::array<std::uint8_t, 3> ver = newDev->getVersion();
+				WARN_LOG(
+					INPUT,
+					"DreamPicoPort[%s] API connect failed: device with serial \"%s\" uses version %i.%i.%i\n"
+					"Update DreamPicoPort firmware to version 1.2.1 or later to enable peripheral connection",
+					getLocDesc().c_str(),
+					serial_number.c_str(),
+					static_cast<int>(ver[0]),
+					static_cast<int>(ver[1]),
+					static_cast<int>(ver[2])
+				);
+			}
+			else {
+				WARN_LOG(
+					INPUT,
+					"DreamPicoPort[%s] API connect failed: find failed for serial %s",
+					getLocDesc().c_str(),
+					serial_number.c_str()
+				);
+			}
+
+			return nullptr;
+		}
+
+		if (!newDev->connect()) {
+			WARN_LOG(
+				INPUT,
+				"DreamPicoPort[%s] API connect failed: %s",
+				getLocDesc().c_str(),
+				newDev->getLastErrorStr().c_str()
+			);
+
+			return nullptr;
+		}
+
+		return newDev;
 	}
 };
 
@@ -616,7 +645,7 @@ public:
 		return device_name.c_str();
 	}
 
-	const char* getExpansionDeviceLabel() const override {
+	const char* getProductName() const override {
 		return "DreamPicoPort";
 	}
 
@@ -627,7 +656,7 @@ public:
 
 		u32 portOneFn = getFunctionCodesMask(0);
 		if (portOneFn & MFID_1_Storage) {
-			if (storageEnabled() && isGameRunning())
+			if (storageEnabled() && EventManager::isGameRunning())
 			{
 				sendGameId(0);
 			}
@@ -635,7 +664,7 @@ public:
 
 		u32 portTwoFn = getFunctionCodesMask(1);
 		if (portTwoFn & MFID_1_Storage) {
-			if (storageEnabled() && isGameRunning())
+			if (storageEnabled() && EventManager::isGameRunning())
 			{
 				sendGameId(1);
 			}
@@ -686,7 +715,7 @@ public:
 		connect_requested = false;
 	}
 
-    void sendPort() {
+	void sendPort() {
 		std::lock_guard<std::recursive_mutex> lock(mutex);
 
 		if (dpp_comms) {
@@ -788,6 +817,21 @@ private:
 		// Timeout is extended to 5 seconds for all other communication after connection
 		timeout_ms = std::chrono::seconds(5);
 
+		// Query peripheral after 3.5 seconds on first connection attempt
+		// This is because gamepad_btn_input event handler isn't active for a few seconds after physical connection. An
+		// older VMU without battery takes 3 seconds to boot, so this should ensure initial attachment is captured.
+		std::weak_ptr<BaseDreamLink> weakThis = weak_from_this();
+		gui_runOnUiThread(
+			std::chrono::milliseconds(3500),
+			[weakThis]()
+			{
+				std::shared_ptr<DreamPicoPort> link = std::dynamic_pointer_cast<DreamPicoPort>(weakThis.lock());
+				if (link) {
+					link->queryPeripherals();
+				}
+			}
+		);
+
 		setMapleDevices();
 	}
 
@@ -808,7 +852,17 @@ private:
 
 		connect_retry_scheduled = true;
 
-		gui_runOnUiThread(CONNECT_RETRY_DELAY, [this](){connectionCallback();});
+		std::weak_ptr<BaseDreamLink> weakThis = weak_from_this();
+		gui_runOnUiThread(
+			CONNECT_RETRY_DELAY,
+			[weakThis]()
+			{
+				std::shared_ptr<DreamPicoPort> link = std::dynamic_pointer_cast<DreamPicoPort>(weakThis.lock());
+				if (link) {
+					link->connectionCallback();
+				}
+			}
+		);
 	}
 
 	void connectionCallback() {
@@ -1005,7 +1059,7 @@ private:
 	}
 
 public:
-    bool queryPeripherals(bool clearOnFailure = true) {
+	bool queryPeripherals(bool clearOnFailure = true) {
 		std::lock_guard<std::recursive_mutex> lock(mutex);
 
 		std::vector<std::vector<std::array<uint32_t, 2>>> prev = peripherals;
@@ -1027,7 +1081,7 @@ public:
 		peripherals = std::move(optPeriph.value());
 
 		// If game is running, send game ID to any newly attached VMUs
-		if (isGameRunning()) {
+		if (EventManager::isGameRunning()) {
 			auto portContainsMemory = [](const std::vector<std::array<uint32_t, 2>>& portData) {
 				bool containsMemory = false;
 				for (const auto& fns : portData) {
@@ -1076,7 +1130,8 @@ public:
 DppMapleLinkDevice::DppMapleLinkDevice(const MapleLink& link, u32 supportedFns) :
 	MapleLinkDeviceBase<maple_base>(link), supportedFns(supportedFns)
 {
-	linkedDpp = std::dynamic_pointer_cast<DreamPicoPort>(link.dreamlink);
+	std::shared_ptr<DreamPicoPort> linkedDpp = std::dynamic_pointer_cast<DreamPicoPort>(link.dreamlink);
+	linkedDppWptr = linkedDpp;
 	if (!linkedDpp) {
 		ERROR_LOG(INPUT, "DppMapleLinkDevice created without an associated DreamPicoPort");
 	}
@@ -1097,6 +1152,8 @@ bool DppMapleLinkDevice::linkStatus()
 {
 	if (!maple_base::linkStatus())
 		return false;
+
+	std::shared_ptr<DreamPicoPort> linkedDpp = linkedDppWptr.lock();
 
 	bool isLinked = (
 		linkedDpp &&
@@ -1128,6 +1185,8 @@ MapleDeviceType DppMapleLinkDevice::get_device_type()
 {
 	// This is mainly used by the serializer
 	serializingType = MDT_None;
+
+	std::shared_ptr<DreamPicoPort> linkedDpp = linkedDppWptr.lock();
 
 	if (!linkedDpp)
 		return serializingType;
@@ -1200,6 +1259,8 @@ u32 DppMapleLinkDevice::virtualVmuDma(u32 cmd)
 
 u32 DppMapleLinkDevice::dma(u32 cmd)
 {
+	std::shared_ptr<DreamPicoPort> linkedDpp = linkedDppWptr.lock();
+
 	if (!linkedDpp)
 		return MDRS_JVSNone;
 
@@ -1297,6 +1358,7 @@ bool DppMapleLinkDevice::deserializingFor(MapleDeviceType type)
 {
 	deserializingType = type;
 	bool isSameType = false;
+	std::shared_ptr<DreamPicoPort> linkedDpp = linkedDppWptr.lock();
 
 	if (linkedDpp) {
 		MapleDeviceType detectedType = fnCodeToMapleDeviceType(linkedDpp->getFunctionCodesMask(bus_port));
@@ -1347,6 +1409,8 @@ void DppMapleLinkDevice::deserialize(Deserializer& deser)
 	// Assumption: the caller would have called deserializingFor() just before deserialize(), so deserializingType
 	//             should be set to the expected deserialization type
 
+	std::shared_ptr<DreamPicoPort> linkedDpp;
+
 	if (deserializingType == MDT_None)
 	{
 		ERROR_LOG(INPUT, "DppMapleLinkDevice received deserialize for MDT_None");
@@ -1363,15 +1427,19 @@ void DppMapleLinkDevice::deserialize(Deserializer& deser)
 		requestReconnect();
 		return;
 	}
-	else if (!linkedDpp)
+	else
 	{
-		ERROR_LOG(
-			INPUT,
-			"DppMapleLinkDevice no link setup to deserialize [%i]",
-			static_cast<int>(deserializingType)
-		);
-		requestReconnect();
-		return;
+		linkedDpp = linkedDppWptr.lock();
+		if (!linkedDpp)
+		{
+			ERROR_LOG(
+				INPUT,
+				"DppMapleLinkDevice no link setup to deserialize [%i]",
+				static_cast<int>(deserializingType)
+			);
+			requestReconnect();
+			return;
+		}
 	}
 
 	MapleDeviceType detectedType = fnCodeToMapleDeviceType(linkedDpp->getFunctionCodesMask(bus_port));
@@ -1427,6 +1495,8 @@ u32 MapleLinkMainDevice::dma(u32 cmd)
 
 		PlainJoystickState pjs;
 		config->GetInput(&pjs);
+
+		std::shared_ptr<DreamPicoPort> linkedDpp = linkedDppWptr.lock();
 
 		if (!linkedDpp || !linkedDpp->isConnected())
 		{

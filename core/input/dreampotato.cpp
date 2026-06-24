@@ -220,7 +220,8 @@ public:
 		checkConnection();
 		return connectionStatus == ConnectionStatus::Connected;
 	}
-	const char* getName() const override {
+
+	const char* getProductName() const override {
 		return "DreamPotato";
 	}
 
