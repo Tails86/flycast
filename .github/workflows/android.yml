@@ -70,10 +70,10 @@ jobs:
           DUMP_SYMS=./core/deps/breakpad/bin/dump_syms
           SO_DIR=shell/android-studio/flycast/build/intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib
           for arch in arm64-v8a armeabi-v7a x86 x86_64 ; do
-            $DUMP_SYMS $SO_DIR/$arch/libflycast.so > libflycast.so.sym
-            BUILD_ID=`head -1 libflycast.so.sym | awk '{ print $4 }'`
-            mkdir -p symbols/libflycast.so/$BUILD_ID
-            mv libflycast.so.sym symbols/libflycast.so/$BUILD_ID
+            $DUMP_SYMS $SO_DIR/$arch/libHollycast.so > libHollycast.so.sym
+            BUILD_ID=`head -1 libHollycast.so.sym | awk '{ print $4 }'`
+            mkdir -p symbols/libHollycast.so/$BUILD_ID
+            mv libHollycast.so.sym symbols/libHollycast.so/$BUILD_ID
           done
 
       - name: Setup Rclone
