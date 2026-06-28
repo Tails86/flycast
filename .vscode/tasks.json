@@ -24,13 +24,13 @@
         },
         {
             "label": "CMake: configure",
-            "type": "cmake",
-            "command": "configure",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--preset", "default"],
             "group": {
                 "kind": "build",
                 "isDefault": false
             },
-            "preset": "default",
             "problemMatcher": [],
             "dependsOn": [
                 "Copy CMakeUserPresets.json"
@@ -39,13 +39,13 @@
         },
         {
             "label": "CMake: build",
-            "type": "cmake",
-            "command": "build",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "--preset", "default"],
             "group": {
                 "kind": "build",
                 "isDefault": false
             },
-            "preset": "default",
             "problemMatcher": [],
             "dependsOn": [
                 "CMake: configure"
@@ -66,13 +66,13 @@
 
         {
             "label": "CMake: configure (Debug)",
-            "type": "cmake",
-            "command": "configure",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--preset", "debug"],
             "group": {
                 "kind": "build",
                 "isDefault": false
             },
-            "preset": "debug",
             "problemMatcher": [],
             "dependsOn": [
                 "Copy CMakeUserPresets.json"
@@ -81,13 +81,13 @@
         },
         {
             "label": "CMake: build (Debug)",
-            "type": "cmake",
-            "command": "build",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "--preset", "debug"],
             "group": {
                 "kind": "build",
                 "isDefault": false
             },
-            "preset": "debug",
             "problemMatcher": [],
             "dependsOn": [
                 "CMake: configure (Debug)"
@@ -108,13 +108,13 @@
 
         {
             "label": "CMake: configure unit tests (Debug)",
-            "type": "cmake",
-            "command": "configure",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--preset", "unit-tests-debug"],
             "group": {
                 "kind": "build",
                 "isDefault": false
             },
-            "preset": "unit-tests-debug",
             "problemMatcher": [],
             "dependsOn": [
                 "Copy CMakeUserPresets.json"
@@ -123,13 +123,13 @@
         },
         {
             "label": "CMake: build unit tests (Debug)",
-            "type": "cmake",
-            "command": "build",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "--preset", "unit-tests-debug"],
             "group": {
                 "kind": "build",
                 "isDefault": false
             },
-            "preset": "unit-tests-debug",
             "problemMatcher": [],
             "dependsOn": [
                 "CMake: configure unit tests (Debug)"
