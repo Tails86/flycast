@@ -277,7 +277,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 		CMAKE_CXX_STANDARD 20
 		CMAKE_CXX_STANDARD_REQUIRED ON)
 
-if(NOT LIBRETRO AND (WIN32 OR APPLE))
+if(NOT LIBRETRO)
 	set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "Hollycast")
 endif()
 
@@ -1263,7 +1263,7 @@ if(NOT LIBRETRO)
 		add_subdirectory(core/deps/gamesdk/games-frame-pacing EXCLUDE_FROM_ALL)
 		target_compile_options(swappy_static PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wno-vla-cxx-extension>)
 		target_compile_definitions(swappy_static PRIVATE ANDROIDGAMESDK_NO_BINARY_DEX_LINKAGE)
-	
+
 		target_include_directories(${PROJECT_NAME} PRIVATE core/deps/gamesdk/games-frame-pacing/include)
 		target_link_libraries(${PROJECT_NAME} PRIVATE swappy_static)
 		target_compile_definitions(${PROJECT_NAME} PRIVATE SWAPPY)
@@ -1498,7 +1498,7 @@ endif()
 if(IOS)
 	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>-${CMAKE_OSX_SYSROOT}/Hollycast.ipa" TYPE BIN)
 elseif(NINTENDO_SWITCH AND NOT LIBRETRO)
-	install(FILES ${CMAKE_BINARY_DIR}/flycast.nro DESTINATION "${CMAKE_INSTALL_BINDIR}")
+	install(FILES ${CMAKE_BINARY_DIR}/Hollycast.nro DESTINATION "${CMAKE_INSTALL_BINDIR}")
 elseif(LIBRETRO)
 	install(TARGETS ${PROJECT_NAME} DESTINATION "${CMAKE_INSTALL_LIBDIR}/libretro")
 else()
