@@ -1417,8 +1417,20 @@ if(NOT LIBRETRO)
 				${IOSURFACE_LIBRARY}
 				${MULTITOUCH_SUPPORT_LIBRARY})
 
+			# Determine the source path of MoltenVK
+			if(NOT "$ENV{VULKAN_SDK}" STREQUAL "")
+				set(MOLTENVK_SRC "$ENV{VULKAN_SDK}/lib/libMoltenVK.dylib")
+			else()
+				if(EXISTS "/lib/libMoltenVK.dylib")
+					set(MOLTENVK_SRC "/lib/libMoltenVK.dylib")
+				else()
+					# Fallback assumption (default location on brew install molten-vk)
+					set(MOLTENVK_SRC "/usr/local/lib/libMoltenVK.dylib")
+				endif()
+			endif()
+
 			add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E copy "$ENV{VULKAN_SDK}/lib/libMoltenVK.dylib"
+				COMMAND ${CMAKE_COMMAND} -E copy "${MOLTENVK_SRC}"
 				$<TARGET_FILE_DIR:flycast>/../Frameworks/libvulkan.dylib)
 		endif()
 	elseif(UNIX)
