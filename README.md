@@ -62,7 +62,6 @@ xcodebuild -downloadComponent MetalToolchain
 brew install cmake
 brew install molten-vk
 ```
-6. Add `VULKAN_SDK=/usr/local` to your environment
 
 ### Build Instructions
 The following assumes prerequisites are already installed.
