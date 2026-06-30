@@ -1429,6 +1429,13 @@ if(NOT LIBRETRO)
 				endif()
 			endif()
 
+			if(NOT EXISTS "${MOLTENVK_SRC}")
+				message(
+					FATAL_ERROR
+					"MoltenVK library not found! Set VULKAN_SDK in environment or install with: brew install molten-vk"
+				)
+			endif()
+
 			add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 				COMMAND ${CMAKE_COMMAND} -E copy "${MOLTENVK_SRC}"
 				$<TARGET_FILE_DIR:flycast>/../Frameworks/libvulkan.dylib)
