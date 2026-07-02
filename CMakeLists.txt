@@ -1419,6 +1419,7 @@ if(NOT LIBRETRO)
 
 			# Determine the source path of MoltenVK
 			if(NOT "$ENV{VULKAN_SDK}" STREQUAL "")
+				message(STATUS "Searching for MoltenVK under VULKAN_SDK: $ENV{VULKAN_SDK}")
 				set(MOLTENVK_SRC "$ENV{VULKAN_SDK}/lib/libMoltenVK.dylib")
 			else()
 				# Fallback assumption (default location after: brew install molten-vk)
@@ -1431,6 +1432,7 @@ if(NOT LIBRETRO)
 					"MoltenVK library not found! Set VULKAN_SDK in environment or install with: brew install molten-vk"
 				)
 			endif()
+			message(STATUS "Found MoltenVK at: ${MOLTENVK_SRC}")
 
 			add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 				COMMAND ${CMAKE_COMMAND} -E copy "${MOLTENVK_SRC}"
