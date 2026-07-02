@@ -284,9 +284,10 @@ static void abufferDrawQuad();
 
 static void compileFinalAndModVolShaders()
 {
-	if (maxLayers != config::PerPixelLayers)
+	int layers = std::clamp<int>(config::PerPixelLayers, 1, 256);
+	if (maxLayers != layers)
 	{
-		maxLayers = config::PerPixelLayers;
+		maxLayers = layers;
 		for (auto& shader : g_abuffer_final_shader) {
 			glcache.DeleteProgram(shader.program);
 			shader.program = 0;
@@ -303,7 +304,7 @@ static void compileFinalAndModVolShaders()
 		for (size_t i = 0; i < std::size(g_abuffer_final_shader); i++)
 		{
 			OpenGl4Source finalShader;
-			finalShader.addConstant("MAX_PIXELS_PER_FRAGMENT", config::PerPixelLayers)
+			finalShader.addConstant("MAX_PIXELS_PER_FRAGMENT", maxLayers)
 					.addConstant("DITHERING", i)
 					.addConstant("DIV_POS_Z", 0)
 					.addSource(ShaderHeader)
@@ -314,7 +315,7 @@ static void compileFinalAndModVolShaders()
 	if (g_abuffer_tr_modvol_shaders[0].program == 0)
 	{
 		OpenGl4Source modVolShader;
-		modVolShader.addConstant("MAX_PIXELS_PER_FRAGMENT", config::PerPixelLayers)
+		modVolShader.addConstant("MAX_PIXELS_PER_FRAGMENT", maxLayers)
 			.addConstant("DIV_POS_Z", config::NativeDepthInterpolation)
 			.addSource(ShaderHeader)
 			.addSource(tr_modvol_shader_source);
@@ -515,7 +516,10 @@ void DrawTranslucentModVols(int first, int count, bool useOpaqueGeom)
 
 		u32 mv_mode = param.isp.DepthMode;
 
-		verify(param.first >= 0 && param.first + param.count <= (u32)gl.rendContext->modtrig.size());
+		if (param.first + param.count > (u32)gl.rendContext->modtrig.size()) {
+			ERROR_LOG(RENDERER, "Corrupted translucent poly[%d]: first %d end %d", cmv, param.first, param.first + param.count);
+			continue;
+		}
 
 		if (mod_base == -1)
 			mod_base = param.first;

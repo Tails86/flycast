@@ -132,7 +132,7 @@ void gui_settings_video()
         	ImGui::SameLine();
         	ShowHelpMarker(T("Sort transparent polygons per pixel. Slower but accurate"));
         }
-    	ImGui::Columns(1, NULL, false);
+    	ImGui::Columns(1, nullptr, false);
     	switch (renderer)
     	{
     	case 0:
@@ -205,16 +205,18 @@ void gui_settings_video()
 		OptionCheckbox(T("Linear Interpolation"), config::LinearInterpolation, T("Scales the output with linear interpolation. Will use nearest neighbor interpolation otherwise. Disable with integer scaling."));
 #ifndef TARGET_IPHONE
     	OptionCheckbox(T("VSync"), config::VSync, T("Synchronizes the frame rate with the screen refresh rate. Recommended"));
-    	if (isVulkan(config::RendererType))
-    	{
-	    	ImGui::Indent();
-			{
-				DisabledScope scope(!config::VSync);
-
-				OptionCheckbox(T("Duplicate frames"), config::DupeFrames, T("Duplicate frames on high refresh rate monitors (120 Hz and higher)"));
-	    	}
-	    	ImGui::Unindent();
+    	ImGui::Indent();
+		{
+			DisabledScope scope(!config::VSync);
+#ifdef __ANDROID__
+			OptionCheckbox(T("Frame Pacing (Experimental)"), config::FramePacing,
+					T("Provide the GPU with presentation timing for each frame to replicate original frame pacing."));
+#else
+	    	if (isVulkan(config::RendererType))
+	    		OptionCheckbox(T("Duplicate frames"), config::DupeFrames, T("Duplicate frames on high refresh rate monitors (120 Hz and higher)"));
+#endif
     	}
+    	ImGui::Unindent();
 #endif
     	OptionCheckbox(T("Show VMU In-game"), config::FloatVMUs, T("Show the VMU LCD screens while in-game"));
     	OptionCheckbox(T("Full Framebuffer Emulation"), config::EmulateFramebuffer,

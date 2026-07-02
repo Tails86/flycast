@@ -17,7 +17,7 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "option.h"
-#include "network/naomi_network.h"
+#include "network/net_handshake.h"
 #include "debug/gdb_server.h"
 
 namespace config {
@@ -33,6 +33,7 @@ Option<int> Cable("Dreamcast.Cable", 3);			// TV Composite
 Option<int> Region("Dreamcast.Region", 1);			// USA
 Option<int> Broadcast("Dreamcast.Broadcast", 0);	// NTSC
 Option<int> Language("Dreamcast.Language", 1);		// English
+OptionString UILanguage("UILanguage", "");
 Option<bool> AutoLoadState("Dreamcast.AutoLoadState");
 Option<bool> AutoSaveState("Dreamcast.AutoSaveState");
 Option<int, false> SavestateSlot("Dreamcast.SavestateSlot");
@@ -78,6 +79,7 @@ Option<float> ExtraDepthScale("rend.ExtraDepthScale", 1.f);
 Option<bool> CustomTextures("rend.CustomTextures");
 Option<bool> PreloadCustomTextures("rend.PreloadCustomTextures");
 Option<bool> DumpTextures("rend.DumpTextures");
+Option<bool> DumpUniqueTextures("rend.DumpUniqueTextures");
 Option<bool> DumpReplacedTextures("rend.DumpReplacedTextures");
 Option<int> ScreenStretching("rend.ScreenStretching", 100);
 Option<bool> Fog("rend.Fog", true);
@@ -118,6 +120,7 @@ Option<bool> NativeDepthInterpolation("rend.NativeDepthInterpolation", false);
 Option<bool> EmulateFramebuffer("rend.EmulateFramebuffer", false);
 Option<bool> FixUpscaleBleedingEdge("rend.FixUpscaleBleedingEdge", true);
 Option<bool> CustomGpuDriver("rend.CustomGpuDriver", false);
+Option<bool> FramePacing("rend.FramePacing", true);
 #ifdef VIDEO_ROUTING
 Option<bool, false> VideoRouting("rend.VideoRouting", false);
 Option<bool, false> VideoRoutingScale("rend.VideoRoutingScale", false);
@@ -165,9 +168,10 @@ Option<float> ProfilerFrameWarningTime("Profiler.FrameWarningTime", 1.0f / 55.0f
 
 Option<bool> NetworkEnable("Enable", false, "network");
 Option<bool> ActAsServer("ActAsServer", false, "network");
+Option<bool> NaomiSatellite("NaomiSatellite", false, "network");
 OptionString DNS("DNS", "dns.flyca.st", "network");
 OptionString NetworkServer("server", "", "network");
-Option<int> LocalPort("LocalPort", NaomiNetwork::SERVER_PORT, "network");
+Option<int> LocalPort("LocalPort", defaultNaomiServerPort(), "network");
 Option<bool> EmulateBBA("EmulateBBA", false, "network");
 Option<bool> EnableUPnP("EnableUPnP", true, "network");
 Option<bool> GGPOEnable("GGPO", false, "network");
@@ -256,5 +260,6 @@ Option<bool> EnableAchievements("Enabled", false, "achievements");
 Option<bool> AchievementsHardcoreMode("HardcoreMode", false, "achievements");
 OptionString AchievementsUserName("UserName", "", "achievements");
 OptionString AchievementsToken("Token", "", "achievements");
+OptionString AchievementsHostUrl("HostUrl", "", "achievements");
 
 } // namespace config

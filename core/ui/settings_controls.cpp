@@ -39,7 +39,7 @@ static float calcComboWidth(const char *labels[], size_t size)
 	return w + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetFrameHeight();
 }
 
-static char *maple_device_types[] =
+static constexpr const char *maple_device_types_src[] =
 {
 	Tnop("None"),
 	Tnop("Sega Controller"),
@@ -57,6 +57,7 @@ static char *maple_device_types[] =
 	Tnop("DreamParaPara Controller"),
 //	Tnop("Dreameye"),
 };
+static const char *maple_device_types[std::size(maple_device_types_src)];
 
 static const char *maple_device_name(MapleDeviceType type)
 {
@@ -141,7 +142,7 @@ struct Mapping {
 	const char *name;
 };
 
-static Mapping dcButtons[] = {
+static constexpr Mapping dcButtons_src[] = {
 	{ EMU_BTN_NONE, Tnop("Directions") },
 	{ DC_DPAD_UP, Tnop("Up") },
 	{ DC_DPAD_DOWN, Tnop("Down") },
@@ -190,9 +191,12 @@ static Mapping dcButtons[] = {
 	{ EMU_BTN_NONE, Tnop("Emulator") },
 	{ EMU_BTN_MENU, Tnop("Menu") },
 	{ EMU_BTN_ESCAPE, Tnop("Exit") },
+	{ EMU_BTN_PAUSE, Tnop("Pause") },
 	{ EMU_BTN_FFORWARD, Tnop("Fast-forward") },
 	{ EMU_BTN_LOADSTATE, Tnop("Load State") },
 	{ EMU_BTN_SAVESTATE, Tnop("Save State") },
+	{ EMU_BTN_LOADSTATE_RAM, Tnop("Load State in RAM") },
+	{ EMU_BTN_SAVESTATE_RAM, Tnop("Save State in RAM") },
 	{ EMU_BTN_NEXTSLOT, Tnop("Next Save State Slot") },
 	{ EMU_BTN_PREVSLOT, Tnop("Previous Save State Slot") },
 	{ EMU_BTN_BYPASS_KB, Tnop("Bypass Emulated Keyboard") },
@@ -200,8 +204,9 @@ static Mapping dcButtons[] = {
 
 	{ EMU_BTN_NONE, nullptr }
 };
+static Mapping dcButtons[std::size(dcButtons_src)];
 
-static Mapping arcadeButtons[] = {
+static constexpr Mapping arcadeButtons_src[] = {
 	{ EMU_BTN_NONE, Tnop("Directions") },
 	{ DC_DPAD_UP, Tnop("Up") },
 	{ DC_DPAD_DOWN, Tnop("Down") },
@@ -246,9 +251,12 @@ static Mapping arcadeButtons[] = {
 	{ EMU_BTN_NONE, Tnop("Emulator") },
 	{ EMU_BTN_MENU, Tnop("Menu") },
 	{ EMU_BTN_ESCAPE, Tnop("Exit") },
+	{ EMU_BTN_PAUSE, Tnop("Pause") },
 	{ EMU_BTN_FFORWARD, Tnop("Fast-forward") },
 	{ EMU_BTN_LOADSTATE, Tnop("Load State") },
 	{ EMU_BTN_SAVESTATE, Tnop("Save State") },
+	{ EMU_BTN_LOADSTATE_RAM, Tnop("Load State in RAM") },
+	{ EMU_BTN_SAVESTATE_RAM, Tnop("Save State in RAM") },
 	{ EMU_BTN_NEXTSLOT, Tnop("Next Save State Slot") },
 	{ EMU_BTN_PREVSLOT, Tnop("Previous Save State Slot") },
 	{ EMU_BTN_BYPASS_KB, Tnop("Bypass Emulated Keyboard") },
@@ -256,22 +264,51 @@ static Mapping arcadeButtons[] = {
 
 	{ EMU_BTN_NONE, nullptr }
 };
+static Mapping arcadeButtons[std::size(arcadeButtons_src)];
 
-static void staticInit()
+namespace {
+
+class UILanguageChangeHandler
 {
-	static bool inited;
+public:
+	UILanguageChangeHandler() {
+		EventManager::listen(Event::LocaleChange, emuEvent);
+	}
+	~UILanguageChangeHandler() {
+		EventManager::unlisten(Event::LocaleChange, emuEvent);
+	}
 
-	if (inited)
-		return;
-	inited = true;
-	for (auto& label : maple_device_types)
-		label = (char *)T(label);
-	maple_ports[0] = (char *)T(maple_ports[0]);
-	maple_ports[5] = (char *)T(maple_ports[5]);
-	for (auto&  button : dcButtons)
-		button.name = (char *)T(button.name);
-	for (auto&  button : arcadeButtons)
-		button.name = (char *)T(button.name);
+	static void init()
+	{
+		if (inited)
+			return;
+		inited = true;
+		memcpy(maple_device_types, maple_device_types_src, sizeof(maple_device_types));
+		for (auto& label : maple_device_types)
+			label = (char *)T(label);
+		maple_ports[0] = (char *)T(maple_ports[0]);
+		maple_ports[5] = (char *)T(maple_ports[5]);
+		memcpy(dcButtons, dcButtons_src, sizeof(dcButtons));
+		for (auto&  button : dcButtons)
+			button.name = (char *)T(button.name);
+		memcpy(arcadeButtons, arcadeButtons_src, sizeof(arcadeButtons));
+		for (auto&  button : arcadeButtons)
+			button.name = (char *)T(button.name);
+	}
+
+private:
+	static void emuEvent(Event event, void *arg)
+	{
+		if (inited) {
+			inited = false;
+			init();
+		}
+	}
+	static bool inited;
+};
+bool UILanguageChangeHandler::inited;
+static UILanguageChangeHandler uiLanguageHandler;
+
 }
 
 static std::shared_ptr<GamepadDevice> currentGamepad;
@@ -350,7 +387,7 @@ static void detect_input_popup(const Mapping *mapping)
 	ImVec2 padding = ScaledVec2(20, 20);
 	ImguiStyleVar _(ImGuiStyleVar_WindowPadding, padding);
 	ImguiStyleVar _1(ImGuiStyleVar_ItemSpacing, padding);
-	if (ImGui::BeginPopupModal(T("Map Control"), NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
+	if (ImGui::BeginPopupModal(T("Map Control"), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
 	{
 		ImGui::Text(T("Waiting for control '%s'..."), mapping->name);
 		u64 now = getTimeMs();
@@ -405,7 +442,7 @@ static void detect_input_popup(const Mapping *mapping)
 			if (remaining <= 0)
 			{
 				std::shared_ptr<InputMapping> input_mapping = currentGamepad->get_input_mapping();
-				if (input_mapping != NULL && !mapped_codes.empty())
+				if (input_mapping != nullptr && !mapped_codes.empty())
 				{
 					unmapControl(currentGamepad, gamepad_port, mapping->key);
 					if (mapped_codes.size() == 1 && mapped_codes.front().is_axis())
@@ -541,7 +578,7 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 {
 	fullScreenWindow(true);
 	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
-	if (ImGui::BeginPopupModal(T("Controller Mapping"), NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
+	if (ImGui::BeginPopupModal(T("Controller Mapping"), nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
 	{
 		const char *mapLbl = T("Map");
 		const char *unmapLbl = T("Unmap");
@@ -560,7 +597,7 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 		}
 
 		std::shared_ptr<InputMapping> input_mapping = gamepad->get_input_mapping();
-		if (input_mapping == NULL || ImGui::Button(T("Done"), ScaledVec2(100, 30)))
+		if (input_mapping == nullptr || ImGui::Button(T("Done"), ScaledVec2(100, 30)))
 		{
 			ImGui::CloseCurrentPopup();
 			gamepad->save_mapping(map_system);
@@ -625,7 +662,7 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 
 		{
 			ImguiStyleVar _(ImGuiStyleVar_WindowPadding, ScaledVec2(20, 20));
-			if (ImGui::BeginPopupModal(T("Confirm Reset"), NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
+			if (ImGui::BeginPopupModal(T("Confirm Reset"), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
 			{
 				ImGui::Text("%s", T("Are you sure you want to reset the mappings to default?"));
 				static bool hitbox;
@@ -801,7 +838,7 @@ static void gamepadSettingsPopup(const std::shared_ptr<GamepadDevice>& gamepad)
 	ImGui::SetNextWindowSize(min(ImGui::GetIO().DisplaySize, ScaledVec2(450.f, 300.f)));
 
 	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
-	if (ImGui::BeginPopupModal(T("Gamepad Settings"), NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_DragScrolling))
+	if (ImGui::BeginPopupModal(T("Gamepad Settings"), nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_DragScrolling))
 	{
 		if (ImGui::Button(T("Done"), ScaledVec2(100, 30)))
 		{
@@ -912,7 +949,7 @@ static void gamepadSettingsPopup(const std::shared_ptr<GamepadDevice>& gamepad)
 
 void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<std::array<bool, 2>, 4>& expDevicesChanges)
 {
-	staticInit();
+	uiLanguageHandler.init();
 
 	header(T("Physical Devices"));
     {

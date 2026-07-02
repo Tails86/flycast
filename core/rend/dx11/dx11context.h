@@ -33,8 +33,9 @@
 class DX11Context : public GraphicsContext
 {
 public:
-	bool init(bool keepCurrentWindow = false);
-	void term() override;
+	static void Create(void *window, void *display = nullptr);
+	static DX11Context *Instance() { return static_cast<DX11Context *>(GraphicsContext::Instance()); }
+
 	void EndImGuiFrame();
 	void Present();
 	const ComPtr<ID3D11Device>& getDevice() const { return pDevice; }
@@ -59,6 +60,9 @@ public:
 	bool isAMD() override {
 		return vendorId == VENDOR_ATI || vendorId == VENDOR_AMD;
 	}
+	void setSwapInterval(int interval) override {
+		gameSwapInterval = interval;
+	}
 
 	void setFrameRendered() {
 		frameRendered = true;
@@ -77,6 +81,10 @@ public:
 	}
 
 private:
+	DX11Context(void *window, void *display);
+	~DX11Context();
+	bool init(bool keepCurrentWindow = false);
+	void term();
 	void handleDeviceLost();
 	bool checkTextureSupport();
 
@@ -100,10 +108,10 @@ private:
 	bool supportedTexFormats[5] {}; // indexed by TextureType enum
 	WinLibLoader d3dcompilerLib;
 	pD3DCompile d3dcompiler = nullptr;
+	int gameSwapInterval = 1;
 
 	static constexpr UINT VENDOR_INTEL = 0x8086;
 	static constexpr UINT VENDOR_ATI = 0x1002;
 	static constexpr UINT VENDOR_AMD = 0x1022;
 };
-extern DX11Context theDX11Context;
 #endif

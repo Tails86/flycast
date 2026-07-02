@@ -29,7 +29,7 @@
 #include <sstream>
 using namespace i18n;
 
-extern ImFont *largeFont;
+extern ImFont *boldFont;
 extern int insetLeft;
 
 namespace achievements
@@ -193,19 +193,20 @@ bool Notification::draw()
 	else if (type == Leaderboard)
 	{
 		ImFont *font = ImGui::GetFont();
+		const float fontSize = ImGui::GetStyle().FontSizeBase;
 		const ImVec2 padding = ImGui::GetStyle().FramePadding;
 		// iterate from the end
 		ImVec2 pos(insetLeft + padding.x, ImGui::GetIO().DisplaySize.y - padding.y);
 		for (auto it = leaderboards.rbegin(); it != leaderboards.rend(); ++it)
 		{
 			const std::string& text = it->second;
-			ImVec2 size = font->CalcTextSizeA(font->LegacySize, FLT_MAX, -1.f, text.c_str());
+			ImVec2 size = font->CalcTextSizeA(fontSize, FLT_MAX, -1.f, text.c_str());
 			ImVec2 psize = size + padding * 2;
 			pos.y -= psize.y;
 			dl->AddRectFilled(pos, pos + psize, bg_col, 0.f);
 			ImVec2 tpos = pos + padding;
 			const ImU32 col = alphaOverride(0xffffff, alpha);
-			dl->AddText(font, font->LegacySize, tpos, col, &text.front(), &text.back() + 1, FLT_MAX);
+			dl->AddText(font, fontSize, tpos, col, &text.front(), &text.back() + 1, FLT_MAX);
 			pos.y -= padding.y;
 		}
 	}
@@ -218,14 +219,15 @@ bool Notification::draw()
 		const float maxW = std::min(ImGui::GetIO().DisplaySize.x, uiScaled(640.f)) - padding.x
 				- (imgSize.x != 0.f ? imgSize.x + hspacing : padding.x);
 		ImFont *regularFont = ImGui::GetFont();
+		const float regularFontSize = ImGui::GetStyle().FontSizeBase;
 		ImVec2 textSize[3] {};
 		ImVec2 totalSize(0.f, padding.y * 2);
 		for (size_t i = 0; i < std::size(text); i++)
 		{
 			if (text[i].empty())
 				continue;
-			ImFont *font = i == 0 ? largeFont : regularFont;
-			textSize[i] = font->CalcTextSizeA(font->LegacySize, FLT_MAX, maxW, text[i].c_str());
+			float fontSize = i == 0 ? uiLargeFontSize() : regularFontSize;
+			textSize[i] = ImGui::GetFont()->CalcTextSizeA(fontSize, FLT_MAX, maxW, text[i].c_str());
 			totalSize.x = std::max(totalSize.x, textSize[i].x);
 			totalSize.y += textSize[i].y;
 		}
@@ -264,9 +266,10 @@ bool Notification::draw()
 		{
 			if (text[i].empty())
 				continue;
-			ImFont *font = i == 0 ? largeFont : regularFont;
+			ImFont *font = i == 0 ? boldFont : regularFont;
+			float fontSize = i == 0 ? uiLargeFontSize() : regularFontSize;
 			const ImU32 col = alphaOverride(i == 0 ? 0xffffff : 0x00ffff, alpha);
-			dl->AddText(font, font->LegacySize, pos, col, &text[i].front(), &text[i].back() + 1, maxW);
+			dl->AddText(font, fontSize, pos, col, &text[i].front(), &text[i].back() + 1, maxW);
 			pos.y += textSize[i].y + vspacing;
 		}
 	}
@@ -290,7 +293,7 @@ void achievementList()
 		tex.draw(ScaledVec2(80.f, 80.f));
 		ImGui::SameLine();
 		ImGui::BeginChild("game_info", ImVec2(w, uiScaled(80.f)), ImGuiChildFlags_None, ImGuiWindowFlags_None);
-		ImGui::PushFont(largeFont);
+		ImGui::PushFont(nullptr, uiLargeFontSize());
 		ImGui::Text("%s", game.title.c_str());
 		ImGui::PopFont();
 		std::string str = strprintf(T("You have unlocked %d of %d achievements and %d of %d points."),
@@ -326,7 +329,7 @@ void achievementList()
 				else if (category == Tnop("Unlocked") || category == Tnop("Recently Unlocked"))
 					ImGui::Text(ICON_FA_LOCK_OPEN);
 				ImGui::SameLine();
-				ImGui::PushFont(largeFont);
+				ImGui::PushFont(nullptr, uiLargeFontSize());
 				ImGui::Text("%s", T(category.c_str()));
 				ImGui::PopFont();
 				ImGui::Unindent(uiScaled(10));
@@ -336,7 +339,7 @@ void achievementList()
 			tex.draw(ScaledVec2(80.f, 80.f));
 			ImGui::SameLine();
 			ImGui::BeginChild(ImGui::GetID("ach_item"), ImVec2(0, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_None);
-			ImGui::PushFont(largeFont);
+			ImGui::PushFont(nullptr, uiLargeFontSize());
 			ImGui::Text("%s", ach.title.c_str());
 			ImGui::PopFont();
 

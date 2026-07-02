@@ -30,7 +30,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_PNG
-#include <stb_image.h>
+#include "stbi.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
@@ -44,15 +44,9 @@ public:
 		textures_path = hostfs::getTextureLoadPath(game_id);
 		if (!textures_path.empty())
 		{
-			try {
-				hostfs::FileInfo fileInfo = hostfs::storage().getFileInfo(textures_path);
-				if (fileInfo.isDirectory)
-				{
-					NOTICE_LOG(RENDERER, "Found custom textures directory: %s", textures_path.c_str());
-					custom_textures_available = true;
-				}
-			} catch (const FlycastException& e) {
-			}
+			custom_textures_available = hostfs::storage().exists(textures_path);
+			if (custom_textures_available)
+				NOTICE_LOG(RENDERER, "Found custom textures directory: %s", textures_path.c_str());
 		}
 	}
 	bool shouldReplace() const override { return config::CustomTextures && custom_textures_available; }
@@ -122,13 +116,13 @@ u8* CustomTextureSource::loadCustomTexture(u32 hash, int& width, int& height)
 	if (it == texture_map.end())
 		return nullptr;
 
-	FILE *file = hostfs::storage().openFile(it->second, "rb");
+	hostfs::File *file = hostfs::storage().openFile(it->second, "rb");
 	if (file == nullptr)
 		return nullptr;
 	int n;
-	stbi_set_flip_vertically_on_load(1);
+	stbi_set_flip_vertically_on_load_thread(1);
 	u8 *imgData = stbi_load_from_file(file, &width, &height, &n, STBI_rgb_alpha);
-	std::fclose(file);
+	delete file;
 	return imgData;
 }
 
@@ -320,6 +314,12 @@ void CustomTexture::loadCustomTextureAsync(BaseTextureCacheData *texture_data)
 
 void CustomTexture::dumpTexture(BaseTextureCacheData* texture, int w, int h, void *src_buffer)
 {
+	if (!config::DumpTextures)
+		return;
+
+	if (config::DumpUniqueTextures && (texture->Updates > 1 || texture->tcw.PixelFmt == PixelYUV))
+		return;
+
 	if (!config::DumpReplacedTextures.get() && isTextureReplaced(texture))
 		return;
 

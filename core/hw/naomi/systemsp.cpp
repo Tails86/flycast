@@ -36,6 +36,7 @@
 #include "stdclass.h"
 #include "hw/mem/addrspace.h"
 #include "oslib/i18n.h"
+#include "dinokich.h"
 #include <cerrno>
 #include <deque>
 
@@ -1919,28 +1920,26 @@ SystemSpCart::~SystemSpCart()
 	EventManager::unlisten(Event::Pause, handleEvent, this);
 	if (chd != nullptr)
 		chd_close(chd);
-	if (chdFile != nullptr)
-		fclose(chdFile);
 	sh4_sched_unregister(schedId);
 	Instance = nullptr;
 }
 
 chd_file *SystemSpCart::openChd(const std::string path)
 {
-	chdFile = hostfs::storage().openFile(path, "rb");
+	hostfs::File *chdFile = hostfs::storage().openFile(path, "rb");
 	if (chdFile == nullptr)
 	{
 		WARN_LOG(NAOMI, "Cannot open file '%s' errno %d", path.c_str(), errno);
 		return nullptr;
 	}
+
 	chd_file *chd;
-	chd_error err = chd_open_file(chdFile, CHD_OPEN_READ, 0, &chd);
+	chd_error err = chd_open_file(chdFile, CHD_OPEN_READ, nullptr, &chd);
 
 	if (err != CHDERR_NONE)
 	{
 		WARN_LOG(NAOMI, "Invalid CHD file %s", path.c_str());
-		fclose(chdFile);
-		chdFile = nullptr;
+		delete chdFile;
 		return nullptr;
 	}
 	INFO_LOG(NAOMI, "compact flash: parsing file %s", path.c_str());
@@ -2224,8 +2223,11 @@ void SystemSpCart::Init(LoadProgress *progress, std::vector<u8> *digest)
 	if (!eeprom.Load(getEepromPath()) && naomi_default_eeprom != nullptr)
 		memcpy(eeprom.data, naomi_default_eeprom, 128);
 
-	// dinoki4 doesn't use rfid chips. dinokich uses a different reader/writer protocol
-	if ((!strncmp(game->name, "dinoki", 6) && strcmp(game->name, "dinoki4") != 0 && strcmp(game->name, "dinokich") != 0)
+	// dinoki4 doesn't use rfid chips. dinokich and loveber3cn use a different reader/writer protocol
+	if (!strncmp(game->name, "dinokich", 8) || !strncmp(game->name, "loveber3cn", 10)) {
+		new DinokichCardReader(&uart1, 1, game->name);
+	}
+	else if ((!strncmp(game->name, "dinoki", 6) && strcmp(game->name, "dinoki4") != 0)
 			|| !strncmp(game->name, "loveber", 7))
 	{
 		new RfidReaderWriter(&uart1, 1, game->name);

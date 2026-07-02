@@ -234,11 +234,7 @@ SDLGamepad::SDLGamepad(int maple_port, int joystick_idx, SDL_Joystick* sdl_joyst
 	hasAnalogStick = axes > 0;
 	set_maple_port(maple_port);
 
-#if SDL_VERSION_ATLEAST(2, 0, 18)
 	rumbleEnabled = SDL_JoystickHasRumble(sdl_joystick);
-#else
-	rumbleEnabled = (SDL_JoystickRumble(sdl_joystick, 1, 1, 1) != -1);
-#endif
 
 	// Open the haptic interface
 	haptic = SDL_HapticOpenFromJoystick(sdl_joystick);
@@ -690,15 +686,20 @@ bool SDLGamepad::find_mapping(int system)
 	return ret;
 }
 
-SDLMouse::SDLMouse(u32 mouseId) : Mouse("SDL")
+SDLMouse::SDLMouse(u32 mouseId) : Mouse("SDL"), mouseId(mouseId)
 {
-	if (mouseId == 0) {
-		this->_name = i18n::Ts("Default Mouse");
+	refreshName();
+	if (mouseId == 0)
 		this->_unique_id = "sdl_mouse";
-	}
-	else {
-		this->_name = strprintf(i18n::T("Mouse %d"), mouseId);
+	else
 		this->_unique_id = "sdl_mouse_" + std::to_string(mouseId);
-	}
 	loadMapping();
+}
+
+void SDLMouse::refreshName()
+{
+	if (mouseId == 0)
+		this->_name = i18n::Ts("Default Mouse");
+	else
+		this->_name = strprintf(i18n::T("Mouse %d"), mouseId);
 }

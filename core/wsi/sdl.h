@@ -26,14 +26,16 @@
 class SDLGLGraphicsContext : public GLGraphicsContext
 {
 public:
-	bool init();
-	void term() override;
-	void swap();
+	~SDLGLGraphicsContext();
+	void swap() override;
+	static void Create(void *window, void *display);
 
 private:
+	SDLGLGraphicsContext(void *window, void *display);
+	bool init();
+	void term();
+	void changeGLSwapInterval();
+
 	SDL_GLContext glcontext = nullptr;
 	bool swapOnVSync = false;
-	int swapInterval = 1;
 };
-
-extern SDLGLGraphicsContext theGLContext;

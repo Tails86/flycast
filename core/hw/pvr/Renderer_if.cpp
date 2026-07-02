@@ -8,6 +8,7 @@
 #include "hw/holly/holly_intc.h"
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_core.h"
+#include "hw/sh4/sh4_sched.h"
 #include "profiler/fc_profiler.h"
 #include "network/ggpo.h"
 
@@ -74,6 +75,29 @@ public:
 							break;
 						}
 					if (!dupe || type == Present) {
+						// Bound the queue to keep the emu-thread producer and
+						// the renderer-thread consumer from drifting apart.
+						// Render/RenderFramebuffer/Stop are already deduplicated
+						// above, but Present is intentionally allowed to repeat
+						// and can stack up indefinitely if the consumer stalls
+						// (notably under libretro frontends, which drive the
+						// swap from their own video callback). Unbounded growth
+						// here is the producer side of progressive audio/video
+						// drift in long sessions: the SH4 keeps running ahead
+						// while pending Presents pile up. Drop the oldest
+						// pending Present to keep latency bounded.
+						constexpr size_t MAX_QUEUE_DEPTH = 4;
+						if (queue.size() >= MAX_QUEUE_DEPTH)
+						{
+							for (auto it = queue.begin(); it != queue.end(); ++it)
+							{
+								if (it->type == Present)
+								{
+									queue.erase(it);
+									break;
+								}
+							}
+						}
 						queue.push_back(msg);
 						dupe = false;
 					}
@@ -176,13 +200,10 @@ private:
 		if (taContext == nullptr)
 			return;
 
-		if (!taContext->rend.isRTT)
-		{
-			int width, height;
-			getScaledFramebufferSize(taContext->rend, width, height);
-			taContext->rend.framebufferWidth = width;
-			taContext->rend.framebufferHeight = height;
-		}
+		int width, height;
+		getScaledFramebufferSize(taContext->rend, width, height);
+		taContext->rend.framebufferWidth = width;
+		taContext->rend.framebufferHeight = height;
 		bool renderToScreen = !taContext->rend.isRTT && !config::EmulateFramebuffer;
 #ifdef LIBRETRO
 		if (renderToScreen)
@@ -273,6 +294,106 @@ bool rend_single_frame(const bool& enabled)
 	return true;
 }
 
+class SwapIntervalDetector
+{
+public:
+	SwapIntervalDetector() {
+		EventManager::listen(Event::LoadState, eventHandler, this);
+		reset();
+	}
+	~SwapIntervalDetector() {
+		EventManager::unlisten(Event::LoadState, eventHandler, this);
+	}
+
+	void render()
+	{
+		u64 now = sh4_sched_now64();
+		if (lastRender != 0)
+			renderInterval = now - lastRender;
+		lastRender = now;
+		renders++;
+	}
+
+	void vblank()
+	{
+		avgRenderInterval = 0.1f * renderInterval + 0.9f * avgRenderInterval;
+
+		// Force transition to 60 FPS if the game swap interval is 1 for 3 consecutive frames.
+		// Displaying a 60 FPS game at 30 FPS makes the game run in slo-mo and breaks audio.
+		if (renders != 0)
+		{
+			renders = 0;
+			rendersFullSpeed++;
+			if (rendersFullSpeed >= 3)
+			{
+				// force 60/50 FPS now
+				lastInterval = 1;
+				stability = std::max(stability, 10);
+				return;
+			}
+		}
+		else {
+			rendersFullSpeed = 0;
+		}
+
+		const float refreshRate = SPG_CONTROL.isPAL() ? 20_sh4ms : 16667_sh4us;
+		int interval = std::round(avgRenderInterval / refreshRate);
+		float frac = std::abs(avgRenderInterval / refreshRate - interval);
+
+		if (frac <= .05f || (interval == 1 && frac <= .2f))
+		{
+			if (lastInterval == (int)interval) {
+				stability++;
+			}
+			else {
+				stability = 0;
+				lastInterval = interval;
+			}
+		}
+		else {
+			stability = 0;
+		}
+	}
+
+	int swapInterval()
+	{
+		if (stability < 10)
+			return -1;
+		else
+			return std::min(lastInterval, 2);
+	}
+
+	void reset()
+	{
+		lastInterval = 1;
+		stability = 0;
+
+		lastRender = 0;
+		renderInterval = 0;
+		avgRenderInterval = 0.f;
+		renders = 0;
+		rendersFullSpeed = 0;
+	}
+
+private:
+	static void eventHandler(Event event, void *arg) {
+		SwapIntervalDetector *self = (SwapIntervalDetector *)arg;
+		self->lastRender = 0;
+		self->lastInterval = 1;
+	}
+
+	int lastInterval;
+	int stability;
+
+	u64 lastRender;
+	u64 renderInterval;
+	float avgRenderInterval;
+	int renders;
+	int rendersFullSpeed;
+};
+static SwapIntervalDetector swapIntervalDetector;
+
+
 Renderer* rend_GLES2();
 Renderer* rend_GL4();
 Renderer* rend_norend();
@@ -341,6 +462,16 @@ bool rend_init_renderer()
 
 void rend_term_renderer()
 {
+	// Drain and stop the queue first so that any in-flight Render/Present
+	// messages cannot be dispatched against a renderer that is about to be
+	// destroyed. This is called from many libretro entry points (context
+	// reset/destroy, deinit, content load, renderer switch) where the emu
+	// thread may still be holding queued work; without cancelling first
+	// we can race the consumer thread into a null renderer dereference and
+	// also leave the producer side wedged, which manifests as audio/video
+	// drift after a renderer switch.
+	rend_cancel_emu_wait();
+
 	if (renderer != nullptr)
 	{
 		renderer->Term();
@@ -360,6 +491,7 @@ void rend_reset()
 	rendererEnabled = true;
 	fbAddrHistory[0] = 1;
 	fbAddrHistory[1] = 1;
+	swapIntervalDetector.reset();
 }
 
 void rend_start_render()
@@ -402,10 +534,13 @@ void rend_start_render()
 	ctx->rend.fb_W_SOF1 = FB_W_SOF1;
 	ctx->rend.fb_W_CTRL.full = FB_W_CTRL.full;
 
-	ctx->rend.ta_GLOB_TILE_CLIP = TA_GLOB_TILE_CLIP;
+	ctx->rend.globClip.x = (TA_GLOB_TILE_CLIP.tile_x_num + 1) * 32;
+	ctx->rend.globClip.y = (TA_GLOB_TILE_CLIP.tile_y_num + 1) * 32;
 	ctx->rend.scaler_ctl = SCALER_CTL;
-	ctx->rend.fb_X_CLIP = FB_X_CLIP;
-	ctx->rend.fb_Y_CLIP = FB_Y_CLIP;
+	ctx->rend.fbClip.origin.x = FB_X_CLIP.min;
+	ctx->rend.fbClip.origin.y = FB_Y_CLIP.min;
+	ctx->rend.fbClip.size.x = FB_X_CLIP.max - FB_X_CLIP.min + 1;
+	ctx->rend.fbClip.size.y = FB_Y_CLIP.max - FB_Y_CLIP.min + 1;
 	ctx->rend.fb_W_LINESTRIDE = FB_W_LINESTRIDE.stride;
 
 	ctx->rend.fog_clamp_min = FOG_CLAMP_MIN;
@@ -423,6 +558,11 @@ void rend_start_render()
 			ctx->rend.clearFramebuffer = false;
 		}
 		ggpo::endOfFrame();
+		swapIntervalDetector.render();
+		if (!config::EmulateFramebuffer)
+			ctx->rend.swapInterval = swapIntervalDetector.swapInterval();
+		else
+			ctx->rend.swapInterval = 1;
 	}
 
 	if (QueueRender(ctx))
@@ -474,6 +614,7 @@ void rend_vblank()
 	render_called = false;
 	check_framebuffer_write();
 	emu.vblank();
+	swapIntervalDetector.vblank();
 }
 
 void check_framebuffer_write()

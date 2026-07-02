@@ -19,6 +19,17 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "gl_context.h"
+#if defined(LIBRETRO)
+#include "libretro.h"
+#elif defined(TARGET_IPHONE)
+#include "osx.h"
+#elif defined(USE_SDL)
+#include "sdl.h"
+#elif defined(__ANDROID__) || defined(SUPPORT_X11)
+#include "egl.h"
+#else
+#error Unsupported window system
+#endif
 
 #ifndef LIBRETRO
 #include "rend/gles/opengl_driver.h"
@@ -60,7 +71,6 @@ void GLGraphicsContext::findGLVersion()
 
 void GLGraphicsContext::postInit()
 {
-	instance = this;
 	findGLVersion();
 	resetUIDriver();
 }
@@ -70,7 +80,6 @@ void GLGraphicsContext::preTerm()
 #ifndef LIBRETRO
 	imguiDriver.reset();
 #endif
-	instance = nullptr;
 }
 
 void GLGraphicsContext::resetUIDriver()
@@ -78,5 +87,26 @@ void GLGraphicsContext::resetUIDriver()
 #ifndef LIBRETRO
 	imguiDriver.reset();
 	imguiDriver = std::unique_ptr<ImGuiDriver>(new OpenGLDriver());
+#endif
+}
+
+void GLGraphicsContext::setSwapInterval(int interval)
+{
+	if (interval <= 0 || interval == gameSwapInterval)
+		return;
+	gameSwapInterval = interval;
+	gameSwapIntervalChanged = true;
+}
+
+void GLGraphicsContext::Create(void *window, void *display)
+{
+#if defined(LIBRETRO)
+	LibretroGraphicsContext::Create(window, display);
+#elif defined(TARGET_IPHONE)
+	OSXGraphicsContext::Create(window, display);
+#elif defined(USE_SDL)
+	SDLGLGraphicsContext::Create(window, display);
+#elif defined(__ANDROID__) || defined(SUPPORT_X11)
+	EGLGraphicsContext::Create(window, display);
 #endif
 }

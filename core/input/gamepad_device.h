@@ -22,6 +22,7 @@
 #include "types.h"
 #include "mapping.h"
 #include "stdclass.h"
+#include "emulator.h"
 
 #include <unordered_map>
 #include <memory>
@@ -47,7 +48,7 @@ public:
 	}
 	virtual bool gamepad_btn_input(u32 code, bool pressed);
 	virtual bool gamepad_axis_input(u32 code, int value);
-	virtual ~GamepadDevice() = default;
+	virtual ~GamepadDevice();
 
 	void detectInput(bool combo, input_detected_cb input_changed);
 	void cancel_detect_input() {
@@ -190,13 +191,7 @@ public:
 	);
 
 protected:
-	GamepadDevice(int maple_port, const char *api_name, bool remappable = true)
-		: _api_name(api_name), _maple_port(maple_port), _remappable(remappable),
-		  digitalToAnalogState{}
-	{
-		// Initialize pressedButtons sets
-		currentInputs.clear();
-	}
+	GamepadDevice(int maple_port, const char *api_name, bool remappable = true);
 
 	void loadMapping() {
 		if (!find_mapping())
@@ -213,6 +208,7 @@ protected:
 	}
 
 	virtual void registered() {}
+	virtual void refreshName() {}
 
 	std::string _name;
 	std::string _unique_id;
@@ -226,6 +222,7 @@ private:
 	bool handleButtonInputDef(const InputMapping::InputDef& inputDef, bool pressed);
 	std::string make_mapping_filename(bool instance, int system, bool perGame = false);
 	bool detectAxis(u32 code, int value);
+	static void emuEvent(Event event, void *arg);
 
 	// Track which inputs are currently activated (for button combos)
 	InputMapping::InputSet currentInputs;

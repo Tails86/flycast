@@ -45,6 +45,12 @@
 	touchToButton = [[NSMutableDictionary alloc] init];
 }
 
+- (void)dealloc
+{
+	GamepadDevice::Unregister(virtualGamepad);
+	virtualGamepad.reset();
+}
+
 - (void)showController:(UIView *)parentView
 {
 	if (!config::loadBool("help", "PauseGameTip", false))
