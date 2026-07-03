@@ -47,7 +47,7 @@ void renderSystemMenu();
 void renderToolsMenu();
 
 // Settings Menu - configuration
-// Items: Graphics, Audio, Input, About
+// Items: General, Video, Audio, Controls, Network, Advanced
 void renderSettingsMenu();
 
 // Help Menu - documentation and support
@@ -64,6 +64,32 @@ void toggleMenuVisibility();
 
 // Check if menu bar is currently visible
 bool isMenuBarVisible();
+
+// Current effective menu bar height for laying out full-screen UI.
+float mainMenuBarHeight();
+
+// Shared menu actions. Native platform menus call these so behavior stays
+// aligned with the ImGui menu implementation.
+void addRomDirectory(const std::string& path);
+void loadRomFile(const std::string& path);
+void rescanRomDirectory();
+void saveState();
+void loadState();
+void exitEmulator();
+void pauseOrResume();
+void restartGame();
+void toggleFastForward();
+void takeScreenshot();
+void openCheats();
+void openCustomBoxartSettings();
+void openGeneralSettings();
+void openVideoSettings();
+void openAudioSettings();
+void openControlsSettings();
+void openNetworkSettings();
+void openAdvancedSettings();
+void openAboutSettings();
+bool isGameRunning();
 
 // Initialize menu system
 // Called during GUI initialization to set up menu state

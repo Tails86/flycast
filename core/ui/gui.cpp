@@ -90,6 +90,9 @@ static bool keysUpNextFrame[512];
 bool uiUserScaleUpdated;
 static bool clearActiveIdNextFrame;
 bool showExitSaveDialog = false;
+static bool showAutoLoadDialog = false;
+enum class ExitSaveDialogAction { ReturnToLibrary, ExitEmulator };
+static ExitSaveDialogAction exitSaveDialogAction = ExitSaveDialogAction::ReturnToLibrary;
 
 GameScanner scanner;
 static BackgroundGameLoader gameLoader;
@@ -97,7 +100,6 @@ static Boxart boxart;
 static Chat chat;
 static std::recursive_mutex guiMutex;
 using LockGuard = std::lock_guard<std::recursive_mutex>;
-static constexpr int NUM_SAVE_SLOTS = 10;
 
 static Toast toast;
 static ScheduledThreadRunner<std::chrono::steady_clock::time_point> uiThreadRunner;
@@ -478,6 +480,8 @@ void gui_start_game(const std::string& path)
 	if (gui_state != GuiState::Main && gui_state != GuiState::Closed && gui_state != GuiState::Commands
 			&& gui_state != GuiState::Pause)
 		return;
+	showExitSaveDialog = false;
+	showAutoLoadDialog = false;
 	emu.unloadGame();
 	reset_vmus();
     chat.reset();
@@ -490,13 +494,15 @@ void gui_start_game(const std::string& path)
 	gameLoader.load(path);
 }
 
-void gui_stop_game(const std::string& message)
+void gui_stop_game(const std::string& message, bool allowAutoSave)
 {
 	const LockGuard lock(guiMutex);
+	showExitSaveDialog = false;
+	showAutoLoadDialog = false;
 	if (!commandLineStart)
 	{
 		// Exit to main menu
-		emu.unloadGame();
+		emu.unloadGame(allowAutoSave);
 		gui_setState(GuiState::Main);
 		reset_vmus();
 
@@ -510,9 +516,108 @@ void gui_stop_game(const std::string& message)
 	{
 		if (!message.empty())
 			ERROR_LOG(COMMON, "Flycast has stopped: %s", message.c_str());
+		emu.unloadGame(allowAutoSave);
 		// Exit emulator
 		dc_exit();
 	}
+}
+
+static void savestate();
+static void savestate(int slot);
+
+static void save_auto_state_before_exit()
+{
+	if (!dc_savestateAllowed())
+		return;
+
+	try {
+		if (gui_state == GuiState::Closed)
+			emu.stop();
+		// Save here before exit so the chosen "Save and Exit" path uses the
+		// hidden auto-save slot, then suppress unloadGame() from writing a second
+		// auto-save for the same shutdown.
+		savestate(dc_getAutoSaveSlot());
+		dc_skipAutoSaveOnNextUnload();
+	} catch (const FlycastException& e) {
+		WARN_LOG(COMMON, "save_auto_state_before_exit: %s", e.what());
+	}
+}
+
+static void finish_exit_request(bool exitEmulator, bool saveFirst)
+{
+	if (saveFirst)
+		save_auto_state_before_exit();
+
+	if (exitEmulator && !commandLineStart)
+	{
+		emu.unloadGame(false);
+		mainui_stop();
+		return;
+	}
+
+	gui_stop_game("", false);
+}
+
+void gui_request_exit_to_library()
+{
+	if (dc_savestateAllowed() && config::AutoSaveState)
+	{
+		finish_exit_request(false, true);
+		return;
+	}
+
+	if (dc_savestateAllowed() && config::SaveProtection)
+	{
+		exitSaveDialogAction = ExitSaveDialogAction::ReturnToLibrary;
+		showExitSaveDialog = true;
+		return;
+	}
+	gui_stop_game("", false);
+}
+
+void gui_request_exit_emulator()
+{
+	if (!game_started)
+	{
+		mainui_stop();
+		return;
+	}
+
+	if (dc_savestateAllowed() && config::AutoSaveState)
+	{
+		finish_exit_request(true, true);
+		return;
+	}
+
+	if (!dc_savestateAllowed() || !config::SaveProtection)
+	{
+		finish_exit_request(true, false);
+		return;
+	}
+
+	exitSaveDialogAction = ExitSaveDialogAction::ExitEmulator;
+	showExitSaveDialog = true;
+}
+
+void gui_request_initial_auto_load()
+{
+	const int autoSaveSlot = dc_getAutoSaveSlot();
+	if (!dc_savestateAllowed() || settings.raHardcoreMode
+			|| dc_getStateCreationDate(autoSaveSlot) == 0)
+	{
+		gui_setState(GuiState::Closed);
+		return;
+	}
+
+	if (config::AutoLoadState)
+	{
+		dc_loadstate(autoSaveSlot);
+		gui_setState(GuiState::Closed);
+		return;
+	}
+
+	showAutoLoadDialog = true;
+	gui_setState(GuiState::Pause);
 }
 
 static void appendVectorData(void *context, void *data, int size)
@@ -533,14 +638,19 @@ static void getScreenshot(std::vector<u8>& data, int width = 0)
 	stbi_write_png_to_func(appendVectorData, &data, width, height, 3, &rawData[0], 0);
 }
 
-static void savestate()
+static void savestate(int slot)
 {
 	// Potential optimization: move screenshot/state compression/write off the UI thread.
 	std::vector<u8> pngData;
 	getScreenshot(pngData, 640);
-	dc_savestate(config::SavestateSlot, pngData.empty() ? nullptr : &pngData[0], pngData.size());
-	ImguiStateTexture savestatePic;
+	dc_savestate(slot, pngData.empty() ? nullptr : &pngData[0], pngData.size());
+	ImguiStateTexture savestatePic(slot);
 	savestatePic.invalidate();
+}
+
+static void savestate()
+{
+	savestate(config::SavestateSlot);
 }
 
 static void render_exit_save_dialog()
@@ -561,15 +671,18 @@ static void render_exit_save_dialog()
 	// Only open popup if it's not already open and this is a new request
 	if (showExitSaveDialog && !wasDialogShown)
 	{
-		ImGui::OpenPopup(Tnop("Exit Game?"));
+		ImGui::OpenPopup(Tnop("Exit Save Prompt"));
 		wasDialogShown = true;
 	}
 
-	const std::string exitGamePopup = std::string(T("Exit Game?")) + "###Exit Game?";
+	const bool exitEmulator = exitSaveDialogAction == ExitSaveDialogAction::ExitEmulator;
+	const std::string exitGamePopup = std::string(exitEmulator ? T("Exit Emulator?") : T("Exit Game?")) + "###Exit Save Prompt";
 	if (ImGui::BeginPopupModal(exitGamePopup.c_str(), NULL,
 		ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar))
 	{
-		ImGui::TextUnformatted(T("Do you want to save state before exiting?"));
+		ImGui::TextUnformatted(exitEmulator
+			? T("Do you want to save state before exiting the emulator?")
+			: T("Do you want to save state before returning to the library?"));
 		ImGui::NewLine();
 
 		// Button styling (consistent with existing dialogs)
@@ -591,10 +704,9 @@ static void render_exit_save_dialog()
 		{
 			if (canSave)
 			{
-				savestate(); // Save current state
 				ImGui::CloseCurrentPopup();
 				showExitSaveDialog = false;
-				gui_stop_game();
+				finish_exit_request(exitEmulator, true);
 			}
 			else
 			{
@@ -607,13 +719,14 @@ static void render_exit_save_dialog()
 		{
 			ImGui::CloseCurrentPopup();
 			showExitSaveDialog = false;
-			gui_stop_game();
+			finish_exit_request(exitEmulator, false);
 		}
 		ImGui::SameLine();
 		if (ImGui::Button(cancelButton, ImVec2(buttonWidth, 0)))
 		{
 			ImGui::CloseCurrentPopup();
 			showExitSaveDialog = false;
+			exitSaveDialogAction = ExitSaveDialogAction::ReturnToLibrary;
 		}
 
 		// Error popup for save not allowed
@@ -632,6 +745,69 @@ static void render_exit_save_dialog()
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndPopup();
+		}
+
+		ImGui::PopStyleVar(2);
+		ImGui::EndPopup();
+	}
+}
+
+static void render_auto_load_dialog()
+{
+	static bool wasDialogShown = false;
+
+	if (!showAutoLoadDialog)
+	{
+		wasDialogShown = false;
+		return;
+	}
+
+	ImGui::SetNextWindowPos(
+		ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f),
+		ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+
+	if (!wasDialogShown)
+	{
+		ImGui::OpenPopup(Tnop("Auto-Load Prompt"));
+		wasDialogShown = true;
+	}
+
+	const std::string popupTitle = std::string(T("Load Auto-Save?")) + "###Auto-Load Prompt";
+	if (ImGui::BeginPopupModal(popupTitle.c_str(), nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar))
+	{
+		ImGui::TextUnformatted(T("A hidden Auto-Save was found for this game."));
+		ImGui::TextUnformatted(T("Do you want to load it?"));
+		const int autoSaveSlot = dc_getAutoSaveSlot();
+		const time_t savestateDate = dc_getStateCreationDate(autoSaveSlot);
+		if (savestateDate != 0)
+			ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.75f, 1.f), "%s", timeToShortDateTimeString(savestateDate).c_str());
+
+		ImGui::Spacing();
+		ImguiStateTexture savestatePic(autoSaveSlot);
+		savestatePic.draw(ScaledVec2(320.f, 0.f));
+		ImGui::Spacing();
+
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(uiScaled(20), ImGui::GetStyle().ItemSpacing.y));
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ScaledVec2(10, 10));
+		const char *yesButton = T("Yes");
+		const char *noButton = T("No");
+		const float buttonWidth = std::max(ImGui::CalcTextSize(yesButton).x, ImGui::CalcTextSize(noButton).x)
+			+ ImGui::GetStyle().FramePadding.x * 2 + uiScaled(60.f);
+
+		if (ImGui::Button(yesButton, ImVec2(buttonWidth, 0)))
+		{
+			dc_loadstate(autoSaveSlot);
+			ImGui::CloseCurrentPopup();
+			showAutoLoadDialog = false;
+			gui_setState(GuiState::Closed);
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(noButton, ImVec2(buttonWidth, 0)))
+		{
+			ImGui::CloseCurrentPopup();
+			showAutoLoadDialog = false;
+			gui_setState(GuiState::Closed);
 		}
 
 		ImGui::PopStyleVar(2);
@@ -753,7 +929,7 @@ static void gui_display_commands()
 
 		// Exit
 		if (IconButton(ICON_FA_POWER_OFF, commandLineStart ?  T("Exit") : T("Close Game"), ScaledVec2(buttonWidth, 50)).realize())
-			gui_stop_game();
+			gui_request_exit_to_library();
 
 		ImGui::NextColumn();
 		{
@@ -832,6 +1008,13 @@ void error_popup()
 		}
 		error_msg_shown = true;
 	}
+}
+
+static void render_modal_dialogs()
+{
+	error_popup();
+	render_exit_save_dialog();
+	render_auto_load_dialog();
 }
 
 static void contentpath_warning_popup()
@@ -1397,7 +1580,7 @@ static void gui_display_loadscreen()
 				}
 				else
 				{
-					gui_setState(GuiState::Closed);
+					gui_request_initial_auto_load();
 					ImGui::Text("%s", label);
 				}
 			}
@@ -1500,8 +1683,7 @@ void gui_display_ui()
 
 	// Render modal dialogs BEFORE window management
 	// This ensures modals are not affected by window stack operations
-	error_popup();
-	render_exit_save_dialog();
+	render_modal_dialogs();
 
 	switch (gui_state)
 	{
@@ -1627,8 +1809,7 @@ void gui_draw_osd()
 	GuiMenu::renderMainMenuBar();
 
 	// Render modal dialogs (exit dialog, error popups)
-	error_popup();
-	render_exit_save_dialog();
+	render_modal_dialogs();
 
 	ImGui::Render();
 	uiThreadRunner.execTasks(std::chrono::steady_clock::now());
@@ -1728,7 +1909,7 @@ void gui_error(const std::string& what) {
 	error_msg = what;
 }
 
-void gui_loadState(bool inRam)
+void gui_loadState(int slot)
 {
 	const LockGuard lock(guiMutex);
 
@@ -1742,10 +1923,7 @@ void gui_loadState(bool inRam)
 			}
 
 			emu.stop();
-			if (inRam)
-				dc_loadstate(-2);  // special slot used for inRam states
-			else
-				dc_loadstate(config::SavestateSlot);
+			dc_loadstate(slot);
 			emu.start();
 		} catch (const FlycastException& e) {
 			gui_stop_game(e.what());
@@ -1760,7 +1938,12 @@ void gui_loadState(bool inRam)
 	}
 }
 
-void gui_saveState(bool stopRestart, bool inRam)
+void gui_loadState(bool inRam)
+{
+	gui_loadState(inRam ? -2 : config::SavestateSlot);
+}
+
+void gui_saveState(int slot, bool stopRestart)
 {
 	const LockGuard lock(guiMutex);
 	if ((gui_state == GuiState::Closed || !stopRestart) && dc_savestateAllowed())
@@ -1769,10 +1952,7 @@ void gui_saveState(bool stopRestart, bool inRam)
 			if (stopRestart)
 				emu.stop();
 
-			if (inRam)
-				dc_savestate(-2);
-			else
-				savestate();
+			savestate(slot);
 
 			if (stopRestart)
 				emu.start();
@@ -1783,6 +1963,31 @@ void gui_saveState(bool stopRestart, bool inRam)
 				WARN_LOG(COMMON, "gui_saveState: %s", e.what());
 		}
 	}
+}
+
+void gui_saveState(bool stopRestart, bool inRam)
+{
+	if (inRam)
+	{
+		const LockGuard lock(guiMutex);
+		if ((gui_state == GuiState::Closed || !stopRestart) && dc_savestateAllowed())
+		{
+			try {
+				if (stopRestart)
+					emu.stop();
+				dc_savestate(-2);
+				if (stopRestart)
+					emu.start();
+			} catch (const FlycastException& e) {
+				if (stopRestart)
+					gui_stop_game(e.what());
+				else
+					WARN_LOG(COMMON, "gui_saveState: %s", e.what());
+			}
+		}
+		return;
+	}
+	gui_saveState(config::SavestateSlot, stopRestart);
 }
 
 void gui_cycleSaveStateSlot(int step)
@@ -1844,6 +2049,22 @@ std::string gui_getCurGameBoxartUrl()
 void gui_refresh_custom_boxart(bool force)
 {
 	boxart.refreshCustomBoxartIndex(force);
+}
+
+void gui_refresh_boxart_cache()
+{
+	boxart.refreshCache();
+	scanner.fetch_game_list_sync();
+	std::vector<GameMedia> games;
+	{
+		std::lock_guard<std::mutex> guard(scanner.get_mutex());
+		games = scanner.get_game_list();
+	}
+	for (const GameMedia& game : games) {
+		if (!game.device)
+			boxart.queueBoxart(game);
+	}
+	boxart.startFetch();
 }
 
 void gui_runOnUiThread(std::function<void()> function) {

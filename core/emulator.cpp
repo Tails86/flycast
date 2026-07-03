@@ -57,6 +57,12 @@
 
 settings_t settings;
 constexpr char const *BIOS_TITLE = "Dreamcast BIOS";
+static bool skipAutoSaveOnNextUnload = false;
+
+void dc_skipAutoSaveOnNextUnload()
+{
+	skipAutoSaveOnNextUnload = true;
+}
 
 static void loadSpecialSettings()
 {
@@ -689,8 +695,6 @@ void Emulator::loadGame(const char *path, LoadProgress *progress)
 #ifndef LIBRETRO
 			if (config::GGPOEnable)
 				dc_loadstate(-1);
-			else if (config::AutoLoadState && !naomiNetworkSupported() && !settings.naomi.multiboard)
-				dc_loadstate(config::SavestateSlot);
 #endif
 		}
 
@@ -750,17 +754,19 @@ void Emulator::runInternal()
 	}
 }
 
-void Emulator::unloadGame()
+void Emulator::unloadGame(bool allowAutoSave)
 {
+	bool skipAutoSaveThisUnload = skipAutoSaveOnNextUnload;
+	skipAutoSaveOnNextUnload = false;
 	try {
 		stop();
 	} catch (...) { }
 	if (state == Loaded || state == Error)
 	{
 #ifndef LIBRETRO
-		if (state == Loaded && config::AutoSaveState && !settings.content.path.empty()
+		if (allowAutoSave && state == Loaded && config::AutoSaveState && !skipAutoSaveThisUnload && !settings.content.path.empty()
 				&& !settings.naomi.multiboard && !config::GGPOEnable && !naomiNetworkSupported())
-			gui_saveState(false);
+			gui_saveState(dc_getAutoSaveSlot(), false);
 #endif
 		try {
 			dc_reset(true);

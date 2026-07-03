@@ -1,3 +1,5 @@
+// Portions Copyright 2026 The Hollycast Authors
+
 #ifndef LIBRETRO
 #include "types.h"
 #include "emulator.h"
@@ -415,6 +417,11 @@ void dc_getStateScreenshot(int index, std::vector<u8>& pngData)
 			pngData.clear();
 	}
 	delete f;
+}
+
+int dc_getAutoSaveSlot()
+{
+	return NUM_SAVE_SLOTS;
 }
 
 #endif

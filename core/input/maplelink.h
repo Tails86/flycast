@@ -1,4 +1,6 @@
 /*
+	Portions Copyright 2026 The Hollycast Authors
+
 	This file is part of Flycast.
 
     Flycast is free software: you can redistribute it and/or modify
@@ -197,8 +199,8 @@ protected:
 	{
 		if (MapleDeviceBase::inMsg) {
 			MapleLinkDevice::relayPhysicalMapleLink(
-				MapleDeviceBase::bus_id, 
-				MapleDeviceBase::bus_port, 
+				MapleDeviceBase::bus_id,
+				MapleDeviceBase::bus_port,
 				*MapleDeviceBase::inMsg
 			);
 		}

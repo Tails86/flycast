@@ -19,6 +19,7 @@
 #include "wsi/context.h"
 #include "ui/gui.h"
 #include "emulator.h"
+#include "ui/gui.h"
 #include "stdclass.h"
 #include "imgui.h"
 #include "hw/naomi/card_reader.h"
@@ -63,6 +64,53 @@ static bool handleBarcodeScanner(const SDL_Event& event);
 void sdl_stopHaptic(int port);
 static void pauseHaptic();
 static void resumeHaptic();
+
+static bool isWindowFullscreen()
+{
+	if (window == nullptr)
+		return window_fullscreen;
+
+	const u32 flags = SDL_GetWindowFlags(window);
+	if ((flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != 0)
+		return true;
+
+#ifdef __APPLE__
+	// macOS uses the native system menu instead of Hollycast's ImGui menu bar,
+	// but fullscreen state still drives cursor auto-hide. SDL can miss the
+	// fullscreen flag for a display-sized macOS window, so keep a narrow bounds
+	// fallback here for cursor/state behavior without affecting normal windows.
+	int displayIndex = SDL_GetWindowDisplayIndex(window);
+	SDL_Rect displayBounds;
+	if (displayIndex >= 0 && SDL_GetDisplayBounds(displayIndex, &displayBounds) == 0)
+	{
+		SDL_Rect windowBounds;
+		SDL_GetWindowPosition(window, &windowBounds.x, &windowBounds.y);
+		SDL_GetWindowSize(window, &windowBounds.w, &windowBounds.h);
+		const int tolerance = 2;
+		return std::abs(windowBounds.x - displayBounds.x) <= tolerance
+				&& std::abs(windowBounds.y - displayBounds.y) <= tolerance
+				&& std::abs(windowBounds.w - displayBounds.w) <= tolerance
+				&& std::abs(windowBounds.h - displayBounds.h) <= tolerance;
+	}
+#endif
+
+	return false;
+}
+
+static void updateFullscreenCursorVisibility(int mouseY)
+{
+	if (!isWindowFullscreen() || !gameRunning || mouseCaptured)
+		return;
+
+	const ImGuiContext* context = ImGui::GetCurrentContext();
+	const float revealHeight = (context != nullptr ? ImGui::GetFrameHeight() : 20.0f) * 1.75f;
+	SDL_ShowCursor(mouseY <= revealHeight || gui_mouse_captured() ? SDL_ENABLE : SDL_DISABLE);
+}
+
+bool sdl_is_fullscreen()
+{
+	return isWindowFullscreen();
+}
 
 static struct SDLDeInit
 {
@@ -340,7 +388,7 @@ void input_sdl_handle()
 		switch (event.type)
 		{
 			case SDL_QUIT:
-				dc_exit();
+				gui_request_exit_emulator();
 				break;
 
 			case SDL_KEYDOWN:
@@ -499,6 +547,7 @@ void input_sdl_handle()
 
 			case SDL_MOUSEMOTION:
 				gui_set_mouse_position(event.motion.x, event.motion.y, false);
+				updateFullscreenCursorVisibility(event.motion.y);
 				checkRawInput();
 				if (!config::UseRawInput)
 				{
@@ -972,7 +1021,7 @@ static int suspendEventFilter(void *userdata, SDL_Event *event)
             try {
                 emu.stop();
                 if (config::AutoSaveState)
-                    dc_savestate(config::SavestateSlot);
+                    dc_savestate(dc_getAutoSaveSlot());
             } catch (const FlycastException& e) { }
         }
         return 0;
