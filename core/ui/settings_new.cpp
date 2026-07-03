@@ -5009,7 +5009,7 @@ void renderControlsTab()
 			ImGui::TextColored(warningColor, "%s Per Game VMU Rename Warning", ICON_FA_TRIANGLE_EXCLAMATION);
 			ImGui::TextWrapped(
 				"Renaming a Per Game VMU can prevent it from auto-loading when Per Game VMUs is enabled.\n"
-				"To make Flycast auto-pick it again later, rename the file back to its original name.");
+				"To make Hollycast auto-pick it again later, rename the file back to its original name.");
 			ImGui::Separator();
 			ImGui::InputText("New name", &renameVmuName);
 			if (!vmuOpError.empty())
