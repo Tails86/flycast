@@ -1,3 +1,6 @@
+/*
+	Portions Copyright 2026 The Hollycast Authors
+ */
 #include "maple_devs.h"
 #include "maple_cfg.h"
 #include "maple_helper.h"
@@ -60,6 +63,18 @@ maple_device::~maple_device()
 	{
 		config->ResetImage();
     	delete config;
+	}
+}
+
+void maple_base::relayMapleLink()
+{
+	auto link = MapleLinkRegistry::GetMapleLink(bus_id, bus_port);
+	if (link && inMsg && inMsg->size >= 1)
+	{
+		// First word should give the function code for this message - ensure DreamLink has capability
+		u32 fnCode = inMsg->readData<u32>(0);
+		if (fnCode & link->getFunctionCodesMask())
+			link->send(*inMsg);
 	}
 }
 
@@ -713,6 +728,7 @@ u32 maple_sega_vmu::dma(u32 cmd)
 				case MFID_2_LCD:
 				{
 					DEBUG_LOG(MAPLE, "VMU %s LCD write", logical_port);
+					relayMapleLink();
 					r32();	// PT, phase, block#
 					rptr(lcd_data,192);
 					setLcd();
@@ -755,6 +771,7 @@ u32 maple_sega_vmu::dma(u32 cmd)
 				u8 ald = r8();
 				r16(); // Alarm 2
 				INFO_LOG(MAPLE, "BEEP: %d/%d", alw, ald);
+				relayMapleLink();
 				aica::sgc::vmuBeep(alw, ald);
 
 				return MDRS_DeviceReply;
@@ -1083,6 +1100,7 @@ u32 maple_sega_purupuru::dma(u32 cmd)
 		return MDRS_DataTransfer;
 
 	case MDCF_BlockWrite:
+		relayMapleLink();
 
 		//Auto-stop time
 		AST = dma_buffer_in[10];
@@ -1091,6 +1109,7 @@ u32 maple_sega_purupuru::dma(u32 cmd)
 		return MDRS_DeviceReply;
 
 	case MDCF_SetCondition:
+		relayMapleLink();
 
 		VIBSET = *(u32*)&dma_buffer_in[4];
 		{
