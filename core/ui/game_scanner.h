@@ -90,6 +90,7 @@ public:
 
 	void stop();
 	void fetch_game_list();
+	void fetch_game_list_sync();
 
 	std::mutex& get_mutex() { return mutex; }
 	const std::vector<GameMedia>& get_game_list() { return game_list; }

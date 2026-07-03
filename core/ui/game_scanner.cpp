@@ -460,3 +460,12 @@ void GameScanner::fetch_game_list()
 			running = false;
 		});
 }
+
+void GameScanner::fetch_game_list_sync()
+{
+	refresh();
+	fetch_game_list();
+	LockGuard _(threadMutex);
+	if (scan_thread && scan_thread->joinable())
+		scan_thread->join();
+}

@@ -52,6 +52,7 @@
 #include "stdclass.h"
 #include "achievements/achievements.h"
 #include "vgamepad.h"
+#include <cmath>
 #include <cstring>
 #include <cfloat>
 #ifdef __ANDROID__
@@ -63,6 +64,7 @@
 extern ImFont *largeFont;
 extern ImFont *settingsTitleFont;
 extern ImFont *settingsRightValueFont;
+extern ImFont *settingsIconFont;
 
 namespace SettingsNew {
 
@@ -114,35 +116,130 @@ static std::shared_ptr<GamepadDevice> g_currentGamepadForSettings;
 static float g_twoLineRowExtraHeightPx = 0.0f;
 static bool g_twoLineRowSeparatorsEnabled = false;
 static float g_twoLineRowSeparatorAlpha = 0.5f;
-static float g_twoLineRowExtraGapPx = 0.0f;
+static float g_twoLineRowStartScreenX = 0.0f;
+static float g_twoLineRowEndScreenX = 0.0f;
+static float g_twoLineRowEndScreenY = 0.0f;
 static bool g_mapleDevicesChangedInSettings = false;
 static bool g_scrollToBoxArtSection = false;
+static bool g_focusSettingsNavigation = false;
+static bool g_focusSettingsContent = false;
 static std::string g_settingsFooterText;
 static constexpr float kSettingsFooterHeightPx = 152.0f;
+
+#if defined(__ANDROID__)
+struct SettingsAndroidScaleState
+{
+	float activeUiScale = 0.0f;
+	float baseScale = 1.0f;
+	float appliedUserScale = 1.0f;
+};
+
+static SettingsAndroidScaleState& SettingsAndroidScaleStateCache()
+{
+	static SettingsAndroidScaleState state;
+
+	const float userScale = std::max(0.01f, static_cast<float>(config::UIScaling) / 100.0f);
+	if (state.activeUiScale != settings.display.uiScale)
+	{
+		state.activeUiScale = settings.display.uiScale;
+		state.baseScale = settings.display.uiScale / userScale;
+		state.appliedUserScale = userScale;
+	}
+
+	return state;
+}
+
+static float SettingsAndroidBaseScale()
+{
+	return SettingsAndroidScaleStateCache().baseScale;
+}
+#endif
+
+static float SettingsTextPreviewScale()
+{
+#if defined(__ANDROID__)
+	const float userScale = std::max(0.01f, static_cast<float>(config::UIScaling) / 100.0f);
+	const float appliedUserScale = std::max(0.01f, SettingsAndroidScaleStateCache().appliedUserScale);
+	// Font atlas rebuilds only happen on Apply. This preview scale lets Android
+	// Settings text grow while dragging without also widening the nav rail or
+	// making the fixed footer taller.
+	return std::clamp(userScale / appliedUserScale, 0.5f, 2.0f);
+#else
+	return 1.0f;
+#endif
+}
+
+static float SettingsPreviewFontSize(ImFont* font)
+{
+	font = font != nullptr ? font : ImGui::GetFont();
+	return font->LegacySize * SettingsTextPreviewScale();
+}
+
+static float SettingsLayoutScaled(float px)
+{
+#if defined(__ANDROID__)
+	const float userScale = std::max(0.01f, static_cast<float>(config::UIScaling) / 100.0f);
+	const float compressedUserScale = 1.0f + (userScale - 1.0f) * 0.20f;
+	// Keep the Settings layout responsive while dragging the UI Scaling slider,
+	// but cache the applied base scale. The slider changes config::UIScaling
+	// before mainui_reinit(), so recalculating the base from every pending value
+	// makes lower percentages grow the panels instead of shrinking them.
+	return px * SettingsAndroidBaseScale() * compressedUserScale;
+#else
+	return uiScaled(px);
+#endif
+}
+
+static float SettingsFixedLayoutScaled(float px)
+{
+#if defined(__ANDROID__)
+	// Android Settings lets text scale up for readability, but fixed frame pieces
+	// like the left rail and bottom details panel must not grow into the content.
+	return px * SettingsAndroidBaseScale();
+#else
+	return uiScaled(px);
+#endif
+}
+
+static float SettingsFixedFooterScaled(float px)
+{
+#if defined(__ANDROID__)
+	return SettingsFixedLayoutScaled(px) * 0.85f;
+#else
+	return uiScaled(px);
+#endif
+}
+
+static float SettingsFixedNavigationScaled(float px)
+{
+#if defined(__ANDROID__)
+	return SettingsFixedLayoutScaled(px) * 0.90f;
+#else
+	return uiScaled(px);
+#endif
+}
+
+static ImVec2 SettingsLayoutSize(float width, float height)
+{
+	return ImVec2(SettingsLayoutScaled(width), SettingsLayoutScaled(height));
+}
 
 static bool UseCompactSettingsLayout()
 {
 	const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-	return displaySize.x < uiScaled(960.0f) || displaySize.y < uiScaled(720.0f);
+	return displaySize.x < SettingsLayoutScaled(960.0f) || displaySize.y < SettingsLayoutScaled(720.0f);
 }
 
 static float SettingsFooterHeight()
 {
 	if (!UseCompactSettingsLayout())
-		return uiScaled(kSettingsFooterHeightPx);
-	return std::clamp(ImGui::GetIO().DisplaySize.y * 0.20f, uiScaled(104.0f), uiScaled(136.0f));
+		return SettingsFixedFooterScaled(kSettingsFooterHeightPx);
+	return std::clamp(ImGui::GetIO().DisplaySize.y * 0.20f, SettingsFixedFooterScaled(104.0f), SettingsFixedFooterScaled(136.0f));
 }
 
 static float SettingsFooterGap()
 {
-	return UseCompactSettingsLayout() ? uiScaled(1.0f) : uiScaled(2.0f);
-}
-
-static float SettingsNavigationWidth()
-{
-	if (!UseCompactSettingsLayout())
-		return uiScaled(225.0f);
-	return std::clamp(ImGui::GetIO().DisplaySize.x * 0.24f, uiScaled(136.0f), uiScaled(180.0f));
+	return UseCompactSettingsLayout() ? SettingsLayoutScaled(1.0f) : SettingsLayoutScaled(2.0f);
 }
 
 // Visual-only toggle switch rendering (no interaction)
@@ -154,8 +251,8 @@ static void RenderToggleSwitchVisual(bool value)
 	if (window->SkipItems)
 		return;
 
-	const float height = settings.display.uiScale * 24;
-	const float width = settings.display.uiScale * 48;
+	const float height = SettingsLayoutScaled(24.0f);
+	const float width = SettingsLayoutScaled(48.0f);
 	const float radius = height * 0.5f;
 	const ImVec2 pos = window->DC.CursorPos;
 	const ImVec2 size(width, height);
@@ -197,12 +294,22 @@ static void RenderToggleSwitchVisual(bool value)
 
 static float TwoLineSettingContentHeight()
 {
-	return ImGui::GetTextLineHeightWithSpacing() * 2.0f;
+	ImFont* primaryFont = largeFont != nullptr ? largeFont : ImGui::GetFont();
+	ImFont* secondaryFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+	const float primaryHeight = SettingsPreviewFontSize(primaryFont);
+	const float secondaryHeight = SettingsPreviewFontSize(secondaryFont);
+	return primaryHeight + SettingsLayoutScaled(4.0f) + secondaryHeight;
+}
+
+static float TwoLineSettingSecondaryLineOffsetY()
+{
+	ImFont* primaryFont = largeFont != nullptr ? largeFont : ImGui::GetFont();
+	return SettingsPreviewFontSize(primaryFont) + SettingsLayoutScaled(4.0f);
 }
 
 static float TwoLineSettingRowHeight()
 {
-	return TwoLineSettingContentHeight() + uiScaled(g_twoLineRowExtraHeightPx);
+	return TwoLineSettingContentHeight() + SettingsLayoutScaled(g_twoLineRowExtraHeightPx);
 }
 
 static float TwoLineSettingContentOffsetY()
@@ -210,10 +317,47 @@ static float TwoLineSettingContentOffsetY()
 	return std::max(0.0f, (TwoLineSettingRowHeight() - TwoLineSettingContentHeight()) * 0.5f);
 }
 
+static float TwoLineSettingRowGap()
+{
+	return SettingsLayoutScaled(2.0f);
+}
+
 static float RightColumnX(float itemWidth, float rightPadding = 28.0f)
 {
 	const float rowRightX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-	return rowRightX - itemWidth - uiScaled(rightPadding);
+	return rowRightX - itemWidth - SettingsLayoutScaled(rightPadding);
+}
+
+static void RenderScaledIconInRect(const char* icon, const ImVec2& min, const ImVec2& max)
+{
+	ImFont* font = settingsIconFont != nullptr ? settingsIconFont : ImGui::GetFont();
+	const ImVec2 iconSize(max.x - min.x, max.y - min.y);
+	float fontSize = std::min(iconSize.x, iconSize.y) * 0.72f;
+	ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, icon);
+	if (textSize.x > iconSize.x && textSize.x > 0.0f)
+	{
+		fontSize *= iconSize.x / textSize.x;
+		textSize = font->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, icon);
+	}
+
+	const ImVec2 textPos(
+		min.x + (iconSize.x - textSize.x) * 0.5f,
+		min.y + (iconSize.y - textSize.y) * 0.5f
+	);
+	ImGui::GetWindowDrawList()->AddText(
+		font,
+		fontSize,
+		textPos,
+		ImGui::GetColorU32(ImGuiCol_Text),
+		icon
+	);
+}
+
+static bool SettingsIconButton(const char* id, const char* icon, const ImVec2& size)
+{
+	const bool pressed = ImGui::Button(id, size);
+	RenderScaledIconInRect(icon, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+	return pressed;
 }
 
 static const char* GetTabHelpText(SettingsTab tab)
@@ -251,11 +395,49 @@ static void SetSettingsFooterText(const char* text)
 		g_settingsFooterText = text;
 }
 
+static bool IsAnySettingsPopupOpen()
+{
+	return ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+}
+
+static void FocusCurrentSettingsItem()
+{
+	ImGuiWindow* window = ImGui::GetCurrentWindow();
+	ImGuiContext& g = *GImGui;
+	ImGui::FocusWindow(window, ImGuiFocusRequestFlags_RestoreFocusedChild);
+	ImGui::SetNavID(
+		ImGui::GetItemID(),
+		window->DC.NavLayerCurrent,
+		g.CurrentFocusScopeId,
+		ImGui::WindowRectAbsToRel(window, ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()))
+	);
+}
+
 static void ShowFooterHelpMarker(const char* desc)
 {
 	ImGui::TextDisabled("%s", Tnop("(?)"));
 	if (ImGui::IsItemHovered() || ImGui::IsItemFocused())
 		SetSettingsFooterText(desc);
+}
+
+static ImU32 FooterTextWeightColor(const ImVec4& color, float alphaScale)
+{
+	ImVec4 weightedColor = color;
+	weightedColor.w *= alphaScale;
+	return ImGui::ColorConvertFloat4ToU32(weightedColor);
+}
+
+static void AddWeightedFooterText(ImDrawList* drawList, ImFont* font, float fontSize,
+	const ImVec2& pos, const ImVec4& color, const char* text, float wrapWidth)
+{
+	const ImU32 textColor = ImGui::ColorConvertFloat4ToU32(color);
+	drawList->AddText(font, fontSize, pos, textColor, text, nullptr, wrapWidth);
+
+	// Low-DPI and lower-quality panels can make the details footer look too thin.
+	// A 33% strength subpixel overdraw gives this box more weight without changing
+	// font metrics, wrapping, or the user's theme colors.
+	drawList->AddText(font, fontSize, ImVec2(pos.x + 0.6f, pos.y),
+		FooterTextWeightColor(color, 0.33f), text, nullptr, wrapWidth);
 }
 
 static void RenderSettingsFooterBar()
@@ -273,28 +455,32 @@ static void RenderSettingsFooterBar()
 	accent.w = 1.0f;
 
 	const bool compactLayout = UseCompactSettingsLayout();
-	const float padX = compactLayout ? uiScaled(1.0f) : uiScaled(2.0f);
-	const float padY = compactLayout ? uiScaled(1.0f) : uiScaled(2.0f);
-	ImFont* titleFont = settingsRightValueFont != nullptr ? settingsRightValueFont : largeFont;
+	const float padX = compactLayout ? SettingsLayoutScaled(1.0f) : SettingsLayoutScaled(2.0f);
+	const float padY = compactLayout ? SettingsLayoutScaled(1.0f) : SettingsLayoutScaled(2.0f);
+	ImFont* titleFont = settingsTitleFont != nullptr ? settingsTitleFont : largeFont;
 	ImFont* bodyFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+#if defined(__ANDROID__)
+	const float footerTextScale = (compactLayout ? 1.0f : 1.15f) * SettingsTextPreviewScale();
+#else
 	const float footerTextScale = 1.25f;
-	const float titleFontSize = titleFont->LegacySize * (compactLayout ? 0.93f : 0.97f) * footerTextScale;
+#endif
+	const float titleFontSize = titleFont->LegacySize * (compactLayout ? 1.00f : 1.06f) * footerTextScale;
 	const float bodyFontSize = bodyFont->LegacySize * (compactLayout ? 0.89f : 0.93f) * footerTextScale;
-	const float textPadX = compactLayout ? uiScaled(10.0f) : uiScaled(12.0f);
-	const float textPadY = compactLayout ? uiScaled(8.0f) : uiScaled(10.0f);
+	const float textPadX = compactLayout ? SettingsLayoutScaled(10.0f) : SettingsLayoutScaled(12.0f);
+	const float textPadY = compactLayout ? SettingsLayoutScaled(8.0f) : SettingsLayoutScaled(10.0f);
 	const ImVec2 textBoxMin(footerMin.x + padX, footerMin.y + padY);
 	const ImVec2 textBoxMax(footerMax.x - padX, footerMax.y - padY);
 	ImVec4 textBoxBg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
 	textBoxBg.w = std::min(textBoxBg.w + 0.35f, 1.0f);
 	drawList->AddRectFilled(textBoxMin, textBoxMax,
-		ImGui::ColorConvertFloat4ToU32(textBoxBg), uiScaled(10.0f));
+		ImGui::ColorConvertFloat4ToU32(textBoxBg), SettingsLayoutScaled(10.0f));
 	drawList->AddRect(textBoxMin, textBoxMax,
-		ImGui::ColorConvertFloat4ToU32(border), uiScaled(10.0f), 0, 1.0f);
+		ImGui::ColorConvertFloat4ToU32(border), SettingsLayoutScaled(10.0f), 0, 1.0f);
 	drawList->AddRectFilled(
 		textBoxMin,
-		ImVec2(textBoxMax.x, textBoxMin.y + uiScaled(3.0f)),
+		ImVec2(textBoxMax.x, textBoxMin.y + SettingsLayoutScaled(3.0f)),
 		ImGui::ColorConvertFloat4ToU32(accent),
-		uiScaled(10.0f),
+		SettingsLayoutScaled(10.0f),
 		ImDrawFlags_RoundCornersTop);
 
 	const char* footerText = g_settingsFooterText.empty()
@@ -379,7 +565,7 @@ static void RenderSettingsFooterBar()
 			out.pop_back();
 		return out;
 	};
-	const std::string bodyText = normalizeFooterBody(bodyStart);
+	std::string bodyText = normalizeFooterBody(bodyStart);
 	const std::string displayTitle = titleLine.empty()
 		? std::string()
 		: std::string(T("Setting Details: ")) + titleLine;
@@ -389,20 +575,66 @@ static void RenderSettingsFooterBar()
 	float finalBodySize = bodyFontSize;
 	if (availableHeight > 0.0f && (!displayTitle.empty() || !bodyText.empty()))
 	{
-		float totalHeight = 0.0f;
-		if (!displayTitle.empty())
-			totalHeight += titleFont->CalcTextSizeA(titleFontSize, FLT_MAX, wrapWidth, displayTitle.c_str()).y + titleSpacing;
-		if (!bodyText.empty())
-			totalHeight += bodyFont->CalcTextSizeA(bodyFontSize, FLT_MAX, wrapWidth, bodyText.c_str()).y;
+		const auto measureFooterTextHeight = [&](float titleSize, float bodySize, const std::string& body) -> float
+		{
+			float totalHeight = 0.0f;
+			if (!displayTitle.empty())
+				totalHeight += titleFont->CalcTextSizeA(titleSize, FLT_MAX, wrapWidth, displayTitle.c_str()).y + titleSpacing;
+			if (!body.empty())
+				totalHeight += bodyFont->CalcTextSizeA(bodySize, FLT_MAX, wrapWidth, body.c_str()).y;
+			return totalHeight;
+		};
+		const auto compactOverflowBody = [](const std::string& text) -> std::string
+		{
+			std::string out;
+			out.reserve(text.size());
+			bool pendingSpace = false;
+			for (char c : text)
+			{
+				if (c == '\r' || c == '\n' || c == '\t' || c == ' ')
+				{
+					pendingSpace = !out.empty();
+					continue;
+				}
+				if (pendingSpace && !out.empty())
+				{
+					out.push_back(' ');
+					pendingSpace = false;
+				}
+				out.push_back(c);
+			}
+			return out;
+		};
+
+		float totalHeight = measureFooterTextHeight(titleFontSize, bodyFontSize, bodyText);
+#if defined(__ANDROID__)
+		// Keep paragraph breaks when they fit. At high Android UI scale, compact
+		// only overflowing footer copy so sentences use horizontal wrap space
+		// instead of being clipped below the fixed details box.
 		if (totalHeight > availableHeight)
 		{
+			std::string compactBodyText = compactOverflowBody(bodyText);
+			const float compactHeight = measureFooterTextHeight(titleFontSize, bodyFontSize, compactBodyText);
+			if (compactHeight < totalHeight)
+			{
+				bodyText = std::move(compactBodyText);
+				totalHeight = compactHeight;
+			}
+		}
+#endif
+		if (totalHeight > availableHeight)
+		{
+#if defined(__ANDROID__)
+			const float scale = std::clamp(availableHeight / totalHeight, 0.70f, 1.0f);
+#else
 			const float scale = std::clamp(availableHeight / totalHeight, 0.78f, 1.0f);
+#endif
 			finalTitleSize = titleFontSize * scale;
 			finalBodySize = bodyFontSize * scale;
 		}
 	}
 
-	ImVec2 textPos = bodyPos;
+	ImVec2 textPos(std::floor(bodyPos.x), std::floor(bodyPos.y));
 	drawList->PushClipRect(clipMin, clipMax, true);
 	if (!displayTitle.empty())
 	{
@@ -411,26 +643,26 @@ static void RenderSettingsFooterBar()
 			std::min(bodyColor.y + 0.15f, 1.0f),
 			std::min(bodyColor.z + 0.15f, 1.0f),
 			1.0f);
-		drawList->AddText(
+		AddWeightedFooterText(
+			drawList,
 			titleFont,
 			finalTitleSize,
 			textPos,
-			ImGui::ColorConvertFloat4ToU32(titleColor2),
+			titleColor2,
 			displayTitle.c_str(),
-			nullptr,
 			wrapWidth);
-		textPos.y += finalTitleSize + titleSpacing;
+		textPos.y = std::floor(textPos.y + finalTitleSize + titleSpacing);
 	}
 
 	if (!bodyText.empty())
 	{
-		drawList->AddText(
+		AddWeightedFooterText(
+			drawList,
 			bodyFont,
 			finalBodySize,
 			textPos,
-			ImGui::ColorConvertFloat4ToU32(bodyColor),
+			bodyColor,
 			bodyText.c_str(),
-			nullptr,
 			wrapWidth);
 	}
 	drawList->PopClipRect();
@@ -441,16 +673,14 @@ static void RenderSettingsFooterBar()
 class ScopedTwoLineRowStyle
 {
 public:
-	ScopedTwoLineRowStyle(float rowHeightExtraPx, bool drawSeparators, float separatorAlpha = 0.5f, float extraGapPx = 0.0f)
+	ScopedTwoLineRowStyle(float rowHeightExtraPx, bool drawSeparators, float separatorAlpha = 0.5f)
 		: m_prevRowHeightExtraPx(g_twoLineRowExtraHeightPx)
 		, m_prevDrawSeparators(g_twoLineRowSeparatorsEnabled)
 		, m_prevSeparatorAlpha(g_twoLineRowSeparatorAlpha)
-		, m_prevExtraGapPx(g_twoLineRowExtraGapPx)
 	{
 		g_twoLineRowExtraHeightPx = rowHeightExtraPx;
 		g_twoLineRowSeparatorsEnabled = drawSeparators;
 		g_twoLineRowSeparatorAlpha = separatorAlpha;
-		g_twoLineRowExtraGapPx = extraGapPx;
 	}
 
 	~ScopedTwoLineRowStyle()
@@ -458,14 +688,12 @@ public:
 		g_twoLineRowExtraHeightPx = m_prevRowHeightExtraPx;
 		g_twoLineRowSeparatorsEnabled = m_prevDrawSeparators;
 		g_twoLineRowSeparatorAlpha = m_prevSeparatorAlpha;
-		g_twoLineRowExtraGapPx = m_prevExtraGapPx;
 	}
 
 private:
 	float m_prevRowHeightExtraPx;
 	bool m_prevDrawSeparators;
 	float m_prevSeparatorAlpha;
-	float m_prevExtraGapPx;
 };
 
 static ImVec2 BeginTwoLineSettingRowContent()
@@ -483,8 +711,13 @@ static bool BeginTwoLineSettingRow(const char* rowId, const char* tooltip = null
 	if (disabled)
 		rowFlags |= ImGuiSelectableFlags_Disabled;
 
-	ImguiStyleVar rowRounding(ImGuiStyleVar_FrameRounding, uiScaled(8.0f));
+	ImguiStyleVar rowRounding(ImGuiStyleVar_FrameRounding, SettingsLayoutScaled(8.0f));
+	const ImVec2 itemSpacing = ImGui::GetStyle().ItemSpacing;
+	ImguiStyleVar rowItemSpacing(ImGuiStyleVar_ItemSpacing, ImVec2(itemSpacing.x, 0.0f));
 	const bool clicked = ImGui::Selectable(rowId, false, rowFlags, ImVec2(0.0f, TwoLineSettingRowHeight()));
+	g_twoLineRowStartScreenX = ImGui::GetItemRectMin().x;
+	g_twoLineRowEndScreenX = ImGui::GetItemRectMax().x;
+	g_twoLineRowEndScreenY = ImGui::GetItemRectMax().y;
 	if (tooltip != nullptr && (ImGui::IsItemHovered() || ImGui::IsItemFocused()))
 		SetSettingsFooterText(tooltip);
 
@@ -492,7 +725,7 @@ static bool BeginTwoLineSettingRow(const char* rowId, const char* tooltip = null
 	{
 		const ImVec2 rowMin = ImGui::GetItemRectMin();
 		const ImVec2 rowMax = ImGui::GetItemRectMax();
-		const float lineInset = uiScaled(6.0f);
+		const float lineInset = SettingsLayoutScaled(6.0f);
 		ImVec4 lineColor = ImGui::GetStyleColorVec4(ImGuiCol_Border);
 		lineColor.w *= g_twoLineRowSeparatorAlpha;
 		ImGui::GetWindowDrawList()->AddLine(
@@ -504,6 +737,13 @@ static bool BeginTwoLineSettingRow(const char* rowId, const char* tooltip = null
 	}
 
 	return clicked && !disabled;
+}
+
+static void EndTwoLineSettingRow()
+{
+	ImGui::SetCursorScreenPos(ImVec2(g_twoLineRowStartScreenX, g_twoLineRowEndScreenY));
+	ImguiStyleVar rowGapSpacing(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
+	ImGui::Dummy(ImVec2(0.0f, TwoLineSettingRowGap()));
 }
 
 static void RenderTwoLineSettingDescription(const ImVec2& line1Start, const char* description)
@@ -539,8 +779,8 @@ static void RenderTwoLineSettingDescription(const ImVec2& line1Start, const char
 		return;
 
 	ImGui::SetCursorPos(ImVec2(
-		line1Start.x + uiScaled(28.0f),
-		line1Start.y + ImGui::GetTextLineHeightWithSpacing()
+		line1Start.x + SettingsLayoutScaled(28.0f),
+		line1Start.y + TwoLineSettingSecondaryLineOffsetY()
 	));
 	ImGui::PushFont(settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont());
 
@@ -566,7 +806,14 @@ static void RenderTwoLineSettingDescription(const ImVec2& line1Start, const char
 		textColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
 	}
 	ImGui::PushStyleColor(ImGuiCol_Text, textColor);
+	const float wrapWidth = std::max(SettingsLayoutScaled(80.0f),
+		g_twoLineRowEndScreenX - ImGui::GetCursorScreenPos().x - SettingsLayoutScaled(16.0f));
+	const ImVec2 textMin = ImGui::GetCursorScreenPos();
+	ImGui::PushClipRect(textMin, ImVec2(g_twoLineRowEndScreenX - SettingsLayoutScaled(8.0f), g_twoLineRowEndScreenY - SettingsLayoutScaled(2.0f)), true);
+	ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
 	ImGui::TextUnformatted(compactLine.c_str());
+	ImGui::PopTextWrapPos();
+	ImGui::PopClipRect();
 	ImGui::PopStyleColor();
 	ImGui::PopFont();
 }
@@ -660,10 +907,8 @@ static bool RenderGeneralPopupSettingRow(const char* id, const char* description
 		SettingsUI::SettingPopup(popupCfg);
 	}
 	RenderTwoLineSettingDescription(line1Start, description);
+	EndTwoLineSettingRow();
 	ImGui::PopID();
-	ImGui::Spacing();
-	if (g_twoLineRowExtraGapPx > 0.0f)
-		ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 	return rowActivated;
 }
 
@@ -686,16 +931,16 @@ static bool RenderGeneralToggleSettingRow(const char* id, const char* icon, cons
 
 	{
 		DisabledScope _(disabled);
-		SettingIcon(icon, ImVec2(uiScaled(20), uiScaled(20)));
-		ImGui::SameLine(0, uiScaled(8));
+		SettingIcon(icon, SettingsLayoutSize(20.0f, 20.0f));
+		ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 		ImGui::PushFont(largeFont);
 		ImGui::TextUnformatted(label);
 		ImGui::PopFont();
 
-		const float toggleWidth = uiScaled(50.0f);
+		const float toggleWidth = SettingsLayoutScaled(50.0f);
 		ImGui::SameLine(RightColumnX(toggleWidth));
 
-		const float toggleHeight = settings.display.uiScale * 24.0f;
+		const float toggleHeight = SettingsLayoutScaled(24.0f);
 		const float verticalOffset = (TwoLineSettingContentHeight() - toggleHeight) * 0.5f;
 		const ImVec2 togglePos = ImGui::GetCursorPos();
 		ImGui::SetCursorPos(ImVec2(togglePos.x, togglePos.y + verticalOffset));
@@ -703,10 +948,8 @@ static bool RenderGeneralToggleSettingRow(const char* id, const char* icon, cons
 	}
 
 	RenderTwoLineSettingDescription(line1Start, description);
+	EndTwoLineSettingRow();
 	ImGui::PopID();
-	ImGui::Spacing();
-	if (g_twoLineRowExtraGapPx > 0.0f)
-		ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 	return rowActivated;
 }
 
@@ -723,13 +966,13 @@ static void RenderGeneralTextInputSettingRow(const char* id, const char* icon, c
 
 	{
 		DisabledScope _(disabled);
-		SettingIcon(icon, ImVec2(uiScaled(20), uiScaled(20)));
-		ImGui::SameLine(0, uiScaled(8));
+		SettingIcon(icon, SettingsLayoutSize(20.0f, 20.0f));
+		ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 		ImGui::PushFont(largeFont);
 		ImGui::TextUnformatted(label);
 		ImGui::PopFont();
 
-		const float inputWidth = uiScaled(inputWidthPx);
+		const float inputWidth = SettingsLayoutScaled(inputWidthPx);
 		ImGui::SameLine(RightColumnX(inputWidth));
 		if (rowActivated)
 			ImGui::SetKeyboardFocusHere();
@@ -738,10 +981,8 @@ static void RenderGeneralTextInputSettingRow(const char* id, const char* icon, c
 	}
 
 	RenderTwoLineSettingDescription(line1Start, description);
+	EndTwoLineSettingRow();
 	ImGui::PopID();
-	ImGui::Spacing();
-	if (g_twoLineRowExtraGapPx > 0.0f)
-		ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 }
 
 // Gamepad Settings Popup (ported from settings_controls.cpp)
@@ -1255,8 +1496,13 @@ static void displayMappedControl(const std::shared_ptr<GamepadDevice>& gamepad, 
 
 	if (combo.inputs.size() > 1)
 	{
-		if (ImGui::Checkbox(T("Sequential"), &(combo.sequential)))
-			input_mapping->set_button(g_gamepad_port_for_mapping, key, combo);
+		{
+			ImguiStyleVar checkboxBorder(ImGuiStyleVar_FrameBorderSize, 1.0f);
+			ImguiStyleColor checkboxBorderColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_Text));
+			ImguiStyleColor checkboxCheckColor(ImGuiCol_CheckMark, ImGui::GetStyleColorVec4(ImGuiCol_Text));
+			if (ImGui::Checkbox(T("Sequential"), &(combo.sequential)))
+				input_mapping->set_button(g_gamepad_port_for_mapping, key, combo);
+		}
 		ImGui::SameLine();
 		ShowFooterHelpMarker(T(
 			"When checked, this combo will only activate when all keys are pressed in the given sequence.\n"
@@ -1486,7 +1732,7 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 
 	char key_id[32];
 	ImGui::BeginChild(ImGui::GetID("buttons"), ImVec2(0, 0),
-		ImGuiChildFlags_FrameStyle | ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_DragScrolling);
+		ImGuiChildFlags_FrameStyle, ImGuiWindowFlags_DragScrolling);
 	for (; systemMapping->name != nullptr; systemMapping++)
 	{
 		if (systemMapping->key == EMU_BTN_NONE)
@@ -1533,7 +1779,9 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 			}
 			else if (getButtonState(gamepad, systemMapping->key))
 			{
+				ImGui::PushFont(settingsIconFont);
 				ImGui::Text(ICON_FA_CIRCLE_DOT);
+				ImGui::PopFont();
 			}
 		}
 
@@ -1572,8 +1820,8 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 
 static void RenderGeneralRightValue(const std::string& value, float valueWidthPx, float extraRightOffsetPx = 0.0f, bool disabled = false)
 {
-	const float valueWidth = uiScaled(valueWidthPx);
-	const float extraRight = uiScaled(extraRightOffsetPx);
+	const float valueWidth = SettingsLayoutScaled(valueWidthPx);
+	const float extraRight = SettingsLayoutScaled(extraRightOffsetPx);
 	const float verticalOffset = (TwoLineSettingContentHeight() - ImGui::GetTextLineHeight()) * 0.5f;
 	std::string clipped = middleEllipsis(value, valueWidth);
 	ImFont* valueFont = settingsRightValueFont != nullptr ? settingsRightValueFont : largeFont;
@@ -1597,18 +1845,16 @@ static void RenderGeneralInfoRow(const char* id, const char* icon, const char* l
 	BeginTwoLineSettingRow("##row", rowTooltip, true);
 	const ImVec2 line1Start = BeginTwoLineSettingRowContent();
 
-	SettingIcon(icon, ImVec2(uiScaled(20), uiScaled(20)));
-	ImGui::SameLine(0, uiScaled(8));
+	SettingIcon(icon, SettingsLayoutSize(20.0f, 20.0f));
+	ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 	ImGui::PushFont(largeFont);
 	ImGui::TextUnformatted(label);
 	ImGui::PopFont();
 	RenderGeneralRightValue(value, 280.0f, 0.0f, disabledValue);
 	RenderTwoLineSettingDescription(line1Start, description);
+	EndTwoLineSettingRow();
 
 	ImGui::PopID();
-	ImGui::Spacing();
-	if (g_twoLineRowExtraGapPx > 0.0f)
-		ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 }
 
 static void manageSinglePath(const char* label, config::Option<std::string, false>& pathOption, const char* helpText,
@@ -1618,8 +1864,8 @@ static void manageSinglePath(const char* label, config::Option<std::string, fals
 	const bool rowActivated = BeginTwoLineSettingRow("##row", helpText);
 	const ImVec2 line1Start = BeginTwoLineSettingRowContent();
 
-	SettingIcon(ICON_FA_FOLDER_OPEN, ImVec2(uiScaled(20), uiScaled(20)));
-	ImGui::SameLine(0, uiScaled(8));
+	SettingIcon(ICON_FA_FOLDER_OPEN, SettingsLayoutSize(20.0f, 20.0f));
+	ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 	ImGui::PushFont(largeFont);
 	ImGui::TextUnformatted(label);
 	ImGui::PopFont();
@@ -1633,14 +1879,14 @@ static void manageSinglePath(const char* label, config::Option<std::string, fals
 		const float extraOffsetPx = deleteBtnWidthPx + 8.0f;
 		RenderGeneralRightValue(pathOption.get(), 280.0f, extraOffsetPx);
 
-		const float buttonWidth = uiScaled(deleteBtnWidthPx);
-		const float buttonHeight = uiScaled(deleteBtnHeightPx);
+		const float buttonWidth = SettingsLayoutScaled(deleteBtnWidthPx);
+		const float buttonHeight = SettingsLayoutScaled(deleteBtnHeightPx);
 		const float verticalOffset = (TwoLineSettingContentHeight() - buttonHeight) * 0.5f;
 
 		ImGui::SameLine(RightColumnX(buttonWidth));
 		ImVec2 buttonPos = ImGui::GetCursorPos();
 		ImGui::SetCursorPos(ImVec2(buttonPos.x, buttonPos.y + verticalOffset));
-		if (ImGui::Button(ICON_FA_TRASH_CAN "##ClearPath", ImVec2(buttonWidth, buttonHeight)))
+		if (SettingsIconButton("##ClearPath", ICON_FA_TRASH_CAN, ImVec2(buttonWidth, buttonHeight)))
 		{
 			pathOption.get().clear();
 			openPopup = false;
@@ -1652,10 +1898,8 @@ static void manageSinglePath(const char* label, config::Option<std::string, fals
 	}
 
 	RenderTwoLineSettingDescription(line1Start, helpText);
+	EndTwoLineSettingRow();
 	ImGui::PopID();
-	ImGui::Spacing();
-	if (g_twoLineRowExtraGapPx > 0.0f)
-		ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 
 	const std::string popupName = std::string(T("Select ")) + label;
 	select_file_popup(popupName.c_str(), [&pathOption](bool cancelled, const std::string& selection) {
@@ -1703,8 +1947,8 @@ static void managePathList(const char* label, const std::string& singularLabel, 
 		const ImVec2 line1Start = BeginTwoLineSettingRowContent();
 		(void)rowActivated;
 
-		SettingIcon(ICON_FA_FOLDER_OPEN, ImVec2(uiScaled(20), uiScaled(20)));
-		ImGui::SameLine(0, uiScaled(8));
+		SettingIcon(ICON_FA_FOLDER_OPEN, SettingsLayoutSize(20.0f, 20.0f));
+		ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 		ImGui::PushFont(largeFont);
 		if (i == 0)
 			ImGui::TextUnformatted(label);
@@ -1720,24 +1964,22 @@ static void managePathList(const char* label, const std::string& singularLabel, 
 		const float extraOffsetPx = deleteBtnWidthPx + 8.0f;
 		RenderGeneralRightValue(paths[i], 280.0f, extraOffsetPx);
 
-		const float buttonWidth = uiScaled(deleteBtnWidthPx);
-		const float buttonHeight = uiScaled(deleteBtnHeightPx);
+		const float buttonWidth = SettingsLayoutScaled(deleteBtnWidthPx);
+		const float buttonHeight = SettingsLayoutScaled(deleteBtnHeightPx);
 		const float verticalOffset = (TwoLineSettingContentHeight() - buttonHeight) * 0.5f;
 
 		ImGui::SameLine(RightColumnX(buttonWidth));
 		ImVec2 buttonPos = ImGui::GetCursorPos();
 		ImGui::SetCursorPos(ImVec2(buttonPos.x, buttonPos.y + verticalOffset));
-		if (ImGui::Button(ICON_FA_TRASH_CAN "##DeletePath", ImVec2(buttonWidth, buttonHeight)))
+		if (SettingsIconButton("##DeletePath", ICON_FA_TRASH_CAN, ImVec2(buttonWidth, buttonHeight)))
 			to_delete = static_cast<int>(i);
 
 		snprintf(buffer, sizeof(buffer), T("Additional %s path"), singularLabel.c_str());
 		const std::string additionalDesc = buffer;
 		const char* desc = (i == 0) ? helpText : additionalDesc.c_str();
 		RenderTwoLineSettingDescription(line1Start, desc);
+		EndTwoLineSettingRow();
 		ImGui::PopID();
-		ImGui::Spacing();
-		if (g_twoLineRowExtraGapPx > 0.0f)
-			ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 	}
 
 	ImGui::PushID("AddPathRow");
@@ -1745,19 +1987,17 @@ static void managePathList(const char* label, const std::string& singularLabel, 
 		const bool addRowActivated = BeginTwoLineSettingRow("##row", helpText);
 		const ImVec2 line1Start = BeginTwoLineSettingRowContent();
 
-		SettingIcon(ICON_FA_PLUS, ImVec2(uiScaled(20), uiScaled(20)));
-		ImGui::SameLine(0, uiScaled(8));
+		SettingIcon(ICON_FA_PLUS, SettingsLayoutSize(20.0f, 20.0f));
+		ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 		ImGui::PushFont(largeFont);
 		ImGui::TextUnformatted(addRowLabel.c_str());
 		ImGui::PopFont();
 		RenderGeneralRightValue(T("Select Path"), 280.0f, 0.0f, true);
 		RenderTwoLineSettingDescription(line1Start, addRowDescription.c_str());
+		EndTwoLineSettingRow();
 		openPopup = addRowActivated;
 	}
 	ImGui::PopID();
-	ImGui::Spacing();
-	if (g_twoLineRowExtraGapPx > 0.0f)
-		ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 
 	if (to_delete >= 0)
 	{
@@ -1845,20 +2085,85 @@ const char* getTabName(SettingsTab tab)
 	}
 }
 
+static float SettingsNavigationWidth(const char* exitLabel)
+{
+	const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+#if defined(__ANDROID__)
+	// On phones the navigation rail must remain a stable frame. Larger UI text is
+	// clipped inside the existing rail instead of making the content column shrink.
+	(void)exitLabel;
+	const float minWidth = SettingsFixedNavigationScaled(136.0f);
+	const float maxWidth = std::clamp(displaySize.x * 0.20f, minWidth, SettingsFixedNavigationScaled(310.0f));
+	const float desiredWidth = UseCompactSettingsLayout() ? displaySize.x * 0.16f : SettingsFixedNavigationScaled(225.0f);
+	return std::clamp(desiredWidth, minWidth, maxWidth);
+#else
+	const float minWidth = 136.0f;
+	const float maxWidth = std::clamp(displaySize.x * 0.20f, minWidth, 310.0f);
+	const float layoutWidth = UseCompactSettingsLayout() ? displaySize.x * 0.16f : uiScaled(225.0f);
+
+	ImFont* navFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+	ImFont* iconFont = settingsIconFont != nullptr ? settingsIconFont : navFont;
+	const float fontSize = navFont->LegacySize;
+	float labelWidth = navFont->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, exitLabel).x
+			+ iconFont->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, ICON_FA_ARROW_LEFT).x
+			+ uiScaled(8.0f);
+	for (int i = 0; i < (int)SettingsTab::Count; i++)
+	{
+		const char* tabName = getTabName((SettingsTab)i);
+		labelWidth = std::max(labelWidth, navFont->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, tabName).x);
+	}
+
+	const float desiredWidth = std::max(layoutWidth, labelWidth + ImGui::GetStyle().WindowPadding.x * 2.0f);
+	return std::clamp(desiredWidth, minWidth, maxWidth);
+#endif
+}
+
+static bool SettingsBackButton(const char* icon, const char* label)
+{
+	const bool pressed = ImGui::Button("##SettingsBackButton", ImVec2(-1, 0));
+	const ImVec2 min = ImGui::GetItemRectMin();
+	const ImVec2 max = ImGui::GetItemRectMax();
+
+	ImFont* textFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+	ImFont* iconFont = settingsIconFont;
+	const float fontSize = ImGui::GetFontSize();
+	const ImVec2 textSize = textFont->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, label);
+	const ImVec2 iconSize = iconFont != nullptr ? iconFont->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, icon) : ImVec2();
+	const float gap = iconFont != nullptr ? SettingsLayoutScaled(8.0f) : 0.0f;
+	const float contentWidth = iconSize.x + gap + textSize.x;
+	const float minTextX = min.x + SettingsLayoutScaled(6.0f);
+	float x = std::max(minTextX, min.x + (max.x - min.x - contentWidth) * 0.5f);
+	const float y = min.y + (max.y - min.y - textSize.y) * 0.5f;
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+	const ImVec4 clipRect(min.x, min.y, max.x, max.y);
+	if (iconFont != nullptr)
+	{
+		drawList->AddText(iconFont, fontSize, ImVec2(x, y), color, icon, nullptr, 0.0f, &clipRect);
+		x += iconSize.x + gap;
+	}
+	drawList->AddText(textFont, fontSize, ImVec2(x, y), color, label, nullptr, 0.0f, &clipRect);
+	return pressed;
+}
+
 // Render left navigation rail with tab buttons (225px wide)
 // This creates the vertical strip on the left side with navigation items
 static void renderNavigationRail(const std::function<void()>& exitSettings, const char* exitLabel)
 {
-	const float navWidth = SettingsNavigationWidth();
+	const float navWidth = SettingsNavigationWidth(exitLabel);
 	const float footerGap = SettingsFooterGap();
 	const float footerHeight = SettingsFooterHeight();
+	const bool focusSelectedTab = g_focusSettingsNavigation;
 
 	// Left navigation rail: 225px wide child window
 	// Match the main content column height so the shared footer sits flush below both panels.
-	ImGui::BeginChild("NavigationRail", ImVec2(navWidth, -(footerHeight + footerGap)), true);
+	ImGui::BeginChild("NavigationRail", ImVec2(navWidth, -(footerHeight + footerGap)),
+	                  ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+	ImGui::SetWindowFontScale(SettingsTextPreviewScale());
+	g_focusSettingsNavigation = false;
 
-	IconButton backButton(ICON_FA_ARROW_LEFT, exitLabel, ImVec2(-1, 0));
-	if (backButton.realize())
+	ImGui::PushFont(settingsTitleFont);
+	if (SettingsBackButton(ICON_FA_ARROW_LEFT, exitLabel))
 		exitSettings();
 	ImGui::Spacing();
 	ImGui::Separator();
@@ -1878,14 +2183,28 @@ static void renderNavigationRail(const std::function<void()>& exitSettings, cons
 
 		// Create selectable item that fills the navigation rail width
 		// Clicking changes the current tab
-		if (ImGui::Selectable(tabName, isSelected, ImGuiSelectableFlags_None, ImVec2(navWidth, 0)))
+		if (ImGui::Selectable(tabName, isSelected, ImGuiSelectableFlags_None, ImVec2(ImGui::GetContentRegionAvail().x, 0)))
 		{
 			g_state.currentTab = tab;
 			ResetSettingsFooter();
 		}
+		if (focusSelectedTab && isSelected)
+			FocusCurrentSettingsItem();
 		if (ImGui::IsItemHovered() || ImGui::IsItemFocused())
 			SetSettingsFooterText(GetTabHelpText(tab));
+
+		if (!IsAnySettingsPopupOpen()
+			&& ImGui::IsItemFocused()
+			&& (ImGui::IsKeyPressed(ImGuiKey_Enter, false)
+				|| ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)
+				|| ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)))
+		{
+			g_state.currentTab = tab;
+			g_focusSettingsContent = true;
+			ResetSettingsFooter();
+		}
 	}
+	ImGui::PopFont();
 
 	ImGui::EndChild();
 }
@@ -1896,12 +2215,21 @@ static void renderContentArea()
 {
 	const float footerGap = SettingsFooterGap();
 	const float footerHeight = SettingsFooterHeight();
+	const bool focusContent = g_focusSettingsContent;
 
 	// Right content area: fills remaining space
 	// ImGui::SameLine() positions this after the navigation rail
 	// No width specified means it takes all remaining space
-	ImGui::BeginChild("ContentArea", ImVec2(0, -(footerHeight + footerGap)), true,
+	if (focusContent)
+		ImGui::SetNextWindowFocus();
+	ImGui::BeginChild("ContentArea", ImVec2(0, -(footerHeight + footerGap)),
+	                  ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened,
 	                  ImGuiWindowFlags_DragScrolling);
+	ImGui::SetWindowFontScale(SettingsTextPreviewScale());
+	g_focusSettingsContent = false;
+
+	if (focusContent)
+		ImGui::SetKeyboardFocusHere();
 
 	// Call the appropriate tab renderer based on current selection
 	switch (g_state.currentTab)
@@ -1931,8 +2259,20 @@ static void renderContentArea()
 		break;
 	}
 
+	// The content pane uses drag scrolling, but Android swipes often begin on
+	// selectable rows. Keep this after rendering rows so the helper can turn
+	// those finger drags into scrolling instead of row activation.
 	scrollWhenDraggingOnVoid();
 	windowDragScroll();
+
+	if (!IsAnySettingsPopupOpen()
+		&& ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)
+		&& (ImGui::IsKeyPressed(ImGuiKey_Escape, false)
+			|| ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)))
+	{
+		g_focusSettingsNavigation = true;
+	}
+
 	ImGui::EndChild();
 	ImGui::Dummy(ImVec2(0.0f, footerGap));
 	RenderSettingsFooterBar();
@@ -1950,10 +2290,16 @@ static bool RenderCollapsingHeader(
 	thread_local std::string labelStr;
 	labelStr.clear(); // Keeps the allocated capacity intact
 
+	ImFont* titleFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+	ImGui::PushFont(titleFont);
 	if (labelIcon && *labelIcon != '\0')
 	{
-		labelStr += labelIcon;
-		labelStr += " ";
+		ImFont* iconFont = settingsIconFont != nullptr ? settingsIconFont : ImGui::GetFont();
+		const float fontSize = ImGui::GetFontSize();
+		const float iconWidth = iconFont->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, labelIcon).x;
+		const float spaceWidth = std::max(1.0f, titleFont->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, " ").x);
+		const int spacerCount = std::max(2, static_cast<int>(std::ceil((iconWidth + uiScaled(2.0f)) / spaceWidth)));
+		labelStr.append(spacerCount, ' ');
 	}
 
 	labelStr += labelText;
@@ -1964,14 +2310,36 @@ static bool RenderCollapsingHeader(
 		labelStr += id;
 	}
 
-	return ImGui::CollapsingHeader(labelStr.c_str(), flags);
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(uiScaled(8.0f), uiScaled(10.0f)));
+	bool open = ImGui::CollapsingHeader(labelStr.c_str(), flags);
+	if (labelIcon && *labelIcon != '\0')
+	{
+		ImFont* iconFont = settingsIconFont != nullptr ? settingsIconFont : ImGui::GetFont();
+		const ImVec2 itemMin = ImGui::GetItemRectMin();
+		const ImVec2 itemMax = ImGui::GetItemRectMax();
+		const float iconFontSize = ImGui::GetFontSize();
+		const ImVec2 iconTextSize = iconFont->CalcTextSizeA(iconFontSize, FLT_MAX, -1.0f, labelIcon);
+		const ImVec2 iconPos(
+			itemMin.x + ImGui::GetTreeNodeToLabelSpacing(),
+			itemMin.y + (itemMax.y - itemMin.y - iconTextSize.y) * 0.5f
+		);
+		ImGui::GetWindowDrawList()->AddText(
+			iconFont,
+			iconFontSize,
+			iconPos,
+			ImGui::GetColorU32(ImGuiCol_Text),
+			labelIcon);
+	}
+	ImGui::PopStyleVar();
+	ImGui::PopFont();
+	return open;
 }
 
 // Render General tab with all settings from settings_general.cpp
 void renderGeneralTab()
 {
 	using namespace SettingsUI;
-	ScopedTwoLineRowStyle generalRowStyle(20.0f, true, 0.5f, 8.0f);
+	ScopedTwoLineRowStyle generalRowStyle(12.0f, true, 0.5f);
 
 	ImGui::TextDisabled("%s", T("General Configuration"));
 	ImGui::Separator();
@@ -2183,8 +2551,8 @@ void renderGeneralTab()
 				);
 			const ImVec2 line1Start = BeginTwoLineSettingRowContent();
 
-			SettingIcon(ICON_FA_FOLDER_OPEN, ImVec2(uiScaled(20), uiScaled(20)));
-			ImGui::SameLine(0, uiScaled(8));
+			SettingIcon(ICON_FA_FOLDER_OPEN, SettingsLayoutSize(20.0f, 20.0f));
+			ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 			ImGui::PushFont(largeFont);
 			if (i == 0)
 			{
@@ -2203,22 +2571,20 @@ void renderGeneralTab()
 			const float extraOffsetPx = deleteBtnWidthPx + 8.0f;
 			RenderGeneralRightValue(config::ContentPath.get()[i], 280.0f, extraOffsetPx);
 
-			const float buttonWidth = uiScaled(deleteBtnWidthPx);
-			const float buttonHeight = uiScaled(deleteBtnHeightPx);
+			const float buttonWidth = SettingsLayoutScaled(deleteBtnWidthPx);
+			const float buttonHeight = SettingsLayoutScaled(deleteBtnHeightPx);
 			const float verticalOffset = (TwoLineSettingContentHeight() - buttonHeight) * 0.5f;
 			ImGui::SameLine(RightColumnX(buttonWidth));
 			ImVec2 buttonPos = ImGui::GetCursorPos();
 			ImGui::SetCursorPos(ImVec2(buttonPos.x, buttonPos.y + verticalOffset));
-			if (ImGui::Button(ICON_FA_TRASH_CAN "##DeleteContentPath", ImVec2(buttonWidth, buttonHeight)))
+			if (SettingsIconButton("##DeleteContentPath", ICON_FA_TRASH_CAN, ImVec2(buttonWidth, buttonHeight)))
 				to_delete = static_cast<int>(i);
 
 			const char* desc = (i == 0) ? T("The folders where your games are stored") : T("Additional content folder");
 			RenderTwoLineSettingDescription(line1Start, desc);
+			EndTwoLineSettingRow();
 
 			ImGui::PopID();
-			ImGui::Spacing();
-			if (g_twoLineRowExtraGapPx > 0.0f)
-				ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 		}
 
 		{
@@ -2232,8 +2598,8 @@ void renderGeneralTab()
 					)
 				);
 			const ImVec2 line1Start = BeginTwoLineSettingRowContent();
-			SettingIcon(ICON_FA_PLUS, ImVec2(uiScaled(20), uiScaled(20)));
-			ImGui::SameLine(0, uiScaled(8));
+			SettingIcon(ICON_FA_PLUS, SettingsLayoutSize(20.0f, 20.0f));
+			ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 			ImGui::PushFont(largeFont);
 			ImGui::TextUnformatted(T("Add Content Folder"));
 			ImGui::PopFont();
@@ -2249,18 +2615,16 @@ void renderGeneralTab()
 			ImGui::SameLine(RightColumnX(refreshButtonWidth));
 			ImVec2 refreshButtonPos = ImGui::GetCursorPos();
 			ImGui::SetCursorPos(ImVec2(refreshButtonPos.x, refreshButtonPos.y + refreshVerticalOffset));
-			const bool refreshPressed = ImGui::Button(ICON_FA_ARROWS_ROTATE "##RescanContentBtn", ImVec2(refreshButtonWidth, refreshButtonHeight));
+			const bool refreshPressed = SettingsIconButton("##RescanContentBtn", ICON_FA_ARROWS_ROTATE, ImVec2(refreshButtonWidth, refreshButtonHeight));
 			if (ImGui::IsItemHovered() || ImGui::IsItemFocused())
 				SetSettingsFooterText(T("Refresh the current content library view."));
 
 			RenderTwoLineSettingDescription(line1Start, T("Add another content folder"));
+			EndTwoLineSettingRow();
 			addContentRequested = addRowActivated;
 			if (refreshPressed)
 				scanner.refresh();
 			ImGui::PopID();
-			ImGui::Spacing();
-			if (g_twoLineRowExtraGapPx > 0.0f)
-				ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 		}
 
 		// Keep this call every frame so the popup can render while open.
@@ -2351,32 +2715,30 @@ void renderGeneralTab()
 				)
 			);
 			const ImVec2 line1Start = BeginTwoLineSettingRowContent();
-		SettingIcon(ICON_FA_ARROWS_ROTATE, ImVec2(uiScaled(20), uiScaled(20)));
-		ImGui::SameLine(0, uiScaled(8));
+		SettingIcon(ICON_FA_ARROWS_ROTATE, SettingsLayoutSize(20.0f, 20.0f));
+		ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 		ImGui::PushFont(largeFont);
 		ImGui::TextUnformatted(T("Rescan Content"));
 		ImGui::PopFont();
 
 		const float refreshBtnWidthPx = 26.0f;
 		const float refreshBtnHeightPx = 22.0f;
-		const float refreshButtonWidth = uiScaled(refreshBtnWidthPx);
-		const float refreshButtonHeight = uiScaled(refreshBtnHeightPx);
+		const float refreshButtonWidth = SettingsLayoutScaled(refreshBtnWidthPx);
+		const float refreshButtonHeight = SettingsLayoutScaled(refreshBtnHeightPx);
 		const float refreshVerticalOffset = (TwoLineSettingContentHeight() - refreshButtonHeight) * 0.5f;
 
 		ImGui::SameLine(RightColumnX(refreshButtonWidth));
 		ImVec2 refreshButtonPos = ImGui::GetCursorPos();
 		ImGui::SetCursorPos(ImVec2(refreshButtonPos.x, refreshButtonPos.y + refreshVerticalOffset));
-		const bool refreshPressed = ImGui::Button(ICON_FA_ARROWS_ROTATE "##IphoneRescanContentBtn", ImVec2(refreshButtonWidth, refreshButtonHeight));
+		const bool refreshPressed = SettingsIconButton("##IphoneRescanContentBtn", ICON_FA_ARROWS_ROTATE, ImVec2(refreshButtonWidth, refreshButtonHeight));
 		if (ImGui::IsItemHovered() || ImGui::IsItemFocused())
 			SetSettingsFooterText(T("Refresh the current content library view."));
 
 		RenderTwoLineSettingDescription(line1Start, T("Rescan all content folders"));
+		EndTwoLineSettingRow();
 		if (rescanRowActivated || refreshPressed)
 			scanner.refresh();
 		ImGui::PopID();
-		ImGui::Spacing();
-		if (g_twoLineRowExtraGapPx > 0.0f)
-			ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 	}
 #endif
 	ImGui::Spacing();
@@ -2387,18 +2749,22 @@ void renderGeneralTab()
 	if (RenderCollapsingHeader("UISettingsSection", ICON_FA_GEAR, T("UI Settings"), ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		const char* themes[] = { T("Dark"), T("Light"), T("Dreamcast"), T("High Contrast"), T("Nintendo"), T("Aqua Chill") };
+		bool applyThemeAfterPopup = false;
 		SettingsUI::PopupConfig themeCfg {};
 		themeCfg.type = SettingsUI::PopupType::Options;
 		themeCfg.options.label = T("UI Theme");
 		themeCfg.options.icon = ICON_FA_PALETTE;
 		themeCfg.options.popupID = Tnop("UIThemePopup");
-			themeCfg.options.options = themes;
-			themeCfg.options.optionCount = IM_ARRAYSIZE(themes);
-			themeCfg.options.currentValue = &config::UITheme.get();
-			themeCfg.options.valueWidth = 220.0f;
-			themeCfg.options.onChange = [](int) {
-				applyCurrentTheme();
-				return true;
+		themeCfg.options.options = themes;
+		themeCfg.options.optionCount = IM_ARRAYSIZE(themes);
+		themeCfg.options.currentValue = &config::UITheme.get();
+		themeCfg.options.valueWidth = 220.0f;
+		themeCfg.options.onChange = [&applyThemeAfterPopup](int) {
+			// The option popup pushes temporary popup text/header colors. Applying
+			// a full theme inside that style scope lets the later pop restore stale
+			// colors over the new theme, leaving light backgrounds with dark-theme text.
+			applyThemeAfterPopup = true;
+			return true;
 		};
 
 		RenderGeneralPopupSettingRow(
@@ -2411,6 +2777,8 @@ void renderGeneralTab()
 				"If readability is an issue, try High Contrast."
 			)
 		);
+		if (applyThemeAfterPopup)
+			applyCurrentTheme();
 
 		static bool showApplyButtonForUIScaling = false;
 		if (uiUserScaleUpdated && !showApplyButtonForUIScaling)
@@ -2428,9 +2796,6 @@ void renderGeneralTab()
 		uiScalingCfg.slider.format = "%d%%";
 		uiScalingCfg.slider.valueWidth = 220.0f;
 		uiScalingCfg.slider.showApplyFlag = &showApplyButtonForUIScaling;
-		uiScalingCfg.slider.onValueChange = [&]() {
-			uiUserScaleUpdated = true;
-		};
 		uiScalingCfg.slider.onApply = [&]() {
 			mainui_reinit();
 			uiUserScaleUpdated = false;
@@ -2534,8 +2899,8 @@ void renderGeneralTab()
 			);
 		const ImVec2 line1Start = BeginTwoLineSettingRowContent();
 
-		SettingIcon(ICON_FA_FOLDER_OPEN, ImVec2(uiScaled(20), uiScaled(20)));
-		ImGui::SameLine(0, uiScaled(8));
+		SettingIcon(ICON_FA_FOLDER_OPEN, SettingsLayoutSize(20.0f, 20.0f));
+		ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 		ImGui::PushFont(largeFont);
 		ImGui::TextUnformatted(T("Custom Boxart Folder"));
 		ImGui::PopFont();
@@ -2559,14 +2924,14 @@ void renderGeneralTab()
 			ImGui::SameLine(RightColumnX(buttonWidth * 2.0f + buttonSpacing));
 			ImVec2 buttonPos = ImGui::GetCursorPos();
 			ImGui::SetCursorPos(ImVec2(buttonPos.x, buttonPos.y + verticalOffset));
-			refreshPressed = ImGui::Button(ICON_FA_ARROWS_ROTATE "##BoxartRefreshBtn", ImVec2(buttonWidth, buttonHeight));
+			refreshPressed = SettingsIconButton("##BoxartRefreshBtn", ICON_FA_ARROWS_ROTATE, ImVec2(buttonWidth, buttonHeight));
 			if (ImGui::IsItemHovered() || ImGui::IsItemFocused())
 				SetSettingsFooterText(T("Refresh custom media after adding, removing, or renaming files in the selected Custom Boxart Folder."));
 
 			ImGui::SameLine(0, buttonSpacing);
 			ImVec2 deletePos = ImGui::GetCursorPos();
 			ImGui::SetCursorPos(ImVec2(deletePos.x, buttonPos.y + verticalOffset));
-			if (ImGui::Button(ICON_FA_TRASH_CAN "##ClearBoxartPath", ImVec2(buttonWidth, buttonHeight)))
+			if (SettingsIconButton("##ClearBoxartPath", ICON_FA_TRASH_CAN, ImVec2(buttonWidth, buttonHeight)))
 			{
 				config::BoxartPath.get().clear();
 				openPopup = false;
@@ -2577,11 +2942,9 @@ void renderGeneralTab()
 			RenderGeneralRightValue(T("Set Path"), 280.0f, 0.0f, true);
 		}
 
-		RenderTwoLineSettingDescription(line1Start, T("Folder containing custom artwork/media subfolders. For ES-DE, select `downloaded_media/dreamcast`."));
+		RenderTwoLineSettingDescription(line1Start, T("Folder containing custom box art images (png/jpg). File names should match game names"));
+		EndTwoLineSettingRow();
 		ImGui::PopID();
-		ImGui::Spacing();
-		if (g_twoLineRowExtraGapPx > 0.0f)
-			ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 
 		const std::string popupName = T("Select Custom Boxart Folder");
 #ifdef __ANDROID__
@@ -2627,6 +2990,29 @@ void renderGeneralTab()
 		}
 		if (refreshPressed)
 			gui_refresh_custom_boxart(true);
+
+		ImGui::PushID("BoxartDatabaseReviewRow");
+		const bool refreshCacheRowActivated = BeginTwoLineSettingRow(
+			"##row",
+			T(
+				"Boxart Database Review\n"
+				"Checks the boxart database and artwork files without deleting your artwork."
+			)
+		);
+		const ImVec2 refreshCacheLine1Start = BeginTwoLineSettingRowContent();
+
+		SettingIcon(ICON_FA_ARROWS_ROTATE, SettingsLayoutSize(20.0f, 20.0f));
+		ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
+		ImGui::PushFont(largeFont);
+		ImGui::TextUnformatted(T("Boxart Database Review"));
+		ImGui::PopFont();
+
+		RenderTwoLineSettingDescription(refreshCacheLine1Start, T("Verifies every DB entry has a usable artwork file, then rebuilds from existing JSON and image files."));
+		EndTwoLineSettingRow();
+		ImGui::PopID();
+
+		if (refreshCacheRowActivated)
+			gui_refresh_boxart_cache();
 
 		static const char* libraryDisplayStyles[] = { "Classic", "List" };
 		SettingsUI::PopupConfig libraryDisplayStyleCfg {};
@@ -2761,13 +3147,13 @@ void renderGeneralTab()
 			"AutoLoadState",
 			ICON_FA_FOLDER_OPEN,
 			T("Auto-Load on Start"),
-			T("Load the last saved state of the game when starting"),
+			T("Automatically loads the hidden Auto-Save slot on game boot."),
 			static_cast<bool>(config::AutoLoadState),
 			[](bool enabled) { config::AutoLoadState = enabled; },
 			T(
 				"Auto-Load on Start\n"
-				"Automatically loads the last saved state when starting a game.\n"
-				"Convenient, but can hide boot-time issues or break games that don't like savestates."
+				"When enabled, on game boot, if the hidden Auto-Save slot has an Auto-Save, "
+				"it will automatically load this slot on game boot."
 			)
 		);
 
@@ -2775,13 +3161,26 @@ void renderGeneralTab()
 			"AutoSaveState",
 			ICON_FA_FLOPPY_DISK,
 			T("Auto-Save on Exit"),
-			T("Save the state of the game when stopping"),
+			T("Automatically saves to the hidden Auto-Save slot on game exit."),
 			static_cast<bool>(config::AutoSaveState),
 			[](bool enabled) { config::AutoSaveState = enabled; },
 			T(
 				"Auto-Save on Exit\n"
-				"Automatically saves a state when you stop a game.\n"
-				"Good for quick resume workflows. Disable if you prefer manual state management."
+				"When enabled, leaving a game saves to the hidden Auto-Save slot without asking first."
+			)
+		);
+
+		RenderGeneralToggleSettingRow(
+			"SaveProtection",
+			ICON_FA_SHIELD_HALVED,
+			T("Save Protection"),
+			T("Disabling this will remove the safeguards that help prevent lost game progress from not saving."),
+			static_cast<bool>(config::SaveProtection),
+			[](bool enabled) { config::SaveProtection = enabled; },
+			T(
+				"Save Protection\n"
+				"This is the assurance that you will never be able to leave a game without being prompted "
+				"to save right then, ensuring you do not accidentally leave without saving your data."
 			)
 		);
 
@@ -3056,7 +3455,7 @@ void renderGeneralTab()
 
 void renderVideoTab()
 {
-	ScopedTwoLineRowStyle videoRowStyle(20.0f, true, 0.5f, 8.0f);
+	ScopedTwoLineRowStyle videoRowStyle(12.0f, true, 0.5f);
 
 	ImGui::TextDisabled("%s", T("Video Configuration"));
 	ImGui::Separator();
@@ -3547,24 +3946,39 @@ void renderVideoTab()
 				"Recommended for most users. If you notice unusual stutter or latency, try toggling it."
 			));
 
+		ImGui::Indent();
+
+#ifdef __ANDROID__
+		RenderGeneralToggleSettingRow(
+			"FramePacing",
+			ICON_FA_TIMELINE,
+			T("Frame Pacing (Experimental)"),
+			T("Provide the GPU with presentation timing for each frame to replicate original frame pacing."),
+			static_cast<bool>(config::FramePacing),
+			[](bool enabled) { config::FramePacing.set(enabled); },
+			T("Provide the GPU with presentation timing for each frame to replicate original frame pacing.")
+		);
+#else
 		if (isVulkan(config::RendererType))
 		{
-			ImGui::Indent();
-				RenderGeneralToggleSettingRow(
-					"DuplicateFrames",
-					ICON_FA_CLONE,
-					T("Duplicate Frames"),
-					T("Improve pacing on high refresh-rate displays."),
-					static_cast<bool>(config::DupeFrames),
-					[](bool enabled) { config::DupeFrames.set(enabled); },
-					T(
-						"Duplicate Frames\n"
-						"Duplicates frames on high refresh-rate monitors (120 Hz and above) to improve perceived pacing.\n"
-						"Only available for Vulkan, and only when VSync is disabled."
-					),
-					!config::VSync);
-			ImGui::Unindent();
+			RenderGeneralToggleSettingRow(
+				"DuplicateFrames",
+				ICON_FA_CLONE,
+				T("Duplicate Frames"),
+				T("Improve pacing on high refresh-rate displays."),
+				static_cast<bool>(config::DupeFrames),
+				[](bool enabled) { config::DupeFrames.set(enabled); },
+				T(
+					"Duplicate Frames\n"
+					"Duplicates frames on high refresh-rate monitors (120 Hz and above) to improve perceived pacing.\n"
+					"Only available for Vulkan, and only when VSync is disabled."
+				),
+				!config::VSync
+			);
 		}
+#endif
+
+		ImGui::Unindent();
 #endif
 
 		RenderGeneralToggleSettingRow(
@@ -3885,8 +4299,8 @@ void renderVideoTab()
 		}
 
 		// 2x height toggle rows for Performance settings
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 12));
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 8));
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(uiScaled(8.0f), uiScaled(12.0f)));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, uiScaled(8.0f)));
 
 		// Shadows toggle
 		RenderGeneralToggleSettingRow(
@@ -3925,21 +4339,22 @@ void renderVideoTab()
 		ImGui::Spacing();
 
 		// 2x height toggle rows for Advanced settings
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 12));
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 8));
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(uiScaled(8.0f), uiScaled(12.0f)));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, uiScaled(8.0f)));
 
 		// Delay Frame Swapping
 		RenderGeneralToggleSettingRow(
 			"DelayFrameSwapping",
 			ICON_FA_CLOCK,
 			T("Delay Frame Swapping"),
-			T("Reduce flashing and glitchy video playback."),
+			T("Delay the frame swap to reduce flashing or unstable video playback."),
 			static_cast<bool>(config::DelayFrameSwapping),
 			[](bool enabled) { config::DelayFrameSwapping = enabled; },
 			T(
 				"Delay Frame Swapping\n"
-				"Useful to avoid a flashing screen or glitchy videos in some titles.\n"
-				"Not recommended on slow platforms."
+				"Waits for the Dreamcast read/write frame buffers to line up before presenting the next frame.\n\n"
+				"This can reduce flashing screens, unstable video playback, or pacing issues in titles that swap buffers in unusual ways.\n"
+				"Leave it off if it causes slowdown or extra latency on slower devices."
 			));
 
 		// Fix Upscale Bleeding Edge
@@ -4191,13 +4606,13 @@ void renderVideoTab()
 					true);
 			const ImVec2 line1Start = BeginTwoLineSettingRowContent();
 
-			SettingIcon(ICON_FA_EXPAND, ImVec2(uiScaled(20), uiScaled(20)));
-			ImGui::SameLine(0, uiScaled(8));
+			SettingIcon(ICON_FA_EXPAND, SettingsLayoutSize(20.0f, 20.0f));
+			ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 			ImGui::PushFont(largeFont);
 			ImGui::TextUnformatted(T("Output Texture Size"));
 			ImGui::PopFont();
 
-			const float valueWidth = uiScaled(220.0f);
+			const float valueWidth = SettingsLayoutScaled(220.0f);
 			ImGui::SameLine(RightColumnX(valueWidth));
 			const float valueStartX = ImGui::GetCursorPosX();
 			const float valueTextWidth = ImGui::CalcTextSize(outputSizeText.c_str()).x;
@@ -4207,8 +4622,8 @@ void renderVideoTab()
 			ImGui::PopFont();
 
 			RenderTwoLineSettingDescription(line1Start, T("Calculated size of the shared output texture."));
+			EndTwoLineSettingRow();
 			ImGui::PopID();
-			ImGui::Spacing();
 		}
 	}
 #endif
@@ -4233,7 +4648,7 @@ void renderVideoTab()
 
 void renderAudioTab()
 {
-	ScopedTwoLineRowStyle audioRowStyle(20.0f, true, 0.5f, 8.0f);
+	ScopedTwoLineRowStyle audioRowStyle(12.0f, true, 0.5f);
 
 	ImGui::TextDisabled("%s", T("Audio Configuration"));
 	ImGui::Separator();
@@ -4284,13 +4699,13 @@ void renderAudioTab()
 		volumeConfig.defaultValue = 100;
 		volumeConfig.format = "%d%%";
 		volumeConfig.applyButtonText = T("Apply");
-		volumeConfig.onApply = []() {
+		volumeConfig.onApply = nullptr;
+		volumeConfig.onValueChange = []() {
 			config::AudioVolume.set(volumeTemp);
 			config::AudioVolume.calcDbPower();
 		};
-		volumeConfig.onValueChange = nullptr;
-		volumeConfig.iconSize = uiScaled(20.0f);
-		volumeConfig.iconSpacing = uiScaled(8.0f);
+		volumeConfig.iconSize = 20.0f;
+		volumeConfig.iconSpacing = 8.0f;
 		volumeConfig.valueWidth = 220.0f;
 		volumeConfig.sliderWidth = 320.0f;
 		volumeConfig.showApplyFlag = nullptr;
@@ -4359,8 +4774,8 @@ void renderAudioTab()
 		latencyConfig.onValueChange = []() {
 			config::AudioBufferSize.set((int)roundf(latencyTemp * 44100.f / 1000.f));
 		};
-		latencyConfig.iconSize = uiScaled(20.0f);
-		latencyConfig.iconSpacing = uiScaled(8.0f);
+		latencyConfig.iconSize = 20.0f;
+		latencyConfig.iconSpacing = 8.0f;
 		latencyConfig.valueWidth = 220.0f;
 		latencyConfig.sliderWidth = 320.0f;
 		latencyConfig.showApplyFlag = nullptr;
@@ -4392,18 +4807,21 @@ void renderAudioTab()
 		std::string currentBackendName = currentBackend ? currentBackend->getName() : T("Unknown");
 
 		// Build dynamic options list
-		std::vector<const char*> backendOptions;
-		std::vector<std::string> backendLabels;
-		for (u32 i = 0; i < AudioBackend::getCount(); i++)
+		int backendCount = (int)AudioBackend::getCount();
+		std::vector<std::string> backendLabels(backendCount);
+		for (int i = 0; i < backendCount; i++)
 		{
 			const AudioBackend* backend = AudioBackend::getBackend(i);
-			backendLabels.push_back(backend->slug + " - " + backend->getName());
-			backendOptions.push_back(backendLabels.back().c_str());
+			backendLabels[i] = backend->slug + " - " + backend->getName();
 		}
+
+		std::vector<const char*> backendOptions(backendCount);
+		for (int i = 0; i < backendCount; i++)
+			backendOptions[i] = backendLabels[i].c_str();
 
 		// Find current index
 		int currentBackendIndex = 0;
-		for (u32 i = 0; i < AudioBackend::getCount(); i++)
+		for (int i = 0; i < backendCount; i++)
 		{
 			if (config::AudioBackend.get() == AudioBackend::getBackend(i)->slug)
 				{
@@ -4420,7 +4838,7 @@ void renderAudioTab()
 		driverConfig.icon = ICON_FA_HEADPHONES;
 		driverConfig.popupID = Tnop("AudioDriverPopup");
 		driverConfig.options = backendOptions.data();
-		driverConfig.optionCount = (int)AudioBackend::getCount();
+		driverConfig.optionCount = backendCount;
 		driverConfig.currentValue = &selectedBackendIndex;
 		driverConfig.valueToString = nullptr;  // Use options array directly
 		driverConfig.storageIndexMap = nullptr;
@@ -4434,8 +4852,8 @@ void renderAudioTab()
 			return true;
 		};
 		driverConfig.disabled = false;
-		driverConfig.iconSize = uiScaled(20.0f);
-		driverConfig.iconSpacing = uiScaled(8.0f);
+		driverConfig.iconSize = 20.0f;
+		driverConfig.iconSpacing = 8.0f;
 		driverConfig.valueWidth = 220.0f;
 
 		SettingsUI::PopupConfig driverPopupCfg {};
@@ -4492,7 +4910,7 @@ void renderAudioTab()
 						backendIntCfg.format = "%d";
 						backendIntCfg.valueWidth = 220.0f;
 						backendIntCfg.sliderWidth = 320.0f;
-						backendIntCfg.onApply = [&]() {
+						backendIntCfg.onValueChange = [&]() {
 							cfgSaveStr(current_backend->slug, options->name, std::to_string(tempVal));
 						};
 
@@ -4590,26 +5008,34 @@ void renderControlsTab()
 {
 	uiLanguageHandler.init();
 
-	ScopedTwoLineRowStyle controlsRowStyle(20.0f, true, 0.5f, 8.0f);
+	ScopedTwoLineRowStyle controlsRowStyle(12.0f, true, 0.5f);
 
 	ImGui::TextDisabled("%s", T("Controls Configuration"));
 	ImGui::Separator();
 
 	if (RenderCollapsingHeader("PhysicalDevicesSection", ICON_FA_GAMEPAD, T("Physical Devices"), ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		if (ImGui::BeginTable("physicalDevices", 6, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+		ImGui::PushFont(settingsTitleFont);
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ScaledVec2(4, 3));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ScaledVec2(8, 4));
+		ImVec4 deviceTableBorderColor = ImGui::GetStyleColorVec4(ImGuiCol_Border);
+		deviceTableBorderColor.w *= 0.35f;
+		ImGui::PushStyleColor(ImGuiCol_TableBorderLight, deviceTableBorderColor);
+		if (ImGui::BeginTable("physicalDevices", 5,
+				ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings
+				| ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_BordersInnerV))
 		{
 			ImGui::TableSetupColumn(T("System"), ImGuiTableColumnFlags_WidthFixed);
 			ImGui::TableSetupColumn(T("Name"), ImGuiTableColumnFlags_WidthStretch);
 			ImGui::TableSetupColumn(T("Status"), ImGuiTableColumnFlags_WidthFixed);
-			ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+			ImGui::TableSetupColumn(T("Actions"), ImGuiTableColumnFlags_WidthFixed);
 			ImGui::TableSetupColumn(T("Port"), ImGuiTableColumnFlags_WidthFixed);
-			ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
 
 			const float portComboWidth = ImGui::CalcTextSize("None").x + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetFrameHeight();
+			const ImVec2 deviceButtonSize(0.0f, uiScaled(24.0f));
 			const ImVec4 gray(0.5f, 0.5f, 0.5f, 1.f);
 
-			ImGui::TableNextRow();
+			ImGui::TableNextRow(ImGuiTableRowFlags_None, uiScaled(24.0f));
 			ImGui::TableSetColumnIndex(0);
 			ImGui::TextColored(gray, "%s", T("System"));
 
@@ -4618,6 +5044,9 @@ void renderControlsTab()
 
 			ImGui::TableSetColumnIndex(2);
 			ImGui::TextColored(gray, "%s", T("Status"));
+
+			ImGui::TableSetColumnIndex(3);
+			ImGui::TextColored(gray, "%s", T("Actions"));
 
 			ImGui::TableSetColumnIndex(4);
 			ImGui::TextColored(gray, "%s", T("Port"));
@@ -4633,7 +5062,7 @@ void renderControlsTab()
 				ImguiID gamepadRowId(gamepad_row_id);
 				(void)gamepadRowId;
 
-				ImGui::TableNextRow();
+				ImGui::TableNextRow(ImGuiTableRowFlags_None, uiScaled(24.0f));
 				ImGui::TableSetColumnIndex(0);
 				ImGui::Text("%s", gamepad->api_name().c_str());
 
@@ -4648,7 +5077,7 @@ void renderControlsTab()
 				}
 #endif
 
-				ImGui::TableSetColumnIndex(5);
+				ImGui::TableSetColumnIndex(4);
 				char port_name[32];
 				snprintf(port_name, sizeof(port_name), "##mapleport%d", i);
 				ImguiID _(port_name);
@@ -4672,11 +5101,11 @@ void renderControlsTab()
 					ImGui::EndCombo();
 				}
 
-				ImGui::TableSetColumnIndex(4);
-				ImGui::SameLine(0, 8.0f);
+				ImGui::TableSetColumnIndex(3);
+				ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 
 				// Map button for controller mapping
-				if (gamepad->remappable() && ImGui::Button(T("Map")))
+				if (gamepad->remappable() && ImGui::Button(T("Map"), deviceButtonSize))
 				{
 					ResetControllerMappingRuntime();
 					g_currentGamepadForMapping = gamepad;
@@ -4688,8 +5117,8 @@ void renderControlsTab()
 				// Settings button for rumble/deadzone/saturation
 				if (gamepad->is_rumble_enabled() || gamepad->has_analog_stick() || gamepad->is_virtual_gamepad())
 				{
-					ImGui::SameLine(0, 16.0f);
-					if (ImGui::Button(T("Settings")))
+					ImGui::SameLine(0, uiScaled(16.0f));
+					if (ImGui::Button(T("Settings"), deviceButtonSize))
 					{
 						g_currentGamepadForSettings = gamepad;
 						ImGui::OpenPopup(T("Gamepad Settings"));
@@ -4714,6 +5143,9 @@ void renderControlsTab()
 			}
 			ImGui::EndTable();
 		}
+		ImGui::PopStyleColor();
+		ImGui::PopStyleVar(2);
+		ImGui::PopFont();
 	}
 
 	ImGui::Spacing();
@@ -4738,14 +5170,14 @@ void renderControlsTab()
 			sensitivityConfig.defaultValue = 100;
 			sensitivityConfig.format = "%d";
 			sensitivityConfig.applyButtonText = T("Apply");
-			sensitivityConfig.onApply = []() {
+			sensitivityConfig.onApply = nullptr;
+			sensitivityConfig.onValueChange = []() {
 				config::MouseSensitivity.set(sensitivityTemp);
 			};
-			sensitivityConfig.onValueChange = nullptr;
-			sensitivityConfig.iconSize = uiScaled(20.0f);
-			sensitivityConfig.iconSpacing = uiScaled(8.0f);
-			sensitivityConfig.valueWidth = uiScaled(220.0f);
-			sensitivityConfig.sliderWidth = uiScaled(320.0f);
+			sensitivityConfig.iconSize = 20.0f;
+			sensitivityConfig.iconSpacing = 8.0f;
+			sensitivityConfig.valueWidth = 220.0f;
+			sensitivityConfig.sliderWidth = 320.0f;
 			sensitivityConfig.showApplyFlag = nullptr;
 			sensitivityConfig.hasPendingChanges = false;
 
@@ -4828,36 +5260,25 @@ void renderControlsTab()
 
 		bool is_there_any_xhair = false;
 
-		if (ImGui::BeginTable("dreamcastDevices", 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings,
+		ImGui::PushFont(settingsTitleFont);
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ScaledVec2(4, 3));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ScaledVec2(8, 4));
+		ImVec4 deviceTableBorderColor = ImGui::GetStyleColorVec4(ImGuiCol_Border);
+		deviceTableBorderColor.w *= 0.35f;
+		ImGui::PushStyleColor(ImGuiCol_TableBorderLight, deviceTableBorderColor);
+		if (ImGui::BeginTable("dreamcastDevices", 4,
+				ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings
+				| ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_BordersInnerV,
 				ImVec2(0, 0), uiScaled(8)))
 		{
 			const float comboWidthPadding = ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetFrameHeight();
-			float mainComboWidth = 0;
+			float mainComboWidth = comboWidthPadding;
 			for (int i = 0; i < IM_ARRAYSIZE(maple_device_types); i++)
 			{
 				mainComboWidth = std::max(
 					ImGui::CalcTextSize(maple_device_types[i]).x + comboWidthPadding,
 					mainComboWidth
 				);
-			}
-
-			// DreamLink device names for main device
-			const char* dream_link_names[MAPLE_PORTS]{};
-			for (int bus = 0; bus < MAPLE_PORTS; bus++)
-			{
-				auto link = MapleLinkRegistry::GetMapleLink(bus, MAPLE_MAIN_DEV_IDX); // Registered controller, if any
-				if (link && (link->dreamlink->getIssueDescription() == nullptr))
-				{
-					dream_link_names[bus] = link->dreamlink->getName();
-					mainComboWidth = std::max(
-						ImGui::CalcTextSize(dream_link_names[bus]).x + comboWidthPadding,
-						mainComboWidth
-					);
-				}
-				else
-				{
-					dream_link_names[bus] = "";
-				}
 			}
 
 			// Externally managed expansion device types
@@ -4870,13 +5291,49 @@ void renderControlsTab()
 				const char* name;
 			};
 
-			std::list<MapleExpansionDeviceDesc> maple_expansion_device_types = {
+			const std::list<MapleExpansionDeviceDesc> static_maple_expansion_device_types = {
 				{MDT_None, T("None")},
 				{MDT_SegaVMU, T("Sega VMU")},
 				{MDT_PurupuruPack, T("Vibration Pack")},
 				{MDT_Microphone, T("Microphone")},
 				{MDT_DreamPotato, T("DreamPotato")},
 			};
+
+			float expComboWidth = comboWidthPadding;
+			for (const auto& devIter : static_maple_expansion_device_types)
+			{
+				expComboWidth = std::max(
+					ImGui::CalcTextSize(devIter.name).x + comboWidthPadding,
+					expComboWidth
+				);
+			}
+
+			// DreamLink device names for main device
+			const char* dream_link_names[MAPLE_PORTS]{};
+			const char* dream_link_ext_labels[MAPLE_PORTS]{};
+			for (int bus = 0; bus < MAPLE_PORTS; bus++)
+			{
+				auto link = MapleLinkRegistry::GetMapleLink(bus, MAPLE_MAIN_DEV_IDX); // Registered controller, if any
+				if (link && (link->dreamlink->getIssueDescription() == nullptr))
+				{
+					dream_link_names[bus] = link->dreamlink->getName();
+					mainComboWidth = std::max(
+						ImGui::CalcTextSize(dream_link_names[bus]).x + comboWidthPadding,
+						mainComboWidth
+					);
+
+					dream_link_ext_labels[bus] = link->dreamlink->getProductName();
+					expComboWidth = std::max(
+						ImGui::CalcTextSize(dream_link_ext_labels[bus]).x + comboWidthPadding,
+						expComboWidth
+					);
+				}
+				else
+				{
+					dream_link_names[bus] = "";
+					dream_link_ext_labels[bus] = "";
+				}
+			}
 
 			// Settings 3-22: Dreamcast Device Ports (4 ports x device + expansion)
 			for (int bus = 0; bus < MAPLE_PORTS; bus++)
@@ -4890,7 +5347,7 @@ void renderControlsTab()
 				else
 					selected_name = maple_device_name(config::MapleMainDevices[bus]);
 
-				ImGui::TableNextRow();
+				ImGui::TableNextRow(ImGuiTableRowFlags_None, uiScaled(24.0f));
 				ImGui::TableSetColumnIndex(0);
 				ImGui::Text(T("Port %c"), bus + 'A');
 
@@ -4923,22 +5380,19 @@ void renderControlsTab()
 					ImGui::EndCombo();
 				}
 
+				std::list<MapleExpansionDeviceDesc> maple_expansion_device_types = static_maple_expansion_device_types;
 				int port_count = 0;
 				if (has_dream_link)
 				{
+					// Using real hardware for this - done with disable section
 					ImGui::EndDisabled();
+
 					port_count = 2;
-					maple_expansion_device_types.push_back({MDT_DreamLink, dream_link_name});
+					maple_expansion_device_types.push_back({MDT_DreamLink, dream_link_ext_labels[bus]});
 				}
 				else
 				{
 					port_count = maple_getPortCount(config::MapleMainDevices[bus]);
-				}
-
-				float expComboWidth = comboWidthPadding;
-				for (const auto& devIter : maple_expansion_device_types)
-				{
-					expComboWidth = std::max(ImGui::CalcTextSize(devIter.name).x + comboWidthPadding, expComboWidth);
 				}
 
 				for (int port = 0; port < port_count; port++)
@@ -4969,7 +5423,7 @@ void renderControlsTab()
 					{
 						for (const auto& devIter : maple_expansion_device_types)
 						{
-							bool is_selected = (subtype == devIter.deviceType);
+							bool is_selected = (selectedDevIter->deviceType == devIter.deviceType);
 							if (ImGui::Selectable(devIter.name, &is_selected))
 							{
 								subtype = devIter.deviceType;
@@ -5045,8 +5499,8 @@ void renderControlsTab()
 					ImGui::SameLine(0, 0);
 
 					// Icon
-					SettingIcon(ICON_FA_CROSSHAIRS, ImVec2(uiScaled(16), uiScaled(16)));
-					ImGui::SameLine(0, uiScaled(6));
+					SettingIcon(ICON_FA_CROSSHAIRS, SettingsLayoutSize(16.0f, 16.0f));
+					ImGui::SameLine(0, SettingsLayoutScaled(6.0f));
 
 					// Label
 					ImGui::Text("%s", T("Crosshair"));
@@ -5085,6 +5539,9 @@ void renderControlsTab()
 			}
 			ImGui::EndTable();
 		}
+		ImGui::PopStyleColor();
+		ImGui::PopStyleVar(2);
+		ImGui::PopFont();
 
 		// Setting 23: Crosshair Size (10-100)
 		{
@@ -5106,14 +5563,14 @@ void renderControlsTab()
 			crosshairConfig.defaultValue = 50;
 			crosshairConfig.format = "%d";
 			crosshairConfig.applyButtonText = T("Apply");
-			crosshairConfig.onApply = []() {
+			crosshairConfig.onApply = nullptr;
+			crosshairConfig.onValueChange = []() {
 				config::CrosshairSize.set(crosshairSizeTemp);
 			};
-			crosshairConfig.onValueChange = nullptr;
-			crosshairConfig.iconSize = uiScaled(20.0f);
-			crosshairConfig.iconSpacing = uiScaled(8.0f);
-			crosshairConfig.valueWidth = uiScaled(220.0f);
-			crosshairConfig.sliderWidth = uiScaled(320.0f);
+			crosshairConfig.iconSize = 20.0f;
+			crosshairConfig.iconSpacing = 8.0f;
+			crosshairConfig.valueWidth = 220.0f;
+			crosshairConfig.sliderWidth = 320.0f;
 			crosshairConfig.showApplyFlag = nullptr;
 			crosshairConfig.hasPendingChanges = false;
 
@@ -5191,7 +5648,7 @@ void renderControlsTab()
 
 void renderNetworkTab()
 {
-	ScopedTwoLineRowStyle networkRowStyle(20.0f, true, 0.5f, 8.0f);
+	ScopedTwoLineRowStyle networkRowStyle(12.0f, true, 0.5f);
 
 	ImGui::TextDisabled("%s", T("Network Configuration"));
 	ImGui::Separator();
@@ -5398,13 +5855,13 @@ void renderNetworkTab()
 									));
 								const ImVec2 line1Start = BeginTwoLineSettingRowContent();
 
-								SettingIcon(ICON_FA_HOURGLASS, ImVec2(uiScaled(20), uiScaled(20)));
-								ImGui::SameLine(0, uiScaled(8));
+								SettingIcon(ICON_FA_HOURGLASS, SettingsLayoutSize(20.0f, 20.0f));
+								ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 								ImGui::PushFont(largeFont);
 								ImGui::TextUnformatted(T("Chat Window Timeout (s)"));
 								ImGui::PopFont();
 
-								const float inputWidth = uiScaled(220.0f);
+								const float inputWidth = SettingsLayoutScaled(220.0f);
 								ImGui::SameLine(RightColumnX(inputWidth));
 								if (rowActivated)
 									ImGui::SetKeyboardFocusHere();
@@ -5415,10 +5872,8 @@ void renderNetworkTab()
 									config::GGPOChatTimeout.set(atoi(chatTimeout));
 
 								RenderTwoLineSettingDescription(line1Start, T("Sets duration that chat window stays open after new message is received"));
+								EndTwoLineSettingRow();
 								ImGui::PopID();
-								ImGui::Spacing();
-								if (g_twoLineRowExtraGapPx > 0.0f)
-									ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 							}
 						}
 					}
@@ -5526,13 +5981,13 @@ void renderNetworkTab()
 							));
 						const ImVec2 line1Start = BeginTwoLineSettingRowContent();
 
-						SettingIcon(ICON_FA_KEY, ImVec2(uiScaled(20), uiScaled(20)));
-						ImGui::SameLine(0, uiScaled(8));
+						SettingIcon(ICON_FA_KEY, SettingsLayoutSize(20.0f, 20.0f));
+						ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 						ImGui::PushFont(largeFont);
 						ImGui::TextUnformatted(T("Local Port"));
 						ImGui::PopFont();
 
-						const float inputWidth = uiScaled(220.0f);
+						const float inputWidth = SettingsLayoutScaled(220.0f);
 						ImGui::SameLine(RightColumnX(inputWidth));
 						if (rowActivated)
 							ImGui::SetKeyboardFocusHere();
@@ -5543,10 +5998,8 @@ void renderNetworkTab()
 							config::LocalPort.set(atoi(localPort));
 
 						RenderTwoLineSettingDescription(line1Start, T("The local UDP port to use"));
+						EndTwoLineSettingRow();
 						ImGui::PopID();
-						ImGui::Spacing();
-						if (g_twoLineRowExtraGapPx > 0.0f)
-							ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 					}
 				}
 			}
@@ -5558,7 +6011,7 @@ void renderNetworkTab()
 			if (ImGui::BeginTabBar("battleMode", ImGuiTabBarFlags_NoTooltip))
 			{
 				// Match Code Tab
-				const std::string matchCodeTabLabel = std::string(ICON_FA_TAG " ") + T("Match Code") + "###Match Code";
+				const std::string matchCodeTabLabel = std::string(T("Match Code")) + "###Match Code";
 				if (ImGui::BeginTabItem(matchCodeTabLabel.c_str()))
 				{
 					ice::State state = ice::getState();
@@ -5654,13 +6107,13 @@ void renderNetworkTab()
 							));
 						const ImVec2 line1Start = BeginTwoLineSettingRowContent();
 
-						SettingIcon(ICON_FA_KEY, ImVec2(uiScaled(20), uiScaled(20)));
-						ImGui::SameLine(0, uiScaled(8));
+						SettingIcon(ICON_FA_KEY, SettingsLayoutSize(20.0f, 20.0f));
+						ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 						ImGui::PushFont(largeFont);
 						ImGui::TextUnformatted(T("Local Port"));
 						ImGui::PopFont();
 
-						const float inputWidth = uiScaled(220.0f);
+						const float inputWidth = SettingsLayoutScaled(220.0f);
 						ImGui::SameLine(RightColumnX(inputWidth));
 						if (rowActivated)
 							ImGui::SetKeyboardFocusHere();
@@ -5671,10 +6124,8 @@ void renderNetworkTab()
 							config::LocalPort.set(atoi(localPort));
 
 						RenderTwoLineSettingDescription(line1Start, T("The local UDP port to use"));
+						EndTwoLineSettingRow();
 						ImGui::PopID();
-						ImGui::Spacing();
-						if (g_twoLineRowExtraGapPx > 0.0f)
-							ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 					}
 #ifdef USE_ICE
 					ImGui::EndTabItem();
@@ -5818,7 +6269,7 @@ void renderNetworkTab()
 
 void renderAdvancedTab()
 {
-	ScopedTwoLineRowStyle advancedRowStyle(20.0f, true, 0.5f, 8.0f);
+	ScopedTwoLineRowStyle advancedRowStyle(12.0f, true, 0.5f);
 
 	ImGui::TextDisabled("%s", T("Advanced Configuration"));
 	ImGui::Separator();
@@ -6104,13 +6555,13 @@ void renderAdvancedTab()
 					));
 				const ImVec2 line1Start = BeginTwoLineSettingRowContent();
 
-				SettingIcon(ICON_FA_LINK, ImVec2(uiScaled(20), uiScaled(20)));
-				ImGui::SameLine(0, uiScaled(8));
+				SettingIcon(ICON_FA_LINK, SettingsLayoutSize(20.0f, 20.0f));
+				ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 				ImGui::PushFont(largeFont);
 				ImGui::TextUnformatted(T("GDB Port"));
 				ImGui::PopFont();
 
-				const float inputWidth = uiScaled(220.0f);
+				const float inputWidth = SettingsLayoutScaled(220.0f);
 				ImGui::SameLine(RightColumnX(inputWidth));
 				if (rowActivated)
 					ImGui::SetKeyboardFocusHere();
@@ -6120,10 +6571,8 @@ void renderAdvancedTab()
 					config::GDBPort = gdbport;
 
 				RenderTwoLineSettingDescription(line1Start, T("Default port is 3263"));
+				EndTwoLineSettingRow();
 				ImGui::PopID();
-				ImGui::Spacing();
-				if (g_twoLineRowExtraGapPx > 0.0f)
-					ImGui::Dummy(ImVec2(0.0f, uiScaled(g_twoLineRowExtraGapPx)));
 			}
 			ImGui::Unindent();
 		}
@@ -6262,17 +6711,17 @@ void renderAdvancedTab()
 				ImGui::Text("%s", shortName.c_str());
 				ImGui::PopFont();
 
-				float toggleWidth = uiScaled(50);
+				float toggleWidth = SettingsLayoutScaled(50.0f);
 				ImGui::SameLine(RightColumnX(toggleWidth));
 
-				float toggleHeight = settings.display.uiScale * 24;
+				float toggleHeight = SettingsLayoutScaled(24.0f);
 				float verticalOffset = (rowHeight - toggleHeight) * 0.5f;
 				ImVec2 cursorPos = ImGui::GetCursorPos();
 				ImGui::SetCursorPos(ImVec2(cursorPos.x, cursorPos.y + verticalOffset));
 
 				RenderToggleSwitchVisual(enabled);
 
-				ImGui::SetCursorPos(ImVec2(line1Start.x + uiScaled(28), line1Start.y + ImGui::GetTextLineHeightWithSpacing()));
+				ImGui::SetCursorPos(ImVec2(line1Start.x + SettingsLayoutScaled(28.0f), line1Start.y + ImGui::GetTextLineHeightWithSpacing()));
 				ImGui::TextDisabled("%s", fullName.c_str());
 
 				ImGui::PopID();
@@ -6290,8 +6739,8 @@ void renderAdvancedTab()
 		}
 
 		// Log Server (network logging)
-		SettingIcon(ICON_FA_SERVER, ImVec2(uiScaled(20), uiScaled(20)));
-		ImGui::SameLine(0, uiScaled(8));
+		SettingIcon(ICON_FA_SERVER, SettingsLayoutSize(20.0f, 20.0f));
+		ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
 		ImGui::PushFont(largeFont);
 		ImGui::Text("%s", T("Log Server"));
 		ImGui::PopFont();
@@ -6520,7 +6969,7 @@ void renderAboutTab()
 	ImGui::Separator();
 
 	// Center content for better appearance
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 20));
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ScaledVec2(20, 20));
 
 	// Logo/Title Section
 	ImGui::Spacing();
@@ -6596,15 +7045,15 @@ void renderAboutTab()
 
 	// Graphics Information
 	{
-		std::string graphicsTitle = std::string(ICON_FA_DISPLAY " ") + T("Graphics") + "##Section";
+		std::string graphicsTitle = T("Graphics");
 		if (isOpenGL(config::RendererType))
-			graphicsTitle = std::string(ICON_FA_DISPLAY " ") + T("Graphics - OpenGL") + "##Section";
+			graphicsTitle = T("Graphics - OpenGL");
 		else if (isVulkan(config::RendererType))
-			graphicsTitle = std::string(ICON_FA_DISPLAY " ") + T("Graphics - Vulkan") + "##Section";
+			graphicsTitle = T("Graphics - Vulkan");
 		else if (isDirectX(config::RendererType))
-			graphicsTitle = std::string(ICON_FA_DISPLAY " ") + T("Graphics - DirectX") + "##Section";
+			graphicsTitle = T("Graphics - DirectX");
 
-		if (ImGui::CollapsingHeader(graphicsTitle.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+		if (RenderCollapsingHeader("GraphicsSection", ICON_FA_DISPLAY, graphicsTitle.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
 		{
 			ImGui::Text(T("Driver: %s"), GraphicsContext::Instance()->getDriverName().c_str());
 			ImGui::Text(T("Version: %s"), GraphicsContext::Instance()->getDriverVersion().c_str());
@@ -6711,6 +7160,10 @@ void renderSettingsNew()
 			| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse
 			| ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
 	{
+		const bool pushedSettingsFont = settingsTitleFont != nullptr;
+		if (pushedSettingsFont)
+			ImGui::PushFont(settingsTitleFont);
+
 		const std::function<void()> exitSettings = [&]() {
 			dreampotato::update();
 			if (g_mapleDevicesChangedInSettings)
@@ -6740,6 +7193,9 @@ void renderSettingsNew()
 		renderNavigationRail(exitSettings, backLabel);
 		ImGui::SameLine();
 		renderContentArea();
+
+		if (pushedSettingsFont)
+			ImGui::PopFont();
 	}
 	ImGui::End();
 }

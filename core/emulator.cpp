@@ -57,6 +57,12 @@
 
 settings_t settings;
 constexpr char const *BIOS_TITLE = "Dreamcast BIOS";
+static bool skipAutoSaveOnNextUnload = false;
+
+void dc_skipAutoSaveOnNextUnload()
+{
+	skipAutoSaveOnNextUnload = true;
+}
 
 static void loadSpecialSettings()
 {
@@ -423,6 +429,9 @@ static void loadSpecialSettings()
 			INFO_LOG(BOOT, "Enabling Extra depth scaling for game %s", prod_id.c_str());
 			config::ExtraDepthScale.override(10000.f);
 		}
+		if (prod_id == "SEGA STRIKE FIGHTER IN JPN-SLAVE")
+			// slave 1 left channel is connected to a bass shaker, which produces an annoying buzzing sound on regular speakers
+			settings.aica.muteAudio = true;
 	}
 }
 
@@ -686,8 +695,6 @@ void Emulator::loadGame(const char *path, LoadProgress *progress)
 #ifndef LIBRETRO
 			if (config::GGPOEnable)
 				dc_loadstate(-1);
-			else if (config::AutoLoadState && !naomiNetworkSupported() && !settings.naomi.multiboard)
-				dc_loadstate(config::SavestateSlot);
 #endif
 		}
 
@@ -747,17 +754,19 @@ void Emulator::runInternal()
 	}
 }
 
-void Emulator::unloadGame()
+void Emulator::unloadGame(bool allowAutoSave)
 {
+	bool skipAutoSaveThisUnload = skipAutoSaveOnNextUnload;
+	skipAutoSaveOnNextUnload = false;
 	try {
 		stop();
 	} catch (...) { }
 	if (state == Loaded || state == Error)
 	{
 #ifndef LIBRETRO
-		if (state == Loaded && config::AutoSaveState && !settings.content.path.empty()
+		if (allowAutoSave && state == Loaded && config::AutoSaveState && !skipAutoSaveThisUnload && !settings.content.path.empty()
 				&& !settings.naomi.multiboard && !config::GGPOEnable && !naomiNetworkSupported())
-			gui_saveState(false);
+			gui_saveState(dc_getAutoSaveSlot(), false);
 #endif
 		try {
 			dc_reset(true);
@@ -956,6 +965,26 @@ void EventManager::unregisterEvent(Event event, Callback callback, void *param)
 	auto it = std::find(vector.begin(), vector.end(), std::make_pair(callback, param));
 	if (it != vector.end())
 		vector.erase(it);
+}
+
+void EventManager::handleEvent(Event event)
+{
+	switch (event)
+	{
+		case Event::Start:
+			running.store(true);
+			break;
+
+		case Event::Terminate:
+			running.store(false);
+			break;
+
+		default:
+			// Do nothing
+			break;
+	}
+
+	broadcastEvent(event);
 }
 
 void EventManager::broadcastEvent(Event event)

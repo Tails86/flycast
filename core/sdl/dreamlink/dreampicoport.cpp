@@ -127,11 +127,22 @@ struct DppVirtualVmu : public maple_sega_vmu
 		loaded_us_since_write = std::numeric_limits<u64>::max();
 		fullSaveNeeded = false;
 	}
+
+	//! MapleLink relay is disabled for this virtual VMU
+	inline void relayMapleLink() override
+	{}
 };
 
+//! Generates the port character from a given bus
+//! @param[in] bus The target bus [0,3]
+//! @return The associated port character
+static char getPortCharForBus(int bus) {
+	return ('A' + bus);
+}
+
 static std::string getBusDescription(int software_bus, int hardware_bus) {
-	const char swPortChar = 'A' + software_bus;
-	const char hwPortChar = 'A' + hardware_bus;
+	const char swPortChar = getPortCharForBus(software_bus);
+	const char hwPortChar = getPortCharForBus(hardware_bus);
 	if (swPortChar == hwPortChar) {
 		return std::string(1, swPortChar);
 	} else {
@@ -145,7 +156,7 @@ struct DppMapleLinkDevice : public MapleLinkDeviceBase<maple_base>
 	//! The supported functions mask for this device
 	const u32 supportedFns;
 	//! The linked DreamPicoPort
-	std::shared_ptr<class DreamPicoPort> linkedDpp;
+	std::weak_ptr<class DreamPicoPort> linkedDppWptr;
 	//! The last time write was performed
 	std::chrono::steady_clock::time_point lastWriteTime;
 	//! Mutex serializing write operations
@@ -227,46 +238,25 @@ public:
 		}
 
 		if (!dpp_api_device) {
-			dpp_api::DppDevice::Filter dppFilter;
-			dppFilter.serial = serial_number;
-			dpp_api_device = dpp_api::DppDevice::find(dppFilter);
+			dpp_api_device = makeNewDppDevice(serial_number);
 			if (!dpp_api_device) {
-				dppFilter.minBcdDevice = 0;
-				dpp_api_device = dpp_api::DppDevice::find(dppFilter);
-				if (dpp_api_device) {
-					upgrade_required = true;
-					std::array<std::uint8_t, 3> ver = dpp_api_device->getVersion();
-					WARN_LOG(
-						INPUT,
-						"DreamPicoPort[%s] API connect failed: device with serial \"%s\" uses version %i.%i.%i\n"
-						"Update DreamPicoPort firmware to version 1.2.1 or later to enable peripheral connection",
-						getLocDesc().c_str(),
-						serial_number.c_str(),
-						static_cast<int>(ver[0]),
-						static_cast<int>(ver[1]),
-						static_cast<int>(ver[2])
-					);
-				}
-				else {
-					WARN_LOG(
-						INPUT,
-						"DreamPicoPort[%s] API connect failed: find failed for serial %s",
-						getLocDesc().c_str(),
-						serial_number.c_str()
-					);
-				}
+				return; // Failed to make the new device
 			}
-			else if (!dpp_api_device->connect()) {
+
+			// Save this instance to the map
+			all_dpp_api_devices.insert(std::make_pair(serial_number, dpp_api_device));
+		}
+		else if (!dpp_api_device->isConnected()) {
+			// Note: it is possible to reach here if DreamPicoPort is connected, removed from USB, and then reattached
+			//       all while the emulator is paused.
+			if (!dpp_api_device->connect()) {
 				WARN_LOG(
 					INPUT,
-					"DreamPicoPort[%s] API connect failed: %s",
+					"DreamPicoPort[%s] API reconnect failed: %s",
 					getLocDesc().c_str(),
 					dpp_api_device->getLastErrorStr().c_str()
 				);
 				dpp_api_device.reset();
-			} else {
-				// Save this instance to the map
-				all_dpp_api_devices.insert(std::make_pair(serial_number, dpp_api_device));
 			}
 		}
 	}
@@ -341,7 +331,7 @@ public:
 		return (id != 0);
 	}
 
-    bool send(const MapleMsg& txMsg, MapleMsg& rxMsg, std::chrono::milliseconds timeout_ms) {
+	bool send(const MapleMsg& txMsg, MapleMsg& rxMsg, std::chrono::milliseconds timeout_ms) {
 		if (!isConnected()) {
 			return false;
 		}
@@ -384,6 +374,56 @@ public:
 			software_bus = this->software_bus;
 		}
 		return getBusDescription(software_bus, hardware_bus);
+	}
+
+private:
+	std::shared_ptr<dpp_api::DppDevice> makeNewDppDevice(const std::string& serial_number)
+	{
+		std::shared_ptr<dpp_api::DppDevice> newDev;
+		dpp_api::DppDevice::Filter dppFilter;
+		dppFilter.serial = serial_number;
+		newDev = dpp_api::DppDevice::find(dppFilter);
+		if (!newDev) {
+			dppFilter.minBcdDevice = 0;
+			newDev = dpp_api::DppDevice::find(dppFilter);
+			if (newDev) {
+				upgrade_required = true;
+				std::array<std::uint8_t, 3> ver = newDev->getVersion();
+				WARN_LOG(
+					INPUT,
+					"DreamPicoPort[%s] API connect failed: device with serial \"%s\" uses version %i.%i.%i\n"
+					"Update DreamPicoPort firmware to version 1.2.1 or later to enable peripheral connection",
+					getLocDesc().c_str(),
+					serial_number.c_str(),
+					static_cast<int>(ver[0]),
+					static_cast<int>(ver[1]),
+					static_cast<int>(ver[2])
+				);
+			}
+			else {
+				WARN_LOG(
+					INPUT,
+					"DreamPicoPort[%s] API connect failed: find failed for serial %s",
+					getLocDesc().c_str(),
+					serial_number.c_str()
+				);
+			}
+
+			return nullptr;
+		}
+
+		if (!newDev->connect()) {
+			WARN_LOG(
+				INPUT,
+				"DreamPicoPort[%s] API connect failed: %s",
+				getLocDesc().c_str(),
+				newDev->getLastErrorStr().c_str()
+			);
+
+			return nullptr;
+		}
+
+		return newDev;
 	}
 };
 
@@ -433,14 +473,25 @@ class DreamPicoPort : public SDLDreamLink
 		std::string serial_number;
 		//! If set, the determined unique ID of this device. If not set, the serial could not be parsed.
 		std::string unique_id;
+		//! The ID used for sorting on the UI
+		std::string sort_id;
+
+		//! @return The hardware port character identifier
+		char getPortChar() const {
+			return getPortCharForBus(hardware_bus);
+		}
+
+		//! @return the static product name
+		static const char* getProductName() {
+			return "DreamPicoPort";
+		}
 
 		//! @param[in] separator Separator string to use between name and port char
 		//! @return unique name of this device using the given separator
 		std::string getName(const std::string& separator = " ") const {
-			std::string name = "DreamPicoPort";
+			std::string name = getProductName();
 			if (!is_hardware_bus_implied && !is_single_device) {
-				const char portChar = ('A' + hardware_bus);
-				name += separator + std::string(1, portChar);
+				name += separator + std::string(1, getPortChar());
 			}
 			return name;
 		}
@@ -497,7 +548,7 @@ public:
 		const int endPort = (expansion >= 0) ? (expansion + 1) : 2;
 
 		for (int port = startPort; port < endPort; ++port) {
-			u32 fnCode = getFunctionCode(port);
+			u32 fnCode = getFunctionCodesMask(port);
 
 			if ((fnCode & MFID_1_Storage) == 0) {
 				// Not a storage device
@@ -545,7 +596,7 @@ public:
 		}
 
 		constexpr int perGameVmuPort = 0;
-		if ((getFunctionCode(perGameVmuPort) & MFID_1_Storage) == 0) {
+		if ((getFunctionCodesMask(perGameVmuPort) & MFID_1_Storage) == 0) {
 			return;
 		}
 
@@ -592,7 +643,7 @@ public:
 		}
 	}
 
-    u32 getFunctionCode(int forPort) const {
+	u32 getFunctionCodesMask(int forPort) const override {
 		std::lock_guard<std::recursive_mutex> lock(mutex);
 
 		forPort = fcPortToDppPort(forPort);
@@ -630,8 +681,12 @@ public:
 		}
 	}
 
-	std::string getUniqueId() const {
+	const std::string& getUniqueId() const {
 		return hw_info.unique_id;
+	}
+
+	const std::string& getSortId() const {
+		return hw_info.sort_id;
 	}
 
 	void changeBus(int newBus) override {
@@ -667,22 +722,26 @@ public:
 		return device_name.c_str();
 	}
 
+	const char* getProductName() const override {
+		return hw_info.getProductName();
+	}
+
 	void setMapleDevices()
 	{
 		if (!DreamLink::isValidBus(software_bus))
 			return;
 
-		u32 portOneFn = getFunctionCode(0);
+		u32 portOneFn = getFunctionCodesMask(0);
 		if (portOneFn & MFID_1_Storage) {
-			if (storageEnabled() && isGameRunning())
+			if (storageEnabled() && EventManager::isGameRunning())
 			{
 				sendGameId(0);
 			}
 		}
 
-		u32 portTwoFn = getFunctionCode(1);
+		u32 portTwoFn = getFunctionCodesMask(1);
 		if (portTwoFn & MFID_1_Storage) {
-			if (storageEnabled() && isGameRunning())
+			if (storageEnabled() && EventManager::isGameRunning())
 			{
 				sendGameId(1);
 			}
@@ -733,7 +792,7 @@ public:
 		connect_requested = false;
 	}
 
-    void sendPort() {
+	void sendPort() {
 		std::lock_guard<std::recursive_mutex> lock(mutex);
 
 		if (dpp_comms) {
@@ -835,6 +894,21 @@ private:
 		// Timeout is extended to 5 seconds for all other communication after connection
 		timeout_ms = std::chrono::seconds(5);
 
+		// Query peripheral after 3.5 seconds on first connection attempt
+		// This is because gamepad_btn_input event handler isn't active for a few seconds after physical connection. An
+		// older VMU without battery takes 3 seconds to boot, so this should ensure initial attachment is captured.
+		std::weak_ptr<BaseDreamLink> weakThis = weak_from_this();
+		gui_runOnUiThread(
+			std::chrono::milliseconds(3500),
+			[weakThis]()
+			{
+				std::shared_ptr<DreamPicoPort> link = std::dynamic_pointer_cast<DreamPicoPort>(weakThis.lock());
+				if (link) {
+					link->queryPeripherals();
+				}
+			}
+		);
+
 		setMapleDevices();
 	}
 
@@ -855,7 +929,17 @@ private:
 
 		connect_retry_scheduled = true;
 
-		gui_runOnUiThread(CONNECT_RETRY_DELAY, [this](){connectionCallback();});
+		std::weak_ptr<BaseDreamLink> weakThis = weak_from_this();
+		gui_runOnUiThread(
+			CONNECT_RETRY_DELAY,
+			[weakThis]()
+			{
+				std::shared_ptr<DreamPicoPort> link = std::dynamic_pointer_cast<DreamPicoPort>(weakThis.lock());
+				if (link) {
+					link->connectionCallback();
+				}
+			}
+		);
 	}
 
 	void connectionCallback() {
@@ -1008,9 +1092,17 @@ private:
 		}
 
 		hw_info.unique_id.clear();
+		hw_info.sort_id.clear();
 		if (!hw_info.is_hardware_bus_implied && !hw_info.serial_number.empty()) {
 			// Locking to name, which includes A-D, plus serial number will ensure correct enumeration every time
 			hw_info.unique_id = std::string("sdl_") + hw_info.getName("") + std::string("_") + hw_info.serial_number;
+			// Ensure this is ordered by SDL, product name, serial, and port char
+			hw_info.sort_id = (
+				std::string("sdl_") +
+				hw_info.getProductName() + std::string("_") +
+				hw_info.serial_number + std::string("_") +
+				std::string(1, hw_info.getPortChar())
+			);
 		}
 
 		return hw_info;
@@ -1052,7 +1144,7 @@ private:
 	}
 
 public:
-    bool queryPeripherals(bool clearOnFailure = true) {
+	bool queryPeripherals(bool clearOnFailure = true) {
 		std::lock_guard<std::recursive_mutex> lock(mutex);
 
 		std::vector<std::vector<std::array<uint32_t, 2>>> prev = peripherals;
@@ -1074,7 +1166,7 @@ public:
 		peripherals = std::move(optPeriph.value());
 
 		// If game is running, send game ID to any newly attached VMUs
-		if (isGameRunning()) {
+		if (EventManager::isGameRunning()) {
 			auto portContainsMemory = [](const std::vector<std::array<uint32_t, 2>>& portData) {
 				bool containsMemory = false;
 				for (const auto& fns : portData) {
@@ -1096,14 +1188,14 @@ public:
 			}
 		}
 
-		const std::string portCharStr = std::string(1, 'A' + software_bus);
-		const u32 mainCode = getFunctionCode(5);
+		const std::string portCharStr = std::string(1, getPortCharForBus(software_bus));
+		const u32 mainCode = getFunctionCodesMask(5);
 
 		if (mainCode != 0) {
-			std::string deviceSummary(fnToName(getFunctionCode(5)));
+			std::string deviceSummary(fnToName(getFunctionCodesMask(5)));
 
 			for (int i = MAPLE_FIRST_EXT_DEV_IDX; i <= MAPLE_LAST_EXT_DEV_IDX; ++i) {
-				const u32 code = getFunctionCode(i);
+				const u32 code = getFunctionCodesMask(i);
 				if (code != 0) {
 					const std::string extDesc = portCharStr + std::string(1, '1' + i - MAPLE_FIRST_EXT_DEV_IDX);
 					deviceSummary += ", " + extDesc + ": " + fnToName(code);
@@ -1123,7 +1215,8 @@ public:
 DppMapleLinkDevice::DppMapleLinkDevice(const MapleLink& link, u32 supportedFns) :
 	MapleLinkDeviceBase<maple_base>(link), supportedFns(supportedFns)
 {
-	linkedDpp = std::dynamic_pointer_cast<DreamPicoPort>(link.dreamlink);
+	std::shared_ptr<DreamPicoPort> linkedDpp = std::dynamic_pointer_cast<DreamPicoPort>(link.dreamlink);
+	linkedDppWptr = linkedDpp;
 	if (!linkedDpp) {
 		ERROR_LOG(INPUT, "DppMapleLinkDevice created without an associated DreamPicoPort");
 	}
@@ -1145,10 +1238,12 @@ bool DppMapleLinkDevice::linkStatus()
 	if (!maple_base::linkStatus())
 		return false;
 
+	std::shared_ptr<DreamPicoPort> linkedDpp = linkedDppWptr.lock();
+
 	bool isLinked = (
 		linkedDpp &&
 		linkedDpp->isConnected() &&
-		((linkedDpp->getFunctionCode(bus_port) & supportedFns) != 0)
+		((linkedDpp->getFunctionCodesMask(bus_port) & supportedFns) != 0)
 	);
 
 	if (!isLinked) {
@@ -1176,10 +1271,12 @@ MapleDeviceType DppMapleLinkDevice::get_device_type()
 	// This is mainly used by the serializer
 	serializingType = MDT_None;
 
+	std::shared_ptr<DreamPicoPort> linkedDpp = linkedDppWptr.lock();
+
 	if (!linkedDpp)
 		return serializingType;
 
-	serializingType = fnCodeToMapleDeviceType(linkedDpp->getFunctionCode(bus_port));
+	serializingType = fnCodeToMapleDeviceType(linkedDpp->getFunctionCodesMask(bus_port));
 
 	establishVirtualDevice(serializingType);
 
@@ -1247,10 +1344,12 @@ u32 DppMapleLinkDevice::virtualVmuDma(u32 cmd)
 
 u32 DppMapleLinkDevice::dma(u32 cmd)
 {
+	std::shared_ptr<DreamPicoPort> linkedDpp = linkedDppWptr.lock();
+
 	if (!linkedDpp)
 		return MDRS_JVSNone;
 
-	establishVirtualDevice(fnCodeToMapleDeviceType(linkedDpp->getFunctionCode(bus_port)));
+	establishVirtualDevice(fnCodeToMapleDeviceType(linkedDpp->getFunctionCodesMask(bus_port)));
 
 	// Deserialize the first data word without popping off of dma
 	u32 firstWord = 0;
@@ -1344,9 +1443,10 @@ bool DppMapleLinkDevice::deserializingFor(MapleDeviceType type)
 {
 	deserializingType = type;
 	bool isSameType = false;
+	std::shared_ptr<DreamPicoPort> linkedDpp = linkedDppWptr.lock();
 
 	if (linkedDpp) {
-		MapleDeviceType detectedType = fnCodeToMapleDeviceType(linkedDpp->getFunctionCode(bus_port));
+		MapleDeviceType detectedType = fnCodeToMapleDeviceType(linkedDpp->getFunctionCodesMask(bus_port));
 		isSameType = (type != MDT_None && detectedType == type);
 	}
 
@@ -1394,6 +1494,8 @@ void DppMapleLinkDevice::deserialize(Deserializer& deser)
 	// Assumption: the caller would have called deserializingFor() just before deserialize(), so deserializingType
 	//             should be set to the expected deserialization type
 
+	std::shared_ptr<DreamPicoPort> linkedDpp;
+
 	if (deserializingType == MDT_None)
 	{
 		ERROR_LOG(INPUT, "DppMapleLinkDevice received deserialize for MDT_None");
@@ -1410,18 +1512,22 @@ void DppMapleLinkDevice::deserialize(Deserializer& deser)
 		requestReconnect();
 		return;
 	}
-	else if (!linkedDpp)
+	else
 	{
-		ERROR_LOG(
-			INPUT,
-			"DppMapleLinkDevice no link setup to deserialize [%i]",
-			static_cast<int>(deserializingType)
-		);
-		requestReconnect();
-		return;
+		linkedDpp = linkedDppWptr.lock();
+		if (!linkedDpp)
+		{
+			ERROR_LOG(
+				INPUT,
+				"DppMapleLinkDevice no link setup to deserialize [%i]",
+				static_cast<int>(deserializingType)
+			);
+			requestReconnect();
+			return;
+		}
 	}
 
-	MapleDeviceType detectedType = fnCodeToMapleDeviceType(linkedDpp->getFunctionCode(bus_port));
+	MapleDeviceType detectedType = fnCodeToMapleDeviceType(linkedDpp->getFunctionCodesMask(bus_port));
 
 	if (detectedType != deserializingType)
 	{
@@ -1475,6 +1581,8 @@ u32 MapleLinkMainDevice::dma(u32 cmd)
 		PlainJoystickState pjs;
 		config->GetInput(&pjs);
 
+		std::shared_ptr<DreamPicoPort> linkedDpp = linkedDppWptr.lock();
+
 		if (!linkedDpp || !linkedDpp->isConnected())
 		{
 			// Not connected
@@ -1525,11 +1633,17 @@ DreamPicoPortGamepad::DreamPicoPortGamepad(
 	dream_pico_port::DreamPicoPort *picoPort = dynamic_cast<dream_pico_port::DreamPicoPort*>(dreamlink.get());
 	_name = picoPort->getName();
 
-	std::string uniqueId = picoPort->getUniqueId();
+	const std::string& sortId = picoPort->getSortId();
+	if (!sortId.empty()) {
+		_sort_id = sortId;
+	}
+
+	const std::string& uniqueId = picoPort->getUniqueId();
 	if (!uniqueId.empty()) {
 		_unique_id = uniqueId;
 		loadMapping();
 	}
+
 	int bus = picoPort->getDefaultBus();
 	if (DreamLink::isValidBus(bus))
 		set_maple_port(bus);

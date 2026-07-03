@@ -47,14 +47,20 @@ public:
 	std::string getLibraryCoverMediaPath(const GameMedia& media);
 	std::string getCustomMediaPath(const GameMedia& media, config::LibraryCoverMediaMode mediaMode);
 	void term();
+	void refreshCache();
 	void refreshCustomBoxartIndex(bool force = false);
+	void queueBoxart(const GameMedia& media);
+	void startFetch();
 
 private:
 	GameBoxart getPhysicalBoxart(const GameMedia& media);
 	std::string getCustomBoxartPath(const GameMedia& media);
 	std::string getCustomBoxartPathForMediaMode(const GameMedia& media, config::LibraryCoverMediaMode mediaMode);
+	GameBoxart getBoxartAndQueue(const GameMedia& media, bool startFetch);
 	bool shouldFetchOnline() const;
 	void loadDatabase();
+	void recoverDatabases(const std::string& saveDir);
+	void reviewDatabaseArtwork();
 	void saveDatabase();
 	std::string getSaveDirectory() const {
 		// File-system paths must end with a separator; Android SAF URIs must stay unchanged.
@@ -76,14 +82,14 @@ private:
 	std::string customBoxartRoot;
 	std::mutex mutex;
 	std::unique_ptr<Scraper> scraper;
-	std::unique_ptr<Scraper> offlineScraper;
 	std::unique_ptr<Scraper> arcadeScraper;
 	bool databaseLoaded = false;
 	bool databaseDirty = false;
 	bool customIndexLoaded = false;
 
 	std::vector<GameBoxart> toFetch;
-	std::future<void> fetching;
+	std::future<void> physicalFetching;
+	std::future<void> onlineFetching;
 
 	static constexpr char const *DB_NAME = "flycast-gamedb.json";
 };

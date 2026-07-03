@@ -28,9 +28,13 @@
 #include "types.h"
 #include "settings.h"
 #include "oslib/i18n.h"
+#if defined(USE_SDL)
+#include "sdl/sdl.h"
+#endif
 
 // External game state flag from gui.cpp
 extern bool game_started;
+extern ImFont *settingsTitleFont;
 
 using namespace i18n;
 
@@ -38,6 +42,57 @@ namespace GuiMenu {
 
 // Menu visibility state
 bool menuVisible = true;
+static bool menuBarVisibleThisFrame = true;
+static float menuBarHeightThisFrame = 0.0f;
+static double touchMenuVisibleUntil = 0.0;
+
+static bool isFullscreenMenuMode()
+{
+#if defined(__ANDROID__)
+	return true;
+#elif defined(USE_SDL)
+	return sdl_is_fullscreen();
+#else
+	return false;
+#endif
+}
+
+static bool shouldShowMenuBar()
+{
+	if (!menuVisible)
+		return false;
+	if (!isFullscreenMenuMode())
+		return true;
+
+	ImGuiIO& io = ImGui::GetIO();
+	ImFont* menuFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+	ImGui::PushFont(menuFont);
+	const float revealHeight = ImGui::GetFrameHeight() * 1.75f;
+	ImGui::PopFont();
+	const bool hasPointer = io.MousePos.x != -FLT_MAX && io.MousePos.y != -FLT_MAX;
+	const bool pointerAtTop = hasPointer && io.MousePos.y <= revealHeight;
+	const bool popupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+
+	if (io.MouseSource == ImGuiMouseSource_TouchScreen)
+	{
+#if defined(__ANDROID__)
+		// Settings rows also use ImGui popups. Do not treat those popups as a
+		// reason to reveal the top menu on Android: showing the menu changes the
+		// Settings window position between OpenPopup() and BeginPopup(), which can
+		// make row value popups flicker and fail unless the menu was already shown.
+		const bool settingsOwnsTouch = gui_state == GuiState::Settings;
+		if (!settingsOwnsTouch && !popupOpen && pointerAtTop && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+			touchMenuVisibleUntil = ImGui::GetTime() + 5.0;
+		return ImGui::GetTime() < touchMenuVisibleUntil;
+#else
+		if (!popupOpen && pointerAtTop && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+			touchMenuVisibleUntil = ImGui::GetTime() + 5.0;
+		return popupOpen || ImGui::GetTime() < touchMenuVisibleUntil;
+#endif
+	}
+
+	return popupOpen || pointerAtTop;
+}
 
 static bool openUrlInShell(const char* url)
 {
@@ -49,10 +104,156 @@ static bool openUrlInShell(const char* url)
 	return platformIo.Platform_OpenInShellFn(ImGui::GetCurrentContext(), url);
 }
 
+void addRomDirectory(const std::string& path)
+{
+	if (path.empty())
+		return;
+	config::ContentPath.get().push_back(path);
+	SaveSettings();
+	gui_refresh_files();
+}
+
+void loadRomFile(const std::string& path)
+{
+	if (!path.empty())
+		gui_start_game(path);
+}
+
+void rescanRomDirectory()
+{
+	gui_refresh_files();
+}
+
+void saveState()
+{
+	if (::game_started)
+		gui_saveState();
+}
+
+void loadState()
+{
+	if (::game_started)
+		gui_loadState();
+}
+
+void exitEmulator()
+{
+	gui_request_exit_emulator();
+}
+
+void closeGame()
+{
+	if (::game_started)
+		gui_request_exit_to_library();
+}
+
+void pauseOrResume()
+{
+	if (!::game_started)
+		return;
+	if (gui_state == GuiState::Closed)
+	{
+		emu.stop();
+		gui_setState(GuiState::Commands);
+	}
+	else
+	{
+		gui_setState(GuiState::Closed);
+		emu.start();
+	}
+}
+
+void restartGame()
+{
+	if (::game_started)
+	{
+		emu.stop();
+		emu.start();
+	}
+}
+
+void toggleFastForward()
+{
+	if (::game_started)
+		settings.input.fastForwardMode = !settings.input.fastForwardMode;
+}
+
+void takeScreenshot()
+{
+	if (::game_started)
+		gui_takeScreenshot();
+}
+
+void openCheats()
+{
+	if (::game_started)
+		gui_setState(GuiState::Cheats);
+}
+
+void openCustomBoxartSettings()
+{
+	gui_setState(GuiState::Settings);
+	gui_focus_boxart_settings_section();
+}
+
+static void openSettingsTab(GuiSettingsTab tab)
+{
+	gui_prepare_settings_tab(tab);
+	gui_setState(GuiState::Settings);
+}
+
+void openGeneralSettings()
+{
+	openSettingsTab(GuiSettingsTab::General);
+}
+
+void openVideoSettings()
+{
+	openSettingsTab(GuiSettingsTab::Video);
+}
+
+void openAudioSettings()
+{
+	openSettingsTab(GuiSettingsTab::Audio);
+}
+
+void openControlsSettings()
+{
+	openSettingsTab(GuiSettingsTab::Controls);
+}
+
+void openNetworkSettings()
+{
+	openSettingsTab(GuiSettingsTab::Network);
+}
+
+void openAdvancedSettings()
+{
+	openSettingsTab(GuiSettingsTab::Advanced);
+}
+
+void openAboutSettings()
+{
+	openSettingsTab(GuiSettingsTab::About);
+}
+
+bool isGameRunning()
+{
+	return ::game_started;
+}
+
 // Render the main menu bar using standard ImGui.
 void renderMainMenuBar()
 {
-	if (!menuVisible)
+#if defined(TARGET_MAC)
+	menuBarVisibleThisFrame = false;
+	menuBarHeightThisFrame = 0.0f;
+	return;
+#endif
+
+	menuBarVisibleThisFrame = shouldShowMenuBar();
+	menuBarHeightThisFrame = 0.0f;
+	if (!menuBarVisibleThisFrame)
 		return;
 
 	// Use ImGui's native main menu bar - it handles everything automatically:
@@ -61,8 +262,11 @@ void renderMainMenuBar()
 	// - Hover effects (ImGuiCol_HeaderHovered) and dropdown menus
 	// - Cross-platform native appearance
 	// Theme colors are already set by applyCurrentTheme().
+	ImFont* menuFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+	ImGui::PushFont(menuFont);
 	if (ImGui::BeginMainMenuBar())
 	{
+		menuBarHeightThisFrame = ImGui::GetWindowHeight();
 		renderFileMenu();
 		renderSystemMenu();
 		renderToolsMenu();
@@ -70,6 +274,7 @@ void renderMainMenuBar()
 		renderHelpMenu();
 		ImGui::EndMainMenuBar();
 	}
+	ImGui::PopFont();
 }
 
 // Render File menu
@@ -84,9 +289,7 @@ void renderFileMenu()
 			select_file_popup(T("Select ROM Directory"), [](bool cancelled, std::string selection) {
 				if (!cancelled && !selection.empty())
 				{
-					config::ContentPath.get().push_back(selection);
-					SaveSettings();
-					gui_refresh_files();
+					addRomDirectory(selection);
 				}
 				return true;
 			}, false, "");
@@ -95,7 +298,7 @@ void renderFileMenu()
 		// Rescan ROM Directory
 		if (ImGui::MenuItem(T("Rescan ROM Directory"), nullptr, false, true))
 		{
-			gui_refresh_files();
+			rescanRomDirectory();
 		}
 
 		ImGui::Separator();
@@ -107,7 +310,7 @@ void renderFileMenu()
 			select_file_popup(T("Select ROM File"), [](bool cancelled, std::string selection) {
 				if (!cancelled && !selection.empty())
 				{
-					gui_start_game(selection);
+					loadRomFile(selection);
 				}
 				return true;
 			}, true, "");
@@ -118,27 +321,21 @@ void renderFileMenu()
 		// Save State
 		if (ImGui::MenuItem(T("Save State"), nullptr, false, ::game_started))
 		{
-			if (::game_started)
-			{
-				gui_saveState();
-			}
+			saveState();
 		}
 
 		// Load State
 		if (ImGui::MenuItem(T("Load State"), nullptr, false, ::game_started))
 		{
-			if (::game_started)
-			{
-				gui_loadState();
-			}
+			loadState();
 		}
 
 		ImGui::Separator();
 
-		// Exit Game
-		if (ImGui::MenuItem(T("Exit Game"), nullptr, false, ::game_started))
+		// Exit Emulator
+		if (ImGui::MenuItem(T("Exit Emulator"), nullptr, false, true))
 		{
-			showExitSaveDialog = true; // Trigger dialog instead of immediate exit
+			exitEmulator();
 		}
 
 		ImGui::EndMenu();
@@ -157,16 +354,14 @@ void renderSystemMenu()
 			{
 				if (ImGui::MenuItem(T("Pause"), nullptr, false, true))
 				{
-					emu.stop();
-					gui_setState(GuiState::Commands);
+					pauseOrResume();
 				}
 			}
 			else
 			{
 				if (ImGui::MenuItem(T("Resume"), nullptr, false, true))
 				{
-					gui_setState(GuiState::Closed);
-					emu.start();
+					pauseOrResume();
 				}
 			}
 		}
@@ -174,11 +369,13 @@ void renderSystemMenu()
 		// Restart
 		if (ImGui::MenuItem(T("Restart"), nullptr, false, ::game_started))
 		{
-			if (::game_started)
-			{
-				emu.stop();
-				emu.start();
-			}
+			restartGame();
+		}
+
+		// Close Game
+		if (ImGui::MenuItem(T("Close Game"), nullptr, false, ::game_started))
+		{
+			closeGame();
 		}
 
 		ImGui::Separator();
@@ -186,15 +383,13 @@ void renderSystemMenu()
 		// Fast Forward
 		if (ImGui::MenuItem(T("Fast Forward"), nullptr, false, ::game_started))
 		{
-			if (::game_started)
-				settings.input.fastForwardMode = !settings.input.fastForwardMode;
+			toggleFastForward();
 		}
 
 		// Screenshot
 		if (ImGui::MenuItem(T("Screenshot"), nullptr, false, ::game_started))
 		{
-			if (::game_started)
-				gui_takeScreenshot();
+			takeScreenshot();
 		}
 
 		ImGui::Separator();
@@ -218,10 +413,7 @@ void renderSystemMenu()
 		// Cheats
 		if (ImGui::MenuItem(T("Cheats"), nullptr, false, ::game_started))
 		{
-			if (::game_started)
-			{
-				gui_setState(GuiState::Cheats);
-			}
+			openCheats();
 		}
 
 		ImGui::EndMenu();
@@ -240,8 +432,7 @@ void renderToolsMenu()
 		// Custom Boxart
 		if (ImGui::MenuItem(T("Custom Boxart"), nullptr, false, true))
 		{
-			gui_setState(GuiState::Settings);
-			gui_focus_boxart_settings_section();
+			openCustomBoxartSettings();
 		}
 
 		ImGui::EndMenu();
@@ -256,61 +447,37 @@ void renderSettingsMenu()
 		// General
 		if (ImGui::MenuItem(T("General"), nullptr, false, true))
 		{
-			gui_prepare_settings_tab(GuiSettingsTab::General);
-			gui_setState(GuiState::Settings);
+			openGeneralSettings();
 		}
 
 		// Video
 		if (ImGui::MenuItem(T("Video"), nullptr, false, true))
 		{
-			gui_prepare_settings_tab(GuiSettingsTab::Video);
-			gui_setState(GuiState::Settings);
+			openVideoSettings();
 		}
 
 		// Audio
 		if (ImGui::MenuItem(T("Audio"), nullptr, false, true))
 		{
-			gui_prepare_settings_tab(GuiSettingsTab::Audio);
-			gui_setState(GuiState::Settings);
+			openAudioSettings();
 		}
 
-		// Input/Controls
-		if (ImGui::MenuItem(T("Input"), nullptr, false, true))
+		// Controls
+		if (ImGui::MenuItem(T("Controls"), nullptr, false, true))
 		{
-			gui_prepare_settings_tab(GuiSettingsTab::Controls);
-			gui_setState(GuiState::Settings);
+			openControlsSettings();
 		}
 
 		// Network
 		if (ImGui::MenuItem(T("Network"), nullptr, false, true))
 		{
-			gui_prepare_settings_tab(GuiSettingsTab::Network);
-			gui_setState(GuiState::Settings);
+			openNetworkSettings();
 		}
 
 		// Advanced
 		if (ImGui::MenuItem(T("Advanced"), nullptr, false, true))
 		{
-			gui_prepare_settings_tab(GuiSettingsTab::Advanced);
-			gui_setState(GuiState::Settings);
-		}
-
-		ImGui::Separator();
-
-		// Open full settings (defaults to current tab state; reset to general here)
-		if (ImGui::MenuItem(T("All Settings"), nullptr, false, true))
-		{
-			gui_reset_settings_view();
-			gui_setState(GuiState::Settings);
-		}
-
-		ImGui::Separator();
-
-		// About tab
-		if (ImGui::MenuItem(T("About"), nullptr, false, true))
-		{
-			gui_prepare_settings_tab(GuiSettingsTab::About);
-			gui_setState(GuiState::Settings);
+			openAdvancedSettings();
 		}
 
 		ImGui::EndMenu();
@@ -353,8 +520,7 @@ void renderHelpMenu()
 
 		if (ImGui::MenuItem(T("About Hollycast"), nullptr, false, true))
 		{
-			gui_prepare_settings_tab(GuiSettingsTab::About);
-			gui_setState(GuiState::Settings);
+			openAboutSettings();
 		}
 
 		ImGui::EndMenu();
@@ -381,11 +547,18 @@ bool isMenuBarVisible()
 	return menuVisible;
 }
 
+float mainMenuBarHeight()
+{
+	return menuBarHeightThisFrame;
+}
+
 // Initialize menu system
 // Called during GUI initialization to set up menu state
 void initialize()
 {
 	menuVisible = true;
+	menuBarVisibleThisFrame = true;
+	touchMenuVisibleUntil = 0.0;
 }
 
 // Cleanup menu system

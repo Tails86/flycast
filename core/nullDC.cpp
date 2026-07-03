@@ -1,3 +1,5 @@
+// Portions Copyright 2026 The Hollycast Authors
+
 #ifndef LIBRETRO
 #include "types.h"
 #include "emulator.h"
@@ -166,6 +168,9 @@ void SaveSettings()
 void flycast_term()
 {
 	gui_cancel_load();
+	// Closing the window can bypass the settings exit callback, so persist the
+	// current VMU/DreamLink slot choices before controllers are torn down.
+	SaveSettings();
 	lua::term();
 	emu.term();
 	os_DestroyWindow();
@@ -415,6 +420,11 @@ void dc_getStateScreenshot(int index, std::vector<u8>& pngData)
 			pngData.clear();
 	}
 	delete f;
+}
+
+int dc_getAutoSaveSlot()
+{
+	return NUM_SAVE_SLOTS;
 }
 
 #endif

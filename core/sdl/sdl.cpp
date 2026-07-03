@@ -17,7 +17,9 @@
 #include "sdl_keyboard.h"
 #include "sdl_keyboard_mac.h"
 #include "wsi/context.h"
+#include "ui/gui.h"
 #include "emulator.h"
+#include "ui/gui.h"
 #include "stdclass.h"
 #include "imgui.h"
 #include "hw/naomi/card_reader.h"
@@ -35,6 +37,8 @@
 #include "dreamlink/dreamlinkgamepad.h"
 #include "oslib/i18n.h"
 #include <unordered_map>
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstdio>
 
@@ -60,6 +64,53 @@ static bool handleBarcodeScanner(const SDL_Event& event);
 void sdl_stopHaptic(int port);
 static void pauseHaptic();
 static void resumeHaptic();
+
+static bool isWindowFullscreen()
+{
+	if (window == nullptr)
+		return window_fullscreen;
+
+	const u32 flags = SDL_GetWindowFlags(window);
+	if ((flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != 0)
+		return true;
+
+#ifdef __APPLE__
+	// macOS uses the native system menu instead of Hollycast's ImGui menu bar,
+	// but fullscreen state still drives cursor auto-hide. SDL can miss the
+	// fullscreen flag for a display-sized macOS window, so keep a narrow bounds
+	// fallback here for cursor/state behavior without affecting normal windows.
+	int displayIndex = SDL_GetWindowDisplayIndex(window);
+	SDL_Rect displayBounds;
+	if (displayIndex >= 0 && SDL_GetDisplayBounds(displayIndex, &displayBounds) == 0)
+	{
+		SDL_Rect windowBounds;
+		SDL_GetWindowPosition(window, &windowBounds.x, &windowBounds.y);
+		SDL_GetWindowSize(window, &windowBounds.w, &windowBounds.h);
+		const int tolerance = 2;
+		return std::abs(windowBounds.x - displayBounds.x) <= tolerance
+				&& std::abs(windowBounds.y - displayBounds.y) <= tolerance
+				&& std::abs(windowBounds.w - displayBounds.w) <= tolerance
+				&& std::abs(windowBounds.h - displayBounds.h) <= tolerance;
+	}
+#endif
+
+	return false;
+}
+
+static void updateFullscreenCursorVisibility(int mouseY)
+{
+	if (!isWindowFullscreen() || !gameRunning || mouseCaptured)
+		return;
+
+	const ImGuiContext* context = ImGui::GetCurrentContext();
+	const float revealHeight = (context != nullptr ? ImGui::GetFrameHeight() : 20.0f) * 1.75f;
+	SDL_ShowCursor(mouseY <= revealHeight || gui_mouse_captured() ? SDL_ENABLE : SDL_DISABLE);
+}
+
+bool sdl_is_fullscreen()
+{
+	return isWindowFullscreen();
+}
 
 static struct SDLDeInit
 {
@@ -337,7 +388,7 @@ void input_sdl_handle()
 		switch (event.type)
 		{
 			case SDL_QUIT:
-				dc_exit();
+				gui_request_exit_emulator();
 				break;
 
 			case SDL_KEYDOWN:
@@ -421,23 +472,18 @@ void input_sdl_handle()
 				break;
 
 			case SDL_WINDOWEVENT:
-				if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED
+			{
+				bool displayMetricsEvent = event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED
 						|| event.window.event == SDL_WINDOWEVENT_RESTORED
 						|| event.window.event == SDL_WINDOWEVENT_MINIMIZED
-						|| event.window.event == SDL_WINDOWEVENT_MAXIMIZED)
+						|| event.window.event == SDL_WINDOWEVENT_MAXIMIZED
+						|| event.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED;
+				if (displayMetricsEvent)
 				{
-#ifdef USE_VULKAN
-					if (windowFlags & SDL_WINDOW_VULKAN)
-						SDL_Vulkan_GetDrawableSize(window, &settings.display.width, &settings.display.height);
-					else
-#endif
-#ifdef USE_OPENGL
-					if (windowFlags & SDL_WINDOW_OPENGL)
-						SDL_GL_GetDrawableSize(window, &settings.display.width, &settings.display.height);
-					else
-#endif
-						SDL_GetWindowSize(window, &settings.display.width, &settings.display.height);
+					bool scaleChanged = sdl_update_display_metrics(window, windowFlags);
 					GraphicsContext::Instance()->resize();
+					if (scaleChanged)
+						gui_updateStyle();
 				}
 				else if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
 				{
@@ -450,6 +496,7 @@ void input_sdl_handle()
 						SDL_ShowCursor(SDL_ENABLE);
 				}
 				break;
+			}
 
 			case SDL_JOYBUTTONDOWN:
 			case SDL_JOYBUTTONUP:
@@ -508,6 +555,7 @@ void input_sdl_handle()
 
 			case SDL_MOUSEMOTION:
 				gui_set_mouse_position(event.motion.x, event.motion.y, false);
+				updateFullscreenCursorVisibility(event.motion.y);
 				checkRawInput();
 				if (!config::UseRawInput)
 				{
@@ -641,6 +689,49 @@ void sdlReceiveSlaveKeyboardEvent(u16 scancode, bool pressed)
 }
 
 static float hdpiScaling = 1.f;
+
+bool sdl_update_display_metrics(SDL_Window *window, u32 windowFlags)
+{
+	float oldPointScale = settings.display.pointScale;
+	float oldDpi = settings.display.dpi;
+
+	int windowWidth = 0;
+	int windowHeight = 0;
+	SDL_GetWindowSize(window, &windowWidth, &windowHeight);
+
+#ifdef USE_VULKAN
+	if (windowFlags & SDL_WINDOW_VULKAN)
+		SDL_Vulkan_GetDrawableSize(window, &settings.display.width, &settings.display.height);
+	else
+#endif
+#ifdef USE_OPENGL
+	if (windowFlags & SDL_WINDOW_OPENGL)
+		SDL_GL_GetDrawableSize(window, &settings.display.width, &settings.display.height);
+	else
+#endif
+	{
+		settings.display.width = windowWidth;
+		settings.display.height = windowHeight;
+	}
+
+	if (windowWidth > 0)
+		settings.display.pointScale = (float)settings.display.width / windowWidth;
+
+	int displayIndex = SDL_GetWindowDisplayIndex(window);
+	if (displayIndex >= 0)
+	{
+		float hdpi, vdpi;
+		if (SDL_GetDisplayDPI(displayIndex, nullptr, &hdpi, &vdpi) == 0)
+			settings.display.dpi = roundf(std::max(hdpi, vdpi));
+	}
+	else {
+		WARN_LOG(RENDERER, "Cannot get the window display index: %s", SDL_GetError());
+	}
+
+	sdl_fix_steamdeck_dpi(window);
+
+	return settings.display.pointScale != oldPointScale || settings.display.dpi != oldDpi;
+}
 
 static inline void get_window_state()
 {
@@ -938,7 +1029,7 @@ static int suspendEventFilter(void *userdata, SDL_Event *event)
             try {
                 emu.stop();
                 if (config::AutoSaveState)
-                    dc_savestate(config::SavestateSlot);
+                    dc_savestate(dc_getAutoSaveSlot());
             } catch (const FlycastException& e) { }
         }
         return 0;
@@ -1003,10 +1094,13 @@ void sdl_fix_steamdeck_dpi(SDL_Window *window)
 	{
 		int displayIndex = SDL_GetWindowDisplayIndex(window);
 		SDL_DisplayMode mode;
-		SDL_GetDisplayMode(displayIndex, 0, &mode);
+		const char *displayName = nullptr;
+		if (displayIndex < 0 || SDL_GetDisplayMode(displayIndex, 0, &mode) != 0
+				|| (displayName = SDL_GetDisplayName(displayIndex)) == nullptr)
+			return;
 		if (displayIndex == 0
-				&& (strcmp(SDL_GetDisplayName(displayIndex), "ANX7530 U 3\"") == 0
-						|| strcmp(SDL_GetDisplayName(displayIndex), "XWAYLAND0 3\"") == 0)
+				&& (strcmp(displayName, "ANX7530 U 3\"") == 0
+						|| strcmp(displayName, "XWAYLAND0 3\"") == 0)
 				&& mode.w == 1280 && mode.h == 800)
 			settings.display.dpi = 206;
 	}
