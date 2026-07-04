@@ -4922,12 +4922,18 @@ static std::string currentSlotVmuFileName(int bus, int slot)
 
 static void applyVmuSlotSelection(int bus, int slot, const std::string& fileName)
 {
-	// Slot selection stores the VMU file name in the data folder, not a custom path.
+	// Slot selection stores only the file name; getVmuPath resolves the active VMU folder.
 	setConfiguredVmuSlotFileName(bus, slot, fileName);
 	g_mapleDevicesChangedInSettings = true;
 }
 
-static bool createBlankVmuFileInDataFolder(const std::string& fileName, std::string& error)
+static std::string getVmuCardManagerFolder()
+{
+	const std::string customVmuPath = config::VMUPath.get();
+	return customVmuPath.empty() ? get_writable_data_path("") : customVmuPath;
+}
+
+static bool getVmuCardManagerFilePath(const std::string& fileName, std::string& fullPath, std::string& error)
 {
 	if (!isSimpleVmuFileName(fileName))
 	{
@@ -4935,7 +4941,24 @@ static bool createBlankVmuFileInDataFolder(const std::string& fileName, std::str
 		return false;
 	}
 
-	const std::string fullPath = get_writable_data_path(fileName);
+	try {
+		const std::string customVmuPath = config::VMUPath.get();
+		fullPath = customVmuPath.empty()
+			? get_writable_data_path(fileName)
+			: hostfs::storage().getSubPath(customVmuPath, fileName);
+	} catch (const hostfs::StorageException&) {
+		error = T("Invalid VMU folder.");
+		return false;
+	}
+	return true;
+}
+
+static bool createBlankVmuFile(const std::string& fileName, std::string& error)
+{
+	std::string fullPath;
+	if (!getVmuCardManagerFilePath(fileName, fullPath, error))
+		return false;
+
 	if (hostfs::storage().exists(fullPath))
 	{
 		error = T("A file with that name already exists.");
@@ -4985,11 +5008,11 @@ static bool isVmuCardFile(const hostfs::FileInfo& info)
 	return fileSize == 128_KB && isSimpleVmuFileName(info.name);
 }
 
-static void listVmuCardFilesInDataFolder(std::vector<hostfs::FileInfo>& out)
+static void listVmuCardFiles(std::vector<hostfs::FileInfo>& out)
 {
 	out.clear();
 	try {
-		const std::string dataDir = get_writable_data_path("");
+		const std::string dataDir = getVmuCardManagerFolder();
 		for (const auto& entry : hostfs::storage().listContent(dataDir))
 			if (isVmuCardFile(entry))
 				out.push_back(entry);
@@ -5001,33 +5024,45 @@ static void listVmuCardFilesInDataFolder(std::vector<hostfs::FileInfo>& out)
 	});
 }
 
+static void findAssignedVmuSlot(const std::string& fileName, bool perGameEnabled, int& sourceBus, int& sourceSlot);
+
 static bool renameVmuCardFile(const std::string& oldName, const std::string& newName, bool perGameEnabled,
 		std::string& error)
 {
-	if (!isSimpleVmuFileName(newName))
-	{
-		error = T("Invalid file name.");
+	std::string oldPath;
+	if (!getVmuCardManagerFilePath(oldName, oldPath, error))
 		return false;
-	}
 
-	const std::string oldPath = get_writable_data_path(oldName);
-	const std::string newPath = get_writable_data_path(newName);
+	std::string newPath;
+	if (!getVmuCardManagerFilePath(newName, newPath, error))
+		return false;
 	if (hostfs::storage().exists(newPath))
 	{
 		error = T("A file with that name already exists.");
 		return false;
 	}
+
+	int sourceBus = -1;
+	int sourceSlot = -1;
+	findAssignedVmuSlot(oldName, perGameEnabled, sourceBus, sourceSlot);
+
+	int targetBus = -1;
+	int targetSlot = -1;
+	findAssignedVmuSlot(newName, perGameEnabled, targetBus, targetSlot);
+
 	if (nowide::rename(oldPath.c_str(), newPath.c_str()) != 0)
 	{
 		error = T("Rename failed.");
 		return false;
 	}
 
-	for (int bus = 0; bus < MAPLE_PORTS; bus++)
-		for (int slot = 0; slot < 2; slot++)
-			if (isManualVmuSlotEditable(bus, slot, perGameEnabled)
-					&& currentSlotVmuFileName(bus, slot) == oldName)
-				applyVmuSlotSelection(bus, slot, newName);
+	// Keep rename consistent with Insert: one active VMU slot owns one file name.
+	if (sourceBus >= 0)
+	{
+		if (targetBus >= 0 && (targetBus != sourceBus || targetSlot != sourceSlot))
+			applyVmuSlotSelection(targetBus, targetSlot, oldName);
+		applyVmuSlotSelection(sourceBus, sourceSlot, newName);
+	}
 	return true;
 }
 
@@ -5067,13 +5102,13 @@ static void renderVmuCardManager()
 
 	const bool perGameEnabled = static_cast<bool>(config::PerGameVmu);
 
-	ImGui::TextDisabled("%s", T("Memory Cards (Data Folder)"));
+	ImGui::TextDisabled("%s", config::VMUPath.get().empty() ? T("Memory Cards (Data Folder)") : T("Memory Cards (VMU Folder)"));
 	if (perGameEnabled)
 		ImGui::TextDisabled("%s", T("Per Game VMU manages A1 automatically; other shared slots remain editable."));
 
 	if (refreshVmuList)
 	{
-		listVmuCardFilesInDataFolder(cachedVmuFiles);
+		listVmuCardFiles(cachedVmuFiles);
 		refreshVmuList = false;
 	}
 
@@ -5173,7 +5208,7 @@ static void renderVmuCardManager()
 		{
 			const std::string name = normalizeVmuFileName(createVmuName);
 			std::string err;
-			if (createBlankVmuFileInDataFolder(name, err))
+			if (createBlankVmuFile(name, err))
 			{
 				selectVmuCardAndRefresh(name, selectedVmuName, refreshVmuList);
 				ImGui::CloseCurrentPopup();
