@@ -74,11 +74,14 @@ $ cd hollycast
 # Update submodules (this needs to be manually performed when submodule versions are updated)
 $ git submodule update --init --recursive
 
-# Configure the build (make sln file, etc., depending on your platform)
-$ cmake -B build-debug/
+# Find the desired CMake preset for the current platform
+$ cmake --list-presets
 
-# Run the build
-$ cmake --build build-debug/
+# Run CMake configure. Rerunning this is usually only necessary when certain files like CMakeLists.txt change.
+$ cmake --preset <PRESET>
+
+# Run the build. Using the same preset name as for the configure will generally work.
+$ cmake --build --preset <PRESET>
 ```
 
 ### Build Instructions for Android
