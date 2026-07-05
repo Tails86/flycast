@@ -7,6 +7,12 @@ target_sources(${PROJECT_NAME} PRIVATE
         dreamlink/maplelink.h
         dreamlink/maplelinkregistry.cpp
         dreamlink/maplelinkregistry.h)
+if (USE_DREAMLINK_DEVICES)
+    target_sources(${PROJECT_NAME} PRIVATE
+        dreamlink/dreampicoport.cpp
+        dreamlink/dreampicoport.h
+    )
+endif()
 if(NOT LIBRETRO)
     target_sources(${PROJECT_NAME} PRIVATE
             gamepad.h
