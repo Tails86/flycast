@@ -36,7 +36,7 @@
 class DreamLinkGamepad : public SDLGamepad
 {
 public:
-	const char* dreamLinkStatus();
+	const char* status() override;
 	void set_maple_port(int port) override;
 	void registered() override;
 	static bool isDreamcastController(int deviceIndex);

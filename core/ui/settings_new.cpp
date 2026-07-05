@@ -38,9 +38,6 @@
 #include "hw/maple/maple_devs.h"
 #include "hw/maple/maple_cfg.h"
 #include "hw/maple/maple_if.h"
-#ifdef USE_DREAMLINK_DEVICES
-#include "sdl/dreamlink/dreamlinkgamepad.h"
-#endif
 #include "log/LogManager.h"
 #include "hw/mem/addrspace.h"
 #include "settings.h"
@@ -4918,12 +4915,7 @@ void renderControlsTab()
 				ImGui::Text("%s", gamepad->name().c_str());
 
 				ImGui::TableSetColumnIndex(2);
-#if defined(USE_DREAMLINK_DEVICES)
-				DreamLinkGamepad* dreamLinkGamepad = dynamic_cast<DreamLinkGamepad*>(gamepad.get());
-				if (dreamLinkGamepad != nullptr) {
-					ImGui::Text("%s", dreamLinkGamepad->dreamLinkStatus());
-				}
-#endif
+				ImGui::Text("%s", gamepad->status());
 
 				ImGui::TableSetColumnIndex(4);
 				char port_name[32];

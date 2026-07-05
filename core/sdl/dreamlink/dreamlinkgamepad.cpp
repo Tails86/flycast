@@ -93,7 +93,7 @@ void DreamLinkGamepad::close()
 	SDLGamepad::close();
 }
 
-const char* DreamLinkGamepad::dreamLinkStatus()
+const char* DreamLinkGamepad::status()
 {
 	if (dreamlink->isConnected())
 	{
