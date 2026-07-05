@@ -9,7 +9,7 @@
 #include "oslib/i18n.h"
 #include "hw/aica/sgc_if.h"
 #include "cfg/option.h"
-#include "input/maplelinkregistry.h"
+#include "input/dreamlink/maplelinkregistry.h"
 #include <zlib.h>
 #include <cerrno>
 #include <ctime>

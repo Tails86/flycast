@@ -7,7 +7,7 @@
 #include "cfg/option.h"
 #include "stdclass.h"
 #include "serialize.h"
-#include "input/maplelinkregistry.h"
+#include "input/dreamlink/maplelinkregistry.h"
 #include "input/mouse.h"
 
 #include <initializer_list>

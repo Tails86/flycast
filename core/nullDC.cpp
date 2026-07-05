@@ -19,7 +19,7 @@
 #include "stdclass.h"
 #include "serialize.h"
 #include "oslib/i18n.h"
-#include "input/maplelinkregistry.h"
+#include "input/dreamlink/maplelinkregistry.h"
 #include <time.h>
 #ifdef TARGET_UWP
 #include <winrt/Windows.System.h>
@@ -217,7 +217,7 @@ void dc_savestate(int index, const u8 *pngData, u32 pngSize)
 		filename = hostfs::getSavestatePath(index, true);
 		f = hostfs::storage().openFile(filename.c_str(), "wb");
 	}
-	
+
 	if (f == nullptr)
 	{
 		WARN_LOG(SAVESTATE, "Failed to save state - could not open %s for writing", filename.c_str());
@@ -285,7 +285,7 @@ void dc_loadstate(int index)
 		filename = hostfs::getSavestatePath(index, false);
 		f = hostfs::storage().openFile(filename, "rb");
 	}
-	
+
 	if (f == nullptr)
 	{
 		WARN_LOG(SAVESTATE, "Failed to load state - could not open %s for reading", filename.c_str());

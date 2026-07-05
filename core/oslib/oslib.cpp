@@ -41,7 +41,7 @@
 #endif
 #include "profiler/fc_profiler.h"
 #include "input/gamepad_device.h"
-#include "input/dreampotato.h"
+#include "input/dreamlink/dreampotato.h"
 #include "i18n.h"
 
 namespace hostfs
@@ -50,7 +50,7 @@ namespace hostfs
 std::string getVmuPath(const std::string& port, bool save)
 {
 	std::string vmuName;
-	
+
 	if (port == "A1" && config::PerGameVmu)
 	{
 		if (settings.platform.isConsole() && !settings.content.gameId.empty())
@@ -67,10 +67,10 @@ std::string getVmuPath(const std::string& port, bool save)
 			return get_game_save_prefix() + "_vmu_save_A1.bin";
 		}
 	}
-	
+
 	if (vmuName.empty())
 		vmuName = "vmu_save_" + port + ".bin";
-	
+
 	// Check user-defined VMU path first
 	if (!config::VMUPath.get().empty())
 	{
@@ -81,7 +81,7 @@ std::string getVmuPath(const std::string& port, bool save)
 		} catch (const hostfs::StorageException& e) {
 		}
 	}
-	
+
 	// Fall back to default paths
 	std::string wpath = get_writable_data_path(vmuName);
 	if (save || file_exists(wpath))
@@ -89,7 +89,7 @@ std::string getVmuPath(const std::string& port, bool save)
 	std::string rpath = get_readonly_data_path(vmuName);
 	if (hostfs::storage().exists(rpath))
 		return rpath;
-		
+
 	if (port == "A1" && config::PerGameVmu && !settings.content.path.empty())
 	{
 		// Legacy path using the rom file name
@@ -97,7 +97,7 @@ std::string getVmuPath(const std::string& port, bool save)
 		if (file_exists(rpath))
 			return rpath;
 	}
-	
+
 	// VMU saves used to be stored in .reicast, not in .reicast/data
 	rpath = get_readonly_config_path(vmuName);
 	if (file_exists(rpath))
@@ -213,7 +213,7 @@ std::string findNaomiBios(const std::string& name)
 		} catch (const hostfs::StorageException& e) {
 		}
 	}
-	
+
 	// Then check default paths
 	std::string fullpath = get_readonly_data_path(name);
 	if (hostfs::storage().exists(fullpath))
@@ -298,7 +298,7 @@ std::string getTextureLoadPath(const std::string& gameId)
 {
 	if (gameId.length() == 0)
 		return "";
-	
+
 	// First check user-defined texture paths
 	for (const auto& path : config::TexturePath.get())
 	{
@@ -311,7 +311,7 @@ std::string getTextureLoadPath(const std::string& gameId)
 				if (fileInfo.isDirectory)
 					return texPath + "/";
 			}
-			
+
 			// Also check for path/textures/gameId structure
 			texPath = hostfs::storage().getSubPath(path, "textures");
 			texPath = hostfs::storage().getSubPath(texPath, gameId);
@@ -324,7 +324,7 @@ std::string getTextureLoadPath(const std::string& gameId)
 		} catch (const hostfs::StorageException& e) {
 		}
 	}
-	
+
 	// Fall back to default location
 	return get_readonly_data_path("textures/" + gameId) + "/";
 }

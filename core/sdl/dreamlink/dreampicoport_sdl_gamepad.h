@@ -21,22 +21,22 @@
 
 #ifdef USE_DREAMLINK_DEVICES
 
-#include "dreamlinkgamepad.h"
+#include "dreamlink_sdl_gamepad.h"
 
 #include <memory>
 
 //! See: https://github.com/OrangeFox86/DreamPicoPort
 
-class DreamPicoPortGamepad : public DreamLinkGamepad
+class DreamPicoPortSDLGamepad : public DreamLinkSDLGamepad
 {
 public:
-	DreamPicoPortGamepad(int maple_port, int joystick_idx, SDL_Joystick* sdl_joystick);
+	DreamPicoPortSDLGamepad(int maple_port, int joystick_idx, SDL_Joystick* sdl_joystick);
 	const char *get_button_name(u32 code) override;
 	static bool identify(int deviceIndex);
 
 	inline const std::string& sort_id() override
 	{
-		return !_sort_id.empty() ? _sort_id : DreamLinkGamepad::sort_id();
+		return !_sort_id.empty() ? _sort_id : DreamLinkSDLGamepad::sort_id();
 	}
 
 	bool gamepad_btn_input(u32 code, bool pressed) override;
