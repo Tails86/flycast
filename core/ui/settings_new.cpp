@@ -4901,6 +4901,13 @@ static std::string normalizeVmuFileName(std::string name)
 	return name;
 }
 
+static bool isLikelyPerGameA1VmuFileName(const std::string& fileName)
+{
+	static constexpr std::string_view suffix = "_vmu_save_A1.bin";
+	return fileName.size() >= suffix.size()
+		&& fileName.compare(fileName.size() - suffix.size(), suffix.size(), suffix.data()) == 0;
+}
+
 static void setConfiguredVmuSlotFileName(int bus, int slot, const std::string& fileName)
 {
 	config::MapleVmuSlotFileNames[bus][slot].get() =
@@ -5226,12 +5233,19 @@ static void renderVmuCardManager()
 
 	if (ImGui::BeginPopupModal(T("Rename VMU Card"), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 	{
-		ImVec4 warningColor = ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered];
-		ImGui::TextColored(warningColor, "%s %s", ICON_FA_TRIANGLE_EXCLAMATION, T("Per Game VMU Rename Warning"));
-		ImGui::TextWrapped("%s", T(
-			"Renaming a Per Game VMU can prevent it from auto-loading when Per Game VMUs is enabled.\n"
-			"To make Hollycast auto-pick it again later, rename the file back to its original name."));
-		ImGui::Separator();
+		const bool showPerGameRenameWarning = perGameEnabled
+			&& hasSelection
+			&& isLikelyPerGameA1VmuFileName(cachedVmuFiles[selectedIndex].name);
+		if (showPerGameRenameWarning)
+		{
+			ImVec4 warningColor = ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered];
+			ImGui::TextColored(warningColor, "%s %s", ICON_FA_TRIANGLE_EXCLAMATION, T("Per Game VMU Rename Warning"));
+			ImGui::TextWrapped("%s", T(
+				"This looks like an auto-named Per Game VMU for A1.\n"
+				"Renaming it can stop Hollycast from auto-loading it while Per Game VMUs is enabled.\n"
+				"To restore automatic pickup later, rename it back to its original file name."));
+			ImGui::Separator();
+		}
 		ImGui::InputText(T("New name"), &renameVmuName);
 		if (!vmuOpError.empty())
 			ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f), "%s", vmuOpError.c_str());
