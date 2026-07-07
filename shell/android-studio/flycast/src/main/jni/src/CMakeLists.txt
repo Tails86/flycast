@@ -1,6 +1,9 @@
 target_include_directories(${PROJECT_NAME} PRIVATE ./)
 target_sources(${PROJECT_NAME} PRIVATE
 			android_gamepad.h
+			android_gamepad.cpp
+			android_dreampicoport_gamepad.h
+			android_dreampicoport_gamepad.cpp
 			android_input.cpp
 			android_keyboard.h
 			android_locale.h

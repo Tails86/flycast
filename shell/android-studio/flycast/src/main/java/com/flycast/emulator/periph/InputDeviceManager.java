@@ -46,8 +46,19 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         maple_port = 0;
         hasTouchscreen = applicationContext.getPackageManager().hasSystemFeature("android.hardware.touchscreen");
         if (hasTouchscreen)
-            joystickAdded(VIRTUAL_GAMEPAD_ID, null, 0, null,
-                    null, null, getVibrator(VIRTUAL_GAMEPAD_ID) != null);
+        {
+            joystickAdded(
+                VIRTUAL_GAMEPAD_ID,
+                null,
+                0,
+                null,
+                null,
+                null,
+                getVibrator(VIRTUAL_GAMEPAD_ID) != null,
+                0,
+                0
+            );
+        }
         inputManager = (InputManager)applicationContext.getSystemService(Context.INPUT_SERVICE);
         inputManager.registerInputDeviceListener(this, null);
     }
@@ -216,9 +227,19 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
             else
                 fullAxes.add(range.getAxis());
         }
-        joystickAdded(id, device.getName(), port, device.getDescriptor(),
-                ArrayUtils.toPrimitive(fullAxes.toArray(new Integer[0])), ArrayUtils.toPrimitive(halfAxes.toArray(new Integer[0])),
-                getVibrator(id) != null);
+
+        joystickAdded(
+            id,
+            device.getName(),
+            port,
+            device.getDescriptor(),
+            ArrayUtils.toPrimitive(fullAxes.toArray(new Integer[0])),
+            ArrayUtils.toPrimitive(halfAxes.toArray(new Integer[0])),
+            getVibrator(id) != null,
+            device.getVendorId(),
+            device.getProductId()
+        );
+
         knownDevices.add(id);
         return true;
     }
@@ -248,7 +269,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
     public native void mouseEvent(int xpos, int ypos, int buttons);
     public native void mouseScrollEvent(int scrollValue);
     public native void touchMouseEvent(int xpos, int ypos, int buttons);
-    private native void joystickAdded(int id, String name, int maple_port, String uniqueId, int[] fullAxes, int[] halfAxes, boolean rumbleEnabled);
+    private native void joystickAdded(int id, String name, int maple_port, String uniqueId, int[] fullAxes, int[] halfAxes, boolean rumbleEnabled, int vendorId, int productId);
     private native void joystickRemoved(int id);
     public native boolean keyboardEvent(int key, boolean pressed);
     public native void keyboardText(int c);

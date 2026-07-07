@@ -17,6 +17,7 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "android_gamepad.h"
+#include "android_dreampicoport_gamepad.h"
 #include "android_keyboard.h"
 #include "ui/vgamepad.h"
 #include "cfg/option.h"
@@ -105,8 +106,19 @@ extern "C" JNIEXPORT void JNICALL Java_com_flycast_emulator_periph_InputDeviceMa
 	});
 }
 
-extern "C" JNIEXPORT void JNICALL Java_com_flycast_emulator_periph_InputDeviceManager_joystickAdded(JNIEnv *env, jobject obj,
-		jint id, jstring name, jint maple_port, jstring junique_id, jintArray fullAxes, jintArray halfAxes, jboolean hasRumble)
+extern "C" JNIEXPORT void JNICALL Java_com_flycast_emulator_periph_InputDeviceManager_joystickAdded(
+	JNIEnv *env,
+	jobject obj,
+	jint id,
+	jstring name,
+	jint maple_port,
+	jstring junique_id,
+	jintArray fullAxes,
+	jintArray halfAxes,
+	jboolean hasRumble,
+	jint vendorId,
+	jint productId
+)
 {
 	if (id == 0)
 		return;
@@ -128,7 +140,13 @@ extern "C" JNIEXPORT void JNICALL Java_com_flycast_emulator_periph_InputDeviceMa
 		std::vector<int> full = jni::IntArray(fullAxes, false);
 		std::vector<int> half = jni::IntArray(halfAxes, false);
 
-		std::shared_ptr<AndroidGamepadDevice> gamepad = std::make_shared<AndroidGamepadDevice>(maple_port, id, joyname.c_str(), unique_id.c_str(), full, half);
+		std::shared_ptr<AndroidGamepadDevice> gamepad;
+		if (AndroidDreamPicoPortGamepad::identify(vendorId, productId)) {
+			gamepad = std::make_shared<AndroidDreamPicoPortGamepad>(maple_port, id, joyname.c_str(), unique_id.c_str(), full, half);
+		}
+		else {
+			gamepad = std::make_shared<AndroidGamepadDevice>(maple_port, id, joyname.c_str(), unique_id.c_str(), full, half);
+		}
 		AndroidGamepadDevice::AddAndroidGamepad(gamepad);
 		gamepad->setRumbleEnabled(hasRumble);
 	}

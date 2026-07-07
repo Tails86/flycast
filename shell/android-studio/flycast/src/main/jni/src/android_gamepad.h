@@ -26,6 +26,7 @@
 #include "oslib/i18n.h"
 #include <algorithm>
 #include <android/input.h>
+#include <string>
 
 extern jobject inputDeviceManager;
 extern jmethodID inputDeviceManager_rumble;
@@ -243,8 +244,6 @@ private:
 	std::vector<int> fullAxes;
 	std::vector<int> halfAxes;
 };
-
-std::map<int, std::shared_ptr<AndroidGamepadDevice>> AndroidGamepadDevice::android_gamepads;
 
 template<bool Arcade, bool Gamepad>
 inline DefaultInputMapping<Arcade, Gamepad>::DefaultInputMapping(const AndroidGamepadDevice& gamepad)
