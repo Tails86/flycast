@@ -18,6 +18,7 @@
  */
 
 #include "gamepad_dreamlink.h"
+#include "../mapping.h"
 
 #include <cstdint>
 #include <chrono>
@@ -167,6 +168,16 @@ public:
     //! @param[in] clearOnFailure Set to true to clear out data if retrieval false or false to keep previously known
     //! @return true iff the query was successful
     bool queryPeripherals(bool clearOnFailure = true);
+
+    //! Set custom mapping associated with the DreamPicoPort
+    //! @param[in,out] mapping The mapping to update
+    static void setCustomMapping(const std::shared_ptr<InputMapping>& mapping);
+
+    //! Retrieves button name of non-standard button codes
+    //! @param[in] code Button index
+    //! @return button name for the given code
+    //! @return nullptr if the default name should be used
+    static const char *getButtonName(u32 code);
 
 private:
     //! Internal connection call

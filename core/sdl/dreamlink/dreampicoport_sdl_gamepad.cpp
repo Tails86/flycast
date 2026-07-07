@@ -99,73 +99,55 @@ static DreamPicoPort::HardwareInfo parse_hw_info(int joystick_idx, SDL_Joystick*
 		}
 	}
 
+	// The number of buttons gives a clue as to what index the controller is
+	int nbuttons = SDL_JoystickNumButtons(sdl_joystick);
+
+	if (nbuttons >= 32 || nbuttons <= 27) {
+		// Older version of firmware or single player
+		hw_info.hardware_bus = 0;
+		hw_info.is_hardware_bus_implied = true;
+		hw_info.is_single_device = true;
+	}
+	else {
+		hw_info.hardware_bus = 31 - nbuttons;
+		hw_info.is_hardware_bus_implied = false;
+		hw_info.is_single_device = false;
+	}
+
 #if defined(_WIN32)
-	// This only works in Windows because the joystick_path is not given in other OSes
-	const char* joystick_path = SDL_JoystickPath(sdl_joystick);
 
-	struct SDL_hid_device_info* devs = SDL_hid_enumerate(DreamPicoPort::VID, DreamPicoPort::PID);
-	if (devs) {
-		struct SDL_hid_device_info* my_dev = nullptr;
+	// These extra checks are necessary for Windows because it likes to hold onto old joystick names, before the serial
+	// was embedded in it, and SDL_JoystickGetSerial() will have previously failed.
+	if (hw_info.serial_number.empty()) {
+		// This only works in Windows because the joystick_path is not given in other OSes
+		const char* joystick_path = SDL_JoystickPath(sdl_joystick);
 
-		if (!devs->next) {
-			// Only single device found, so this is simple (host-1p firmware used)
-			hw_info.hardware_bus = 0;
-			hw_info.is_hardware_bus_implied = false;
-			hw_info.is_single_device = true;
-			my_dev = devs;
-		} else {
-			struct SDL_hid_device_info* it = devs;
+		struct SDL_hid_device_info* devs = SDL_hid_enumerate(DreamPicoPort::VID, DreamPicoPort::PID);
+		if (devs) {
+			struct SDL_hid_device_info* my_dev = nullptr;
 
-			if (joystick_path)
-			{
-				while (it)
+			if (!devs->next) {
+				// Only single device found, so this is simple
+				my_dev = devs;
+			} else {
+				struct SDL_hid_device_info* it = devs;
+
+				if (joystick_path)
 				{
-					// Note: hex characters will be differing case, so case-insensitive cmp is needed
-					if (it->path && 0 == SDL_strcasecmp(it->path, joystick_path)) {
-						my_dev = it;
-						break;
-					}
-					it = it->next;
-				}
-			}
-
-			if (my_dev) {
-				it = devs;
-				int count = 0;
-				if (my_dev->serial_number) {
-					while (it) {
-						if (it->serial_number &&
-							0 == wcscmp(it->serial_number, my_dev->serial_number))
-						{
-							++count;
+					while (it)
+					{
+						// Note: hex characters will be differing case, so case-insensitive cmp is needed
+						if (it->path && 0 == SDL_strcasecmp(it->path, joystick_path)) {
+							my_dev = it;
+							break;
 						}
 						it = it->next;
 					}
-
-					if (count == 1) {
-						// Single device of this serial found
-						hw_info.is_single_device = true;
-						hw_info.hardware_bus = 0;
-						hw_info.is_hardware_bus_implied = false;
-					} else {
-						hw_info.is_single_device = false;
-						if (my_dev->release_number < 0x0102) {
-							// Interfaces go in decending order
-							hw_info.hardware_bus = (count - (my_dev->interface_number % 4) - 1);
-							hw_info.is_hardware_bus_implied = false;
-						} else {
-							// Version 1.02 of interface will make interfaces in ascending order
-							hw_info.hardware_bus = (my_dev->interface_number % 4);
-							hw_info.is_hardware_bus_implied = false;
-						}
-					}
 				}
 			}
-		}
 
-		// Set serial number if found in SDL_hid
-		if (my_dev) {
-			if (hw_info.serial_number.empty() && my_dev->serial_number) {
+			// Set serial number if found in SDL_hid
+			if (my_dev && my_dev->serial_number) {
 				int len = WideCharToMultiByte(CP_UTF8, 0, my_dev->serial_number, -1, nullptr, 0, nullptr, nullptr);
 				if (len > 0) {
 					std::vector<char> buffer(len);
@@ -173,32 +155,13 @@ static DreamPicoPort::HardwareInfo parse_hw_info(int joystick_idx, SDL_Joystick*
 					hw_info.serial_number = std::string(buffer.data());
 				}
 			}
-		}
 
-		SDL_hid_free_enumeration(devs);
+			SDL_hid_free_enumeration(devs);
+		}
 	}
 
 #endif // #if defined(_WIN32)
 
-	if (hw_info.hardware_bus < 0) {
-		// The number of buttons gives a clue as to what index the controller is
-		int nbuttons = SDL_JoystickNumButtons(sdl_joystick);
-
-		if (nbuttons >= 32 || nbuttons <= 27) {
-			// Older version of firmware or single player
-			hw_info.hardware_bus = 0;
-			hw_info.is_hardware_bus_implied = true;
-			hw_info.is_single_device = true;
-		}
-		else {
-			hw_info.hardware_bus = 31 - nbuttons;
-			hw_info.is_hardware_bus_implied = false;
-			hw_info.is_single_device = false;
-		}
-	}
-
-	hw_info.unique_id.clear();
-	hw_info.sort_id.clear();
 	if (!hw_info.is_hardware_bus_implied && !hw_info.serial_number.empty()) {
 		// Locking to name, which includes A-D, plus serial number will ensure correct enumeration every time
 		hw_info.unique_id = std::string("sdl_") + hw_info.getName("") + std::string("_") + hw_info.serial_number;
@@ -259,41 +222,19 @@ bool DreamPicoPortSDLGamepad::identify(int deviceIndex)
 
 void DreamPicoPortSDLGamepad::setCustomMapping(const std::shared_ptr<InputMapping>& mapping)
 {
-	// Since this is a real DC controller, no deadzone adjustment is needed
-	mapping->dead_zone = 0.0f;
-	// Map the things not set by SDL
-	mapping->set_button(DC_BTN_C, 2);
-	mapping->set_button(DC_BTN_Z, 5);
-	mapping->set_button(DC_BTN_D, 10);
-	mapping->set_button(DC_DPAD2_UP, 9);
-	mapping->set_button(DC_DPAD2_DOWN, 8);
-	mapping->set_button(DC_DPAD2_LEFT, 7);
-	mapping->set_button(DC_DPAD2_RIGHT, 6);
+	DreamPicoPort::setCustomMapping(mapping);
 }
 
 const char *DreamPicoPortSDLGamepad::get_button_name(u32 code)
 {
-	using namespace i18n;
-	switch (code) {
-		// Coincides with buttons setup in setDefaultMapping
-		case 2: return "C";
-		case 5: return "Z";
-		case 10: return "D";
-		case 9: return T("DPad2 Up");
-		case 8: return T("DPad2 Down");
-		case 7: return T("DPad2 Left");
-		case 6: return T("DPad2 Right");
+	const char* name = DreamPicoPort::getButtonName(code);
 
-		// These buttons are normally not physically accessible but are mapped on DreamPicoPort
-		case 12: return T("VMU1 A");
-		case 15: return T("VMU1 B");
-		case 16: return T("VMU1 Up");
-		case 17: return T("VMU1 Down");
-		case 18: return T("VMU1 Left");
-		case 19: return T("VMU1 Right");
-
-		default: return DreamLinkSDLGamepad::get_button_name(code); // default name
+	if (!name)
+	{
+		name = DreamLinkSDLGamepad::get_button_name(code); // default name
 	}
+
+	return name;
 }
 
 bool DreamPicoPortSDLGamepad::gamepad_btn_input(u32 code, bool pressed)
