@@ -1,5 +1,5 @@
 .\" Portions Copyright 2026 The Hollycast Authors
-.\" flycast.1:
+.\" Hollycast.1:
 
 .TH  "HOLLYCAST" "1" "November 21, 2020" "HOLLYCAST" "Hollycast"
 
@@ -19,20 +19,20 @@ hollycast \- Hollycast, the Sega Dreamcast, Atomiswave and Naomi emulator.
 
 .TP
 \fBNo command line options will start Hollycast and load all values from the config file.\fR
-flycast
+Hollycast
 
 .TP
 \fBOverride the image specified in the config file to load a specific image.\fR
-flycast /path/to/your/image.gdi
+Hollycast /path/to/your/image.gdi
 
 .TP
-\fBStart flycast in full screen.\fR
-flycast -config window:fullscreen=yes
+\fBStart Hollycast in full screen.\fR
+Hollycast -config window:fullscreen=yes
 
 .SH "CONFIG FILE"
 
 .TP
-The config file for \fBflycast\fR can be found at:
+The config file for \fBHollycast\fR can be found at:
 
 .IP
 ~/.config/flycast/emu.cfg
@@ -41,7 +41,7 @@ The config file for \fBflycast\fR can be found at:
 .SH "VMU SAVE FILE"
 
 .TP
-The VMU save files can be found at ~/.local/share/flycast/, by default \fBflycast\fR will create two VMU files for the first controller:
+The VMU save files can be found at ~/.local/share/flycast/, by default \fBHollycast\fR will create two VMU files for the first controller:
 
 .IP
 ~/.local/share/flycast/vmu_save_A1.bin
@@ -52,7 +52,7 @@ The VMU save files can be found at ~/.local/share/flycast/, by default \fBflycas
 .SH "BIOS AND FLASH ROMS"
 
 .TP
-\fBflycast\fR needs the original Atomiswave or Naomi BIOS files. The Dreamcast BIOS isn't needed in most cases but is recommended. For copyright reasons it is not possible to distribute them bundled with \fBflycast\fR, so you have to dump them from your own Dreamcast. \fBflycast\fR will look for these files in:
+\fBHollycast\fR needs the original Atomiswave or Naomi BIOS files. The Dreamcast BIOS isn't needed in most cases but is recommended. For copyright reasons it is not possible to distribute them bundled with \fBHollycast\fR, so you have to dump them from your own Dreamcast. \fBHollycast\fR will look for these files in:
 
 .IP
 ~/.local/share/flycast/data/dc_boot.bin
@@ -65,7 +65,7 @@ The VMU save files can be found at ~/.local/share/flycast/, by default \fBflycas
 .SH "CONTROLS"
 
 .TP
-\fBflycast\fR uses the kernel event devices for capturing input. You can define the evdev device id in the config file:
+\fBHollycast\fR uses the kernel event devices for capturing input. You can define the evdev device id in the config file:
 .IP
 [input]
 .br
@@ -74,7 +74,7 @@ evdev_device_id_1 = X
 evdev_mapping_1 = my_mapping.cfg
 .LP
 
-If your version of \fBflycast\fR is compiled against X11, you might want to disable the built-in X11 keyboard support as this can interfere if your controller is detected as a keyboard:
+If your version of \fBHollycast\fR is compiled against X11, you might want to disable the built-in X11 keyboard support as this can interfere if your controller is detected as a keyboard:
 .IP
 [input]
 .br
