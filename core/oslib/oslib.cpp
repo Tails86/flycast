@@ -57,7 +57,7 @@ static bool getVmuSlotIndex(const std::string& port, int& bus, int& slot)
 	return true;
 }
 
-static bool isConfiguredVmuFileNameValid(const std::string& name)
+bool isConfiguredVmuFileNameValid(const std::string& name)
 {
 	if (name.empty() || name.find_first_of("/\\:*?|<>\"") != std::string::npos)
 		return false;

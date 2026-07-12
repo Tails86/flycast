@@ -48,6 +48,7 @@
 #include "boxart/boxart.h"
 #include "IconsFontAwesome6.h"
 #include "mainui.h"
+#include "oslib/oslib.h"
 #include "oslib/storage.h"
 #include "stdclass.h"
 #include "achievements/achievements.h"
@@ -4872,20 +4873,6 @@ static bool isSharedVmuSlotActive(int bus, int slot)
 	return config::MapleExpansionDevices[bus][slot] == MDT_SegaVMU;
 }
 
-static bool isSimpleVmuFileName(const std::string& name)
-{
-	if (name.empty() || name.find_first_of("/\\:*?|<>\"") != std::string::npos)
-		return false;
-
-	std::string lower = name;
-	string_tolower(lower);
-	if (lower == "dc_nvmem.bin" || lower == "dc_flash.bin" || lower.size() < 4)
-		return false;
-
-	return lower.compare(lower.size() - 4, 4, ".bin") == 0
-		|| lower.compare(lower.size() - 4, 4, ".vmu") == 0;
-}
-
 static std::string normalizeVmuFileName(std::string name)
 {
 	if (name.find('.') == std::string::npos)
@@ -4922,7 +4909,7 @@ static bool isManualVmuSlotEditable(int bus, int slot, bool perGameEnabled)
 static std::string currentSlotVmuFileName(int bus, int slot)
 {
 	const std::string configuredName = config::MapleVmuSlotFileNames[bus][slot].get();
-	if (isSimpleVmuFileName(configuredName))
+	if (hostfs::isConfiguredVmuFileNameValid(configuredName))
 		return configuredName;
 	return defaultVmuFileNameForSlot(bus, slot);
 }
@@ -4942,7 +4929,7 @@ static std::string getVmuCardManagerFolder()
 
 static bool getVmuCardManagerFilePath(const std::string& fileName, std::string& fullPath, std::string& error)
 {
-	if (!isSimpleVmuFileName(fileName))
+	if (!hostfs::isConfiguredVmuFileNameValid(fileName))
 	{
 		error = T("Invalid file name.");
 		return false;
@@ -5093,7 +5080,7 @@ static bool isVmuCardFile(const hostfs::FileInfo& info)
 			return false;
 		}
 	}
-	return fileSize == 128_KB && isSimpleVmuFileName(info.name);
+	return fileSize == 128_KB && hostfs::isConfiguredVmuFileNameValid(info.name);
 }
 
 static void listVmuCardFiles(std::vector<hostfs::FileInfo>& out)
@@ -5362,7 +5349,7 @@ static void renderVmuCardManager()
 			else
 			{
 				const std::string newName = normalizeVmuFileName(copyVmuName);
-				if (!isSimpleVmuFileName(newName))
+				if (!hostfs::isConfiguredVmuFileNameValid(newName))
 				{
 					vmuOpError = T("Invalid file name.");
 				}
@@ -5420,7 +5407,7 @@ static void renderVmuCardManager()
 				{
 					ImGui::CloseCurrentPopup();
 				}
-				else if (!isSimpleVmuFileName(newName))
+				else if (!hostfs::isConfiguredVmuFileNameValid(newName))
 				{
 					vmuOpError = T("Invalid file name.");
 				}
