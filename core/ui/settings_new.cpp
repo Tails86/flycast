@@ -5273,8 +5273,9 @@ static void renderVmuCardManager()
 			for (int slot = 0; slot < 2; slot++)
 			{
 				if (!isManualVmuSlotEditable(bus, slot, perGameEnabled)
-						|| currentSlotVmuFileName(bus, slot) != fileName)
+						|| currentSlotVmuFileName(bus, slot) != fileName) {
 					continue;
+				}
 				if (!labels.empty())
 					labels += ", ";
 				labels += vmuSlotLabel(bus, slot);
