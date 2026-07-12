@@ -22,5 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Flycast"
-include(":flycast")
+rootProject.name = "Hollycast"
+include(":hollycast")
