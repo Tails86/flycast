@@ -118,7 +118,8 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 	jintArray halfAxes,
 	jboolean hasRumble,
 	jint vendorId,
-	jint productId
+	jint productId,
+	jobject device
 )
 {
 	if (id == 0)
@@ -143,7 +144,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 
 		std::shared_ptr<AndroidGamepadDevice> gamepad;
 		if (AndroidDreamPicoPortGamepad::identify(vendorId, productId)) {
-			gamepad = std::make_shared<AndroidDreamPicoPortGamepad>(maple_port, id, joyname.c_str(), unique_id.c_str(), full, half);
+			gamepad = std::make_shared<AndroidDreamPicoPortGamepad>(env, maple_port, id, joyname.c_str(), unique_id.c_str(), full, half, device);
 		}
 		else {
 			gamepad = std::make_shared<AndroidGamepadDevice>(maple_port, id, joyname.c_str(), unique_id.c_str(), full, half);

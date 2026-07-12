@@ -6327,10 +6327,9 @@ void renderAdvancedTab()
 	}
 
 	// Debugging Section
-#if defined(GDB_SERVER) || !defined(__ANDROID__)
 	if (RenderCollapsingHeader("DebuggingSection", ICON_FA_BUG, T("Debugging"), ImGuiTreeNodeFlags_DefaultOpen))
 	{
-#if !defined(__ANDROID) && !defined(GDB_SERVER)
+#if !defined(__ANDROID__) && !defined(GDB_SERVER)
 		// Serial Console - 2x Row Pattern
 		RenderGeneralToggleSettingRow(
 			"SerialConsole",
@@ -6418,23 +6417,22 @@ void renderAdvancedTab()
 		}
 	#endif
 
-		// Log to File - 2x Row Pattern
-		const bool logToFileValue = cfgLoadBool("log", "LogToFile", false);
-		RenderGeneralToggleSettingRow(
-			"LogToFile",
-			ICON_FA_FILE,
-			T("Log to File"),
-			T("Save log output to file"),
-			logToFileValue,
-			[](bool enabled) { cfgSaveBool("log", "LogToFile", enabled); },
-			T(
-				"Log to File\n"
-				"Saves log output to a file on disk.\n\n"
-				"This is helpful when you need to share logs for troubleshooting, but it can increase I/O and may reduce performance on slower storage.\n"
-				"If you enable this, try to reproduce the issue, then disable it again to avoid unnecessary disk usage."
-			));
+	// Log to File - 2x Row Pattern
+	const bool logToFileValue = cfgLoadBool("log", "LogToFile", false);
+	RenderGeneralToggleSettingRow(
+		"LogToFile",
+		ICON_FA_FILE,
+		T("Log to File"),
+		T("Save log output to file"),
+		logToFileValue,
+		[](bool enabled) { cfgSaveBool("log", "LogToFile", enabled); },
+		T(
+			"Log to File\n"
+			"Saves log output to a file on disk.\n\n"
+			"This is helpful when you need to share logs for troubleshooting, but it can increase I/O and may reduce performance on slower storage.\n"
+			"If you enable this, try to reproduce the issue, then disable it again to avoid unnecessary disk usage."
+		));
 	}
-#endif
 
 	// Logging Section (Debug builds only)
 #if !defined(NDEBUG) || defined(DEBUGFAST) || FC_PROFILER

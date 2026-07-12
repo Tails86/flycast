@@ -83,19 +83,7 @@ static DreamPicoPort::HardwareInfo parse_hw_info(int joystick_idx, SDL_Joystick*
 		// Serial is expected between a dash (-) and space ( ) character or until end of string
 		const char* joystick_name = SDL_JoystickName(sdl_joystick);
 		if (joystick_name) {
-			std::string name_str(joystick_name);
-			size_t dash_pos = name_str.find('-');
-			if (dash_pos != std::string::npos) {
-				size_t start_pos = dash_pos + 1;
-				size_t end_pos = name_str.find(' ', start_pos);
-				if (end_pos == std::string::npos) {
-					end_pos = name_str.length();
-				}
-				// Serials are normally 16 characters, but check for at least 10 to account for any future changes
-				if ((start_pos + 10) <= end_pos) {
-					hw_info.serial_number = name_str.substr(start_pos, end_pos - start_pos);
-				}
-			}
+			hw_info.serial_number = DreamPicoPort::getSerialFromName(joystick_name);
 		}
 	}
 
@@ -162,18 +150,6 @@ static DreamPicoPort::HardwareInfo parse_hw_info(int joystick_idx, SDL_Joystick*
 
 #endif // #if defined(_WIN32)
 
-	if (!hw_info.is_hardware_bus_implied && !hw_info.serial_number.empty()) {
-		// Locking to name, which includes A-D, plus serial number will ensure correct enumeration every time
-		hw_info.unique_id = std::string("sdl_") + hw_info.getName("") + std::string("_") + hw_info.serial_number;
-		// Ensure this is ordered by SDL, product name, serial, and port char
-		hw_info.sort_id = (
-			std::string("sdl_") +
-			hw_info.getProductName() + std::string("_") +
-			hw_info.serial_number + std::string("_") +
-			std::string(1, hw_info.getPortChar())
-		);
-	}
-
 	return hw_info;
 }
 
@@ -190,22 +166,39 @@ DreamPicoPortSDLGamepad::DreamPicoPortSDLGamepad(
 )
 {
 	DreamPicoPort *picoPort = dynamic_cast<DreamPicoPort*>(dreamlink.get());
+	assert(picoPort != nullptr);
 	_name = picoPort->getName();
 
-	const std::string& sortId = picoPort->getSortId();
-	if (!sortId.empty()) {
-		_sort_id = sortId;
-	}
+	const DreamPicoPort::HardwareInfo& hw_info = picoPort->getHardwareInfo();
 
-	const std::string& uniqueId = picoPort->getUniqueId();
-	if (!uniqueId.empty()) {
-		_unique_id = uniqueId;
+	if (!hw_info.serial_number.empty()) {
+		// Ensure this is ordered by SDL, product name, serial, and port char
+		_sort_id = (
+			std::string("sdl_") +
+			hw_info.getProductName() + std::string("_") +
+			hw_info.serial_number + std::string("_") +
+			std::string(1, hw_info.getPortChar())
+		);
+		// Locking to name, which includes A-D, plus serial number will ensure correct enumeration every time
+		_unique_id = std::string("sdl_") + hw_info.getName("", true) + std::string("_") + hw_info.serial_number;
+		// Reload mapping now that unique ID changed
 		loadMapping();
 	}
+
+	// Note: no need to set setOnHwIndexChanged because name will never change due to how parse_hw_info() is setup
 
 	int bus = picoPort->getDefaultBus();
 	if (DreamLink::isValidBus(bus))
 		set_maple_port(bus);
+}
+
+DreamPicoPortSDLGamepad::~DreamPicoPortSDLGamepad()
+{
+	DreamPicoPort *picoPort = dynamic_cast<DreamPicoPort*>(dreamlink.get());
+	if (picoPort) {
+		// Ensure callback is not set before destruction is complete
+		picoPort->setOnHwIndexChanged(nullptr);
+	}
 }
 
 bool DreamPicoPortSDLGamepad::identify(int deviceIndex)

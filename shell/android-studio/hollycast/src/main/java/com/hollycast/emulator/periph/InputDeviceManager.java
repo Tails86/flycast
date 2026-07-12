@@ -56,7 +56,8 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
                 null,
                 getVibrator(VIRTUAL_GAMEPAD_ID) != null,
                 0,
-                0
+                0,
+                null
             );
         }
         inputManager = (InputManager)applicationContext.getSystemService(Context.INPUT_SERVICE);
@@ -237,7 +238,8 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
             ArrayUtils.toPrimitive(halfAxes.toArray(new Integer[0])),
             getVibrator(id) != null,
             device.getVendorId(),
-            device.getProductId()
+            device.getProductId(),
+            device
         );
 
         knownDevices.add(id);
@@ -269,7 +271,9 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
     public native void mouseEvent(int xpos, int ypos, int buttons);
     public native void mouseScrollEvent(int scrollValue);
     public native void touchMouseEvent(int xpos, int ypos, int buttons);
-    private native void joystickAdded(int id, String name, int maple_port, String uniqueId, int[] fullAxes, int[] halfAxes, boolean rumbleEnabled, int vendorId, int productId);
+    private native void joystickAdded(
+        int id, String name, int maple_port, String uniqueId, int[] fullAxes, int[] halfAxes, boolean rumbleEnabled,
+        int vendorId, int productId, InputDevice device);
     private native void joystickRemoved(int id);
     public native boolean keyboardEvent(int key, boolean pressed);
     public native void keyboardText(int c);

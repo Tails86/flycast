@@ -20,17 +20,25 @@
 
 #include "android_gamepad.h"
 
+#include <memory>
+
 class AndroidDreamPicoPortGamepad : public AndroidGamepadDevice
 {
 public:
 	AndroidDreamPicoPortGamepad(
+		JNIEnv *env,
 		int maple_port,
 		int id,
 		const char *name,
 		const char *unique_id,
 		const std::vector<int>& fullAxes,
-		const std::vector<int>& halfAxes
+		const std::vector<int>& halfAxes,
+		jobject device
 	);
+	~AndroidDreamPicoPortGamepad();
 
 	static bool identify(int vendorId, int productId);
+
+private:
+	const std::shared_ptr<class DreamPicoPort> dpp;
 };

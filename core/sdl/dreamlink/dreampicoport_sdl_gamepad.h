@@ -31,6 +31,7 @@ class DreamPicoPortSDLGamepad : public DreamLinkSDLGamepad
 {
 public:
 	DreamPicoPortSDLGamepad(int maple_port, int joystick_idx, SDL_Joystick* sdl_joystick);
+	~DreamPicoPortSDLGamepad();
 	const char *get_button_name(u32 code) override;
 	static bool identify(int deviceIndex);
 
@@ -44,6 +45,7 @@ public:
 protected:
 	void setCustomMapping(const std::shared_ptr<InputMapping>& mapping) override;
 
+protected:
 	//! Dreamcast Controller USB VID:1209 PID:2f07
 	static constexpr const char* VID_PID_GUID = "09120000072f0000";
 

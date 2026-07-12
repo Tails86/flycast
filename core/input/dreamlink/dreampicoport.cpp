@@ -834,10 +834,12 @@ const char* DreamPicoPort::HardwareInfo::getProductName() {
     return "DreamPicoPort";
 }
 
-std::string DreamPicoPort::HardwareInfo::getName(const std::string& separator) const {
+std::string DreamPicoPort::HardwareInfo::getName(const std::string& separator, bool useAForSingle) const {
     std::string name = getProductName();
-    if (!is_hardware_bus_implied && !is_single_device) {
+    if (!is_single_device) {
         name += separator + std::string(1, getPortChar());
+    } else if (useAForSingle) {
+        name += separator + std::string(1, getPortCharForBus(0));
     }
     return name;
 }
@@ -850,7 +852,13 @@ DreamPicoPort::DreamPicoPort(int bus, HardwareInfo hw_info) :
     GamepadDreamLink(true),
     software_bus(bus),
     hw_info(hw_info),
-    device_name(hw_info.getName())
+    initial_device_name(hw_info.getName()),
+    updated_device_name()
+{
+}
+
+// Need to define destructor here because of forward declaration of ApiDreamPicoPortComms
+DreamPicoPort::~DreamPicoPort()
 {
 }
 
@@ -940,6 +948,10 @@ int DreamPicoPort::dppPortToFcPort(int forPort) {
     }
 }
 
+const DreamPicoPort::HardwareInfo& DreamPicoPort::getHardwareInfo() {
+    return hw_info;
+}
+
 u32 DreamPicoPort::getFunctionCodesMask(int forPort) const  {
     std::lock_guard<std::recursive_mutex> lock(mutex);
 
@@ -978,14 +990,6 @@ int DreamPicoPort::getDefaultBus() const {
     }
 }
 
-const std::string& DreamPicoPort::getUniqueId() const {
-    return hw_info.unique_id;
-}
-
-const std::string& DreamPicoPort::getSortId() const {
-    return hw_info.sort_id;
-}
-
 void DreamPicoPort::changeBus(int newBus)  {
     std::lock_guard<std::recursive_mutex> lock(mutex);
 
@@ -1016,7 +1020,11 @@ void DreamPicoPort::registered()  {
 }
 
 const char* DreamPicoPort::getName() const  {
-    return device_name.c_str();
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if (!updated_device_name.empty()) {
+        return updated_device_name.c_str();
+    }
+    return initial_device_name.c_str();
 }
 
 const char* DreamPicoPort::getProductName() const  {
@@ -1067,7 +1075,11 @@ std::shared_ptr<maple_device> DreamPicoPort::createMapleDevice(int bus, int port
     }
 }
 
-void DreamPicoPort::connect()  {
+void DreamPicoPort::connect() {
+    connect(true);
+}
+
+void DreamPicoPort::connect(bool autoReconnect) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
 
     connect_attempted = true;
@@ -1075,7 +1087,7 @@ void DreamPicoPort::connect()  {
 
     internalConnect();
 
-    if (!isConnected()) {
+    if (!isConnected() && autoReconnect) {
         // Retry again later
         scheduleConnectRetry();
     }
@@ -1182,18 +1194,23 @@ bool DreamPicoPort::queryPeripherals(bool clearOnFailure) {
     return true;
 }
 
+void DreamPicoPort::setOnHwIndexChanged(std::function<void()> fn) {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    on_hw_index_changed = std::move(fn);
+}
+
 void DreamPicoPort::setCustomMapping(const std::shared_ptr<InputMapping>& mapping)
 {
-	// Since this is a real DC controller, no deadzone adjustment is needed
-	mapping->dead_zone = 0.0f;
-	// Map the things not set by SDL
-	mapping->set_button(DC_BTN_C, 2);
-	mapping->set_button(DC_BTN_Z, 5);
-	mapping->set_button(DC_BTN_D, 10);
-	mapping->set_button(DC_DPAD2_UP, 9);
-	mapping->set_button(DC_DPAD2_DOWN, 8);
-	mapping->set_button(DC_DPAD2_LEFT, 7);
-	mapping->set_button(DC_DPAD2_RIGHT, 6);
+    // Since this is a real DC controller, no deadzone adjustment is needed
+    mapping->dead_zone = 0.0f;
+    // Map the things not set by SDL
+    mapping->set_button(DC_BTN_C, 2);
+    mapping->set_button(DC_BTN_Z, 5);
+    mapping->set_button(DC_BTN_D, 10);
+    mapping->set_button(DC_DPAD2_UP, 9);
+    mapping->set_button(DC_DPAD2_DOWN, 8);
+    mapping->set_button(DC_DPAD2_LEFT, 7);
+    mapping->set_button(DC_DPAD2_RIGHT, 6);
 }
 
 const char *DreamPicoPort::getButtonName(u32 code)
@@ -1221,6 +1238,28 @@ const char *DreamPicoPort::getButtonName(u32 code)
     }
 }
 
+std::string DreamPicoPort::getSerialFromName(const std::string& name)
+{
+    std::string serial;
+
+    size_t dash_pos = name.find('-');
+
+    if (dash_pos != std::string::npos) {
+        size_t start_pos = dash_pos + 1;
+        size_t end_pos = name.find(' ', start_pos);
+        if (end_pos == std::string::npos) {
+            end_pos = name.length();
+        }
+
+        // Serials are normally 16 characters, but check for at least 10 to account for any future changes
+        if ((start_pos + 10) <= end_pos) {
+            serial = name.substr(start_pos, end_pos - start_pos);
+        }
+    }
+
+    return serial;
+}
+
 void DreamPicoPort::internalConnect() {
     // Timeout is 1 second while establishing connection
     timeout_ms = std::chrono::seconds(1);
@@ -1244,20 +1283,44 @@ void DreamPicoPort::internalConnect() {
             std::array<dpp_api::GamepadConnectionState, 4> gamepads = dpp_comms->getConnectedGamepads();
             if (
                 hw_info.hardware_bus < gamepads.size() &&
-                gamepads[hw_info.hardware_bus] != dpp_api::GamepadConnectionState::UNAVAILABLE
+                gamepads[hw_info.hardware_bus] != dpp_api::GamepadConnectionState::UNAVAILABLE &&
+                !hw_info.is_hardware_bus_implied
             ) {
                 // Something is available here through the API!
                 hwVerified = true;
-            } else if (hw_info.is_single_device) {
-                // The determined hardware_bus is incorrect, and only single controller device is available
+            } else if (hw_info.is_hardware_bus_implied) {
+                // The determined hardware_bus is an offset
                 // This covers cases where, for instance, only a controller is plugged into port D and all others
                 // are either set to auto and disconnected or otherwise disabled
                 for (int i = 0; i < gamepads.size(); i++) {
                     if (gamepads[i] != dpp_api::GamepadConnectionState::UNAVAILABLE) {
-                        // Note: changing the hardware bus will NOT change the name because is_single_device is true
-                        hw_info.hardware_bus = i;
-                        dpp_comms->changeHardwareBus(i);
-                        hwVerified = true;
+                        // Base index determined!
+                        hw_info.hardware_bus += i;
+                        hw_info.is_hardware_bus_implied = false;
+
+                        if (i > 0)
+                        {
+                            dpp_comms->changeHardwareBus(hw_info.hardware_bus);
+
+                            {
+                                std::lock_guard<std::recursive_mutex> lock(mutex);
+                                std::string newName = hw_info.getName();
+                                if (newName != initial_device_name) {
+                                    assert(updated_device_name.empty());
+                                    updated_device_name = std::move(newName);
+                                }
+
+                                if (on_hw_index_changed) {
+                                    on_hw_index_changed();
+                                }
+                            }
+                        }
+
+                        hwVerified = (
+                            hw_info.hardware_bus < gamepads.size() &&
+                            gamepads[hw_info.hardware_bus] != dpp_api::GamepadConnectionState::UNAVAILABLE
+                        );
+
                         break;
                     }
                 }

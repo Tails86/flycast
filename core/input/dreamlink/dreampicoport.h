@@ -17,6 +17,8 @@
     along with Hollycast.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#pragma once
+
 #include "gamepad_dreamlink.h"
 #include "../mapping.h"
 
@@ -25,6 +27,7 @@
 #include <memory>
 #include <vector>
 #include <mutex>
+#include <string>
 
 //! This class allows for communication to DreamPicoPort peripherals through libusb/WebUSB
 class DreamPicoPort : public GamepadDreamLink
@@ -37,14 +40,10 @@ public:
         int hardware_bus = -1;
         //! true iff only a single devices was found when enumerating devices
         bool is_single_device = true;
-        //! True when initial enumeration failed
+        //! True when the determined hardware_bus is an offset rather than an index
         bool is_hardware_bus_implied = true;
         //! The located serial number of this device or empty string if could not be found
         std::string serial_number;
-        //! If set, the determined unique ID of this device. If not set, the serial could not be parsed.
-        std::string unique_id;
-        //! The ID used for sorting on the UI
-        std::string sort_id;
 
         //! @return The hardware port character identifier
         char getPortChar() const;
@@ -53,8 +52,9 @@ public:
         static const char* getProductName();
 
         //! @param[in] separator Separator string to use between name and port char
+        //! @param[in] useAForSingle When true, 'A' will be used for single device
         //! @return unique name of this device using the given separator
-        std::string getName(const std::string& separator = " ") const;
+        std::string getName(const std::string& separator = " ", bool useAForSingle = false) const;
     };
 
 public:
@@ -66,8 +66,8 @@ public:
     //! @param[in] hw_info
     DreamPicoPort(int bus, HardwareInfo hw_info);
 
-    //! Destructor (default)
-    ~DreamPicoPort() = default;
+    //! Destructor
+    ~DreamPicoPort();
 
     //! Send maple message, ignore response
     //! @param[in] msg The message to send
@@ -96,6 +96,9 @@ public:
     //! Transform a DreamPicoPort port index into flycast port index
     static int dppPortToFcPort(int forPort);
 
+    //! @return the hardware info
+    const HardwareInfo& getHardwareInfo();
+
     //! Retrieves the currently known function codes mask
     //! @param[in] forPort The port to query [0,5]
     //! @return a mask representing codes within MapleFunctionID
@@ -108,12 +111,6 @@ public:
 
     //! @return the default software bus index [0,3] to use when none is set is settings
     int getDefaultBus() const;
-
-    //! @return the unique string ID of this DreamPicoPort
-    const std::string& getUniqueId() const;
-
-    //! @return the sorting ID of this DreamPicoPort
-    const std::string& getSortId() const;
 
     //! Changes the software bus
     //! @param[in] newBus The new software bus to use [0,3]
@@ -143,6 +140,10 @@ public:
     //! Attempt to connect to this DreamPicoPort through libusb/WinUSB
     void connect() override;
 
+    //! Attempt to connect and optionally schedule auto reconnect if connect fails
+    //! @param[in] autoReconnect When true, schedule auto reconnect if connect fails
+    void connect(bool autoReconnect);
+
     //! Disconnect from device
     void disconnect() override;
 
@@ -169,6 +170,10 @@ public:
     //! @return true iff the query was successful
     bool queryPeripherals(bool clearOnFailure = true);
 
+    //! Set the on_hw_index_changed callback
+    //! @param[in] fn The function to call on name changes
+    void setOnHwIndexChanged(std::function<void()> fn);
+
     //! Set custom mapping associated with the DreamPicoPort
     //! @param[in,out] mapping The mapping to update
     static void setCustomMapping(const std::shared_ptr<InputMapping>& mapping);
@@ -178,6 +183,11 @@ public:
     //! @return button name for the given code
     //! @return nullptr if the default name should be used
     static const char *getButtonName(u32 code);
+
+    //! Extracts DreamPicoPort serial from its name
+    //! @param[in] name The name to parse
+    //! @return the extracted serial number
+    static std::string getSerialFromName(const std::string& name);
 
 private:
     //! Internal connection call
@@ -216,9 +226,11 @@ private:
     bool connect_requested = false;
     //! Set to true when connect retry has been scheduled
     bool connect_retry_scheduled = false;
+    //! The callback executed when name changed due to implied index being determined which changed the name
+    std::function<void()> on_hw_index_changed = {};
 
     //! Current timeout in milliseconds
-    std::chrono::milliseconds timeout_ms;
+    std::chrono::milliseconds timeout_ms = {};
     //! The bus ID dictated by flycast
     int software_bus = -1;
     //! The queried interface version
@@ -229,7 +241,9 @@ private:
     std::vector<std::vector<std::array<uint32_t, 2>>> peripherals;
 
     //! Hardware information determined on instantiation
-    HardwareInfo hw_info;
+    HardwareInfo hw_info = {};
     //! The name to return on getName
-    const std::string device_name;
+    const std::string initial_device_name;
+    //! The updated device name when the initial name was implied (will only be updated once)
+    std::string updated_device_name = {};
 };
