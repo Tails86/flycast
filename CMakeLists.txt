@@ -1252,7 +1252,7 @@ if(NOT LIBRETRO)
 
 	if(ANDROID)
 		target_compile_definitions(${PROJECT_NAME} PRIVATE GLES GLES3)
-		add_subdirectory(shell/android-studio/hollycast/src/main/jni/src)
+		add_subdirectory(shell/android-studio/flycast/src/main/jni/src)
 		target_link_libraries(${PROJECT_NAME} PRIVATE android log)
 
 		set(GAMESDK_THREAD_CHECKS 0)

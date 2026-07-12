@@ -11,8 +11,8 @@ files:
         zh-HK: zh_HK
         en-GB: en_GB
         pt-BR: pt_BR
-  - source: /shell/android-studio/hollycast/src/main/res/values/strings.xml
-    translation: /shell/android-studio/hollycast/src/main/res/values-%two_letters_code%/strings.xml
+  - source: /shell/android-studio/flycast/src/main/res/values/strings.xml
+    translation: /shell/android-studio/flycast/src/main/res/values-%two_letters_code%/strings.xml
     languages_mapping:
       two_letters_code:
         zh-CN: zh-rCN

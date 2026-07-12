@@ -37,13 +37,13 @@ jobs:
           restore-keys: android-ccache-
 
       - name: Disable release signing
-        run: sed -i 's/signingConfigs.getByName("release")/signingConfigs.getByName("debug")/g' shell/android-studio/hollycast/build.gradle.kts
+        run: sed -i 's/signingConfigs.getByName("release")/signingConfigs.getByName("debug")/g' shell/android-studio/flycast/build.gradle.kts
         if: github.repository != 'OrangeFox86/Hollycast' || github.event_name != 'push'
 
       - name: Bump version code
         uses: chkfung/android-version-actions@v1.2.2
         with:
-          gradlePath: shell/android-studio/hollycast/build.gradle.kts
+          gradlePath: shell/android-studio/flycast/build.gradle.kts
           versionCode: ${{ github.run_number }}
 
       - name: Gradle
@@ -56,7 +56,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: Hollycast-release.apk
-          path: shell/android-studio/hollycast/build/outputs/apk/release/Hollycast-release.apk
+          path: shell/android-studio/flycast/build/outputs/apk/release/Hollycast-release.apk
 
       - name: Build dump_syms
         working-directory: core/deps/breakpad
@@ -68,7 +68,7 @@ jobs:
       - name: Extract symbols
         run: |
           DUMP_SYMS=./core/deps/breakpad/bin/dump_syms
-          SO_DIR=shell/android-studio/hollycast/build/intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib
+          SO_DIR=shell/android-studio/flycast/build/intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib
           for arch in arm64-v8a armeabi-v7a x86 x86_64 ; do
             $DUMP_SYMS $SO_DIR/$arch/libHollycast.so > libHollycast.so.sym
             BUILD_ID=`head -1 libHollycast.so.sym | awk '{ print $4 }'`
@@ -83,8 +83,8 @@ jobs:
 
       # - name: Upload to S3
       #   run: |
-      #     cp shell/android-studio/hollycast/build/outputs/bundle/release/*.aab shell/android-studio/hollycast/build/outputs/apk/release/
-      #     rclone copy shell/android-studio/hollycast/build/outputs/apk/release scaleway:hollycast-builds/android/${GITHUB_REF#refs/}-$GITHUB_SHA --exclude '*.json'
+      #     cp shell/android-studio/flycast/build/outputs/bundle/release/*.aab shell/android-studio/flycast/build/outputs/apk/release/
+      #     rclone copy shell/android-studio/flycast/build/outputs/apk/release scaleway:hollycast-builds/android/${GITHUB_REF#refs/}-$GITHUB_SHA --exclude '*.json'
       #   if: github.repository == 'OrangeFox86/Hollycast' && github.event_name == 'push'
 
       # - name: Setup Sentry CLI
