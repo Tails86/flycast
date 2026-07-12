@@ -5088,11 +5088,9 @@ static void listVmuCardFiles(std::vector<hostfs::FileInfo>& out)
 	out.clear();
 	try {
 		const std::string dataDir = getVmuCardManagerFolder();
-		for (const auto& entry : hostfs::storage().listContent(dataDir))
 		for (const auto& entry : hostfs::storage().listContent(dataDir)) {
 			if (isVmuCardFile(entry))
 				out.push_back(entry);
-		}
 		}
 	} catch (const hostfs::StorageException&) {
 	}
