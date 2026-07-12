@@ -56,6 +56,7 @@
 #include <cmath>
 #include <cstring>
 #include <cfloat>
+#include <memory>
 #ifdef __ANDROID__
 #if HOST_CPU == CPU_ARM64 && USE_VULKAN
 #include "rend/vulkan/adreno.h"
@@ -5024,40 +5025,39 @@ static bool copyVmuCardFile(const std::string& sourceName, const std::string& co
 		return false;
 	}
 
-	FILE *source = nowide::fopen(sourcePath.c_str(), "rb");
-	if (source == nullptr)
 	{
-		error = T("Failed to open source VMU.");
-		return false;
-	}
-
-	FILE *copy = nowide::fopen(copyPath.c_str(), "wb");
-	if (copy == nullptr)
-	{
-		std::fclose(source);
-		error = T("Failed to create copy.");
-		return false;
-	}
-
-	std::array<u8, 16 * 1024> buffer {};
-	while (true)
-	{
-		const size_t bytesRead = std::fread(buffer.data(), 1, buffer.size(), source);
-		if (bytesRead > 0 && std::fwrite(buffer.data(), 1, bytesRead, copy) != bytesRead)
+		std::unique_ptr<FILE, decltype(&fclose)> source(nowide::fopen(sourcePath.c_str(), "rb"), &fclose);
+		if (source == nullptr)
 		{
-			error = T("Failed to write VMU copy.");
-			break;
+			error = T("Failed to open source VMU.");
+			return false;
 		}
-		if (bytesRead < buffer.size())
+
+		std::unique_ptr<FILE, decltype(&fclose)> copy(nowide::fopen(copyPath.c_str(), "wb"), &fclose);
+		if (copy == nullptr)
 		{
-			if (std::ferror(source))
-				error = T("Failed to read source VMU.");
-			break;
+			error = T("Failed to create copy.");
+			return false;
+		}
+
+		std::array<u8, 16 * 1024> buffer {};
+		while (true)
+		{
+			const size_t bytesRead = std::fread(buffer.data(), 1, buffer.size(), source.get());
+			if (bytesRead > 0 && std::fwrite(buffer.data(), 1, bytesRead, copy.get()) != bytesRead)
+			{
+				error = T("Failed to write VMU copy.");
+				break;
+			}
+			if (bytesRead < buffer.size())
+			{
+				if (std::ferror(source.get()))
+					error = T("Failed to read source VMU.");
+				break;
+			}
 		}
 	}
 
-	std::fclose(source);
-	std::fclose(copy);
 	if (!error.empty())
 	{
 		nowide::remove(copyPath.c_str());
