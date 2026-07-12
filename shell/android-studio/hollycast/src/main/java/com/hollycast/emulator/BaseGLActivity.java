@@ -173,7 +173,7 @@ public abstract class BaseGLActivity extends Activity implements ActivityCompat.
             public void run() {
                 AlertDialog.Builder dlgAlert = new AlertDialog.Builder(BaseGLActivity.this);
                 dlgAlert.setMessage(getResources().getString(R.string.init_failed_message) + message);
-                dlgAlert.setTitle(R.string.hollycast_error);
+                dlgAlert.setTitle(R.string.flycast_error);
                 dlgAlert.setPositiveButton(R.string.exit,
                         new DialogInterface.OnClickListener() {
                             @Override

@@ -11,7 +11,7 @@
     <string name="exporting_home_folder">Ev klasörü dışa aktarılıyor</string>
     <string name="select_an_import_folder">Bir içe aktarma klasörü seçin</string>
     <string name="importing_home_folder">Ev klasörü içe aktarılıyor</string>
-    <string name="hollycast_error">Hollycast Hatası</string>
+    <string name="flycast_error">Hollycast Hatası</string>
     <string name="init_failed_message">Başlatma başarısız oldu. Lütfen tekrar deneyin veya yeniden yükleyin.\n\nHata: </string>
     <string name="exit">Çıkış</string>
     <string name="copying">Kopyalanıyor</string>

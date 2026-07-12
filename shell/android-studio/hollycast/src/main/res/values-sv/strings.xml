@@ -11,7 +11,7 @@
     <string name="exporting_home_folder">Exporterar hemmapp</string>
     <string name="select_an_import_folder">Välj en importmapp</string>
     <string name="importing_home_folder">Importerar hemmapp</string>
-    <string name="hollycast_error">Hollycast-fel</string>
+    <string name="flycast_error">Hollycast-fel</string>
     <string name="init_failed_message">Initiering misslyckades. Försök igen eller installera om.\n\nFel: </string>
     <string name="exit">Avsluta</string>
     <string name="copying">Kopierar</string>

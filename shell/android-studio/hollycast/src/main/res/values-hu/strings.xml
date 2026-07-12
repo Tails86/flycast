@@ -11,7 +11,7 @@
     <string name="exporting_home_folder">Kezdőmappa exportálása</string>
     <string name="select_an_import_folder">Válasszon egy import mappát</string>
     <string name="importing_home_folder">Kezdőmappa importálása</string>
-    <string name="hollycast_error">Hollycast hiba</string>
+    <string name="flycast_error">Hollycast hiba</string>
     <string name="init_failed_message">Sikertelen inicializálás. Próbálkozzon újra, vagy telepítse újra a programot.\n\nHiba: </string>
     <string name="exit">Kilépés</string>
     <string name="copying">Másolás</string>
