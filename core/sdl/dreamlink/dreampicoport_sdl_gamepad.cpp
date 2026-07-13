@@ -77,15 +77,23 @@ static DreamPicoPort::HardwareInfo parse_hw_info(int joystick_idx, SDL_Joystick*
 	// Set the serial number if found by SDL Joystick
 	const char* joystick_serial = SDL_JoystickGetSerial(sdl_joystick);
 	if (joystick_serial) {
+		// Will normally reach here on Linux systems but not Windows or macOS
 		hw_info.serial_number = joystick_serial;
-	} else {
+	}
+
+	// Windows will cache the joystick name, so it's not a good idea to check SDL_JoystickName() on Windows
+#if !defined(_WIN32)
+	if (hw_info.serial_number.empty()) {
+	{
 		// Version 1.2.0 and later embeds serial in name as a workaround for MacOS and Linux
 		// Serial is expected between a dash (-) and space ( ) character or until end of string
+		// Will normally reach here on macOS systems
 		const char* joystick_name = SDL_JoystickName(sdl_joystick);
 		if (joystick_name) {
 			hw_info.serial_number = DreamPicoPort::getSerialFromName(joystick_name);
 		}
 	}
+#endif
 
 	// The number of buttons gives a clue as to what index the controller is
 	int nbuttons = SDL_JoystickNumButtons(sdl_joystick);
