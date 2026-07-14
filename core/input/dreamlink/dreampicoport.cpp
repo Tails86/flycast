@@ -834,12 +834,10 @@ const char* DreamPicoPort::HardwareInfo::getProductName() {
     return "DreamPicoPort";
 }
 
-std::string DreamPicoPort::HardwareInfo::getName(const std::string& separator, bool useAForSingle) const {
+std::string DreamPicoPort::HardwareInfo::getName(const std::string& separator, bool forceBusLetter) const {
     std::string name = getProductName();
-    if (!is_single_device) {
+    if (!is_single_device || forceBusLetter) {
         name += separator + std::string(1, getPortChar());
-    } else if (useAForSingle) {
-        name += separator + std::string(1, getPortCharForBus(0));
     }
     return name;
 }

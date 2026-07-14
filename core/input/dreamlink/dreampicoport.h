@@ -50,9 +50,9 @@ public:
         static const char* getProductName();
 
         //! @param[in] separator Separator string to use between name and port char
-        //! @param[in] useAForSingle When true, 'A' will be used for single device
+        //! @param[in] forceBusLetter When true, always provide a name with bus letter, even when single device
         //! @return unique name of this device using the given separator
-        std::string getName(const std::string& separator = " ", bool useAForSingle = false) const;
+        std::string getName(const std::string& separator = " ", bool forceBusLetter = false) const;
     };
 
 public:
