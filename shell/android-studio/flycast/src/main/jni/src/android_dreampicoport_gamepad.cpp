@@ -156,8 +156,7 @@ static DreamPicoPort::HardwareInfo parse_hw_info(JNIEnv *env, int id, const std:
 		hwInfo.is_single_device = false;
 	}
 
-	// Hardware bus will always be implied for Android until first connection
-	hwInfo.is_hardware_bus_implied = true;
+	// TODO: Need to interrogate what interfaces the USB device has
 
 	return hwInfo;
 }

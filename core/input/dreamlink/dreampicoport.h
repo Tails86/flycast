@@ -37,11 +37,9 @@ public:
     struct HardwareInfo
     {
         //! The bus index of the hardware connection which will differ from the software bus
-        int hardware_bus = -1;
+        int hardware_bus = 0;
         //! true iff only a single devices was found when enumerating devices
         bool is_single_device = true;
-        //! True when the determined hardware_bus is an offset rather than an index
-        bool is_hardware_bus_implied = true;
         //! The located serial number of this device or empty string if could not be found
         std::string serial_number;
 
@@ -153,9 +151,6 @@ public:
     //! @return the hardware bus on the DreamPicoPort this instance is communicating with
     int hardwareBus() const;
 
-    //! @return true iff the hardware bus is implied
-    bool isHardwareBusImplied() const;
-
     //! @return true if the DreamPicoPort only contains one port
     bool isSingleDevice() const;
 
@@ -169,10 +164,6 @@ public:
     //! @param[in] clearOnFailure Set to true to clear out data if retrieval false or false to keep previously known
     //! @return true iff the query was successful
     bool queryPeripherals(bool clearOnFailure = true);
-
-    //! Set the on_hw_index_changed callback
-    //! @param[in] fn The function to call on name changes
-    void setOnHwIndexChanged(std::function<void()> fn);
 
     //! Set custom mapping associated with the DreamPicoPort
     //! @param[in,out] mapping The mapping to update
@@ -226,8 +217,6 @@ private:
     bool connect_requested = false;
     //! Set to true when connect retry has been scheduled
     bool connect_retry_scheduled = false;
-    //! The callback executed when name changed due to implied index being determined which changed the name
-    std::function<void()> on_hw_index_changed = {};
 
     //! Current timeout in milliseconds
     std::chrono::milliseconds timeout_ms = {};
@@ -241,9 +230,7 @@ private:
     std::vector<std::vector<std::array<uint32_t, 2>>> peripherals;
 
     //! Hardware information determined on instantiation
-    HardwareInfo hw_info = {};
+    const HardwareInfo hw_info = {};
     //! The name to return on getName
-    const std::string initial_device_name;
-    //! The updated device name when the initial name was implied (will only be updated once)
-    std::string updated_device_name = {};
+    const std::string device_name;
 };

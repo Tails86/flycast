@@ -74,6 +74,18 @@ static DreamPicoPort::HardwareInfo parse_hw_info(int joystick_idx, SDL_Joystick*
 
 	DreamPicoPort::HardwareInfo hw_info;
 
+	// The number of buttons gives a clue as to what index the controller is
+	int nbuttons = SDL_JoystickNumButtons(sdl_joystick);
+
+	if (nbuttons >= 28 && nbuttons <= 31) {
+		hw_info.hardware_bus = 31 - nbuttons;
+		hw_info.is_single_device = false;
+	}
+	else {
+		hw_info.hardware_bus = 0;
+		hw_info.is_single_device = true;
+	}
+
 	// Set the serial number if found by SDL Joystick
 	const char* joystick_serial = SDL_JoystickGetSerial(sdl_joystick);
 	if (joystick_serial) {
@@ -94,21 +106,6 @@ static DreamPicoPort::HardwareInfo parse_hw_info(int joystick_idx, SDL_Joystick*
 		}
 	}
 #endif
-
-	// The number of buttons gives a clue as to what index the controller is
-	int nbuttons = SDL_JoystickNumButtons(sdl_joystick);
-
-	if (nbuttons >= 32 || nbuttons <= 27) {
-		// Older version of firmware or single player
-		hw_info.hardware_bus = 0;
-		hw_info.is_hardware_bus_implied = true;
-		hw_info.is_single_device = true;
-	}
-	else {
-		hw_info.hardware_bus = 31 - nbuttons;
-		hw_info.is_hardware_bus_implied = false;
-		hw_info.is_single_device = false;
-	}
 
 #if defined(_WIN32)
 
@@ -193,8 +190,6 @@ DreamPicoPortSDLGamepad::DreamPicoPortSDLGamepad(
 		loadMapping();
 	}
 
-	// Note: no need to set setOnHwIndexChanged because name will never change due to how parse_hw_info() is setup
-
 	int bus = picoPort->getDefaultBus();
 	if (DreamLink::isValidBus(bus))
 		set_maple_port(bus);
@@ -202,11 +197,6 @@ DreamPicoPortSDLGamepad::DreamPicoPortSDLGamepad(
 
 DreamPicoPortSDLGamepad::~DreamPicoPortSDLGamepad()
 {
-	DreamPicoPort *picoPort = dynamic_cast<DreamPicoPort*>(dreamlink.get());
-	if (picoPort) {
-		// Ensure callback is not set before destruction is complete
-		picoPort->setOnHwIndexChanged(nullptr);
-	}
 }
 
 bool DreamPicoPortSDLGamepad::identify(int deviceIndex)

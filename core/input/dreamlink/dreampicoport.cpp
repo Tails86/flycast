@@ -852,8 +852,7 @@ DreamPicoPort::DreamPicoPort(int bus, HardwareInfo hw_info) :
     GamepadDreamLink(true),
     software_bus(bus),
     hw_info(hw_info),
-    initial_device_name(hw_info.getName()),
-    updated_device_name()
+    device_name(hw_info.getName())
 {
 }
 
@@ -982,12 +981,7 @@ std::array<u32, 3> DreamPicoPort::getFunctionDefinitions(int forPort) const {
 }
 
 int DreamPicoPort::getDefaultBus() const {
-    if (!hw_info.is_hardware_bus_implied && !hw_info.is_single_device) {
-        return hw_info.hardware_bus;
-    } else {
-        // Value of -1 means to use enumeration order
-        return -1;
-    }
+    return hw_info.hardware_bus;
 }
 
 void DreamPicoPort::changeBus(int newBus)  {
@@ -1020,11 +1014,7 @@ void DreamPicoPort::registered()  {
 }
 
 const char* DreamPicoPort::getName() const  {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
-    if (!updated_device_name.empty()) {
-        return updated_device_name.c_str();
-    }
-    return initial_device_name.c_str();
+    return device_name.c_str();
 }
 
 const char* DreamPicoPort::getProductName() const  {
@@ -1113,10 +1103,6 @@ int DreamPicoPort::hardwareBus() const {
     return hw_info.hardware_bus;
 }
 
-bool DreamPicoPort::isHardwareBusImplied() const {
-    return hw_info.is_hardware_bus_implied;
-}
-
 bool DreamPicoPort::isSingleDevice() const {
     return hw_info.is_single_device;
 }
@@ -1192,11 +1178,6 @@ bool DreamPicoPort::queryPeripherals(bool clearOnFailure) {
     }
 
     return true;
-}
-
-void DreamPicoPort::setOnHwIndexChanged(std::function<void()> fn) {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
-    on_hw_index_changed = std::move(fn);
 }
 
 void DreamPicoPort::setCustomMapping(const std::shared_ptr<InputMapping>& mapping)
@@ -1279,62 +1260,19 @@ void DreamPicoPort::internalConnect() {
 
         if (dpp_comms->isConnected() && dpp_comms->initialize(timeout_ms)) {
             // Connected and initialized!
-            bool hwVerified = false;
+            NOTICE_LOG(INPUT, "DreamPicoPort[%s] API connected", getLocDesc().c_str());
+
             std::array<dpp_api::GamepadConnectionState, 4> gamepads = dpp_comms->getConnectedGamepads();
             if (
-                hw_info.hardware_bus < gamepads.size() &&
-                gamepads[hw_info.hardware_bus] != dpp_api::GamepadConnectionState::UNAVAILABLE &&
-                !hw_info.is_hardware_bus_implied
+                hw_info.hardware_bus >= gamepads.size() ||
+                gamepads[hw_info.hardware_bus] == dpp_api::GamepadConnectionState::UNAVAILABLE
             ) {
-                // Something is available here through the API!
-                hwVerified = true;
-            } else if (hw_info.is_hardware_bus_implied) {
-                // The determined hardware_bus is an offset
-                // This covers cases where, for instance, only a controller is plugged into port D and all others
-                // are either set to auto and disconnected or otherwise disabled
-                for (int i = 0; i < gamepads.size(); i++) {
-                    if (gamepads[i] != dpp_api::GamepadConnectionState::UNAVAILABLE) {
-                        // Base index determined!
-                        hw_info.hardware_bus += i;
-                        hw_info.is_hardware_bus_implied = false;
-
-                        if (i > 0)
-                        {
-                            dpp_comms->changeHardwareBus(hw_info.hardware_bus);
-
-                            {
-                                std::lock_guard<std::recursive_mutex> lock(mutex);
-                                std::string newName = hw_info.getName();
-                                if (newName != initial_device_name) {
-                                    assert(updated_device_name.empty());
-                                    updated_device_name = std::move(newName);
-                                }
-
-                                if (on_hw_index_changed) {
-                                    on_hw_index_changed();
-                                }
-                            }
-                        }
-
-                        hwVerified = (
-                            hw_info.hardware_bus < gamepads.size() &&
-                            gamepads[hw_info.hardware_bus] != dpp_api::GamepadConnectionState::UNAVAILABLE
-                        );
-
-                        break;
-                    }
-                }
-            }
-
-            if (!hwVerified) {
                 WARN_LOG(
                     INPUT,
                     "DreamPicoPort[%s]: Hardware bus lookup failed",
                     getLocDesc().c_str()
                 );
             }
-
-            NOTICE_LOG(INPUT, "DreamPicoPort[%s] API connected", getLocDesc().c_str());
         } else {
             update_required = dpp_comms->isUpdateRequired();
             dpp_comms.reset();
