@@ -156,7 +156,7 @@ static DreamPicoPort::HardwareInfo parse_hw_info(JNIEnv *env, int id, const std:
 		hwInfo.is_single_device = false;
 	}
 
-	// TODO: Need to interrogate what interfaces the USB device has
+	// TODO: Need to interrogate what interfaces the USB device has - this will require permission
 
 	return hwInfo;
 }
