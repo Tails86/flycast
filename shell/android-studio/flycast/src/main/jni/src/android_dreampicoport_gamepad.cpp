@@ -171,7 +171,8 @@ AndroidDreamPicoPortGamepad::AndroidDreamPicoPortGamepad(
 	const std::vector<int>& halfAxes,
 	jobject device
 ) :
-	AndroidGamepadDevice(
+	DreamLinkAndroidGamepad(
+		std::make_shared<DreamPicoPort>(maple_port, parse_hw_info(env, id, name)),
 		maple_port,
 		id,
 		name,
@@ -179,7 +180,7 @@ AndroidDreamPicoPortGamepad::AndroidDreamPicoPortGamepad(
 		fullAxes,
 		halfAxes
 	),
-	dpp(std::make_shared<DreamPicoPort>(maple_port, parse_hw_info(env, id, name)))
+	dpp(std::dynamic_pointer_cast<DreamPicoPort>(dreamlink))
 {
 	// The name will be the main device name, not the specific gamepad name
 	// e.x. "OrangeFox86 DreamPicoPort-E66141040371972A v1.2.4"

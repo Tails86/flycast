@@ -18,7 +18,7 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "android_gamepad.h"
-#include "android_dreampicoport_gamepad.h"
+#include "dreamlink_android_gamepad.h"
 #include "android_keyboard.h"
 #include "ui/vgamepad.h"
 #include "cfg/option.h"
@@ -113,8 +113,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_hollycast_emulator_periph_InputDe
 	jint productId
 )
 {
-	// Only DreamPicoPort devices currently need permission
-	return AndroidDreamPicoPortGamepad::identify(vendorId, productId);
+	return DreamLinkAndroidGamepad::isPermissionRequired(vendorId, productId);
 }
 
 extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_joystickAdded(
@@ -153,8 +152,19 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 		std::vector<int> half = jni::IntArray(halfAxes, false);
 
 		std::shared_ptr<AndroidGamepadDevice> gamepad;
-		if (AndroidDreamPicoPortGamepad::identify(vendorId, productId)) {
-			gamepad = std::make_shared<AndroidDreamPicoPortGamepad>(env, maple_port, id, joyname.c_str(), unique_id.c_str(), full, half, device);
+		if (DreamLinkAndroidGamepad::isDreamLinkGamepad(vendorId, productId)) {
+			gamepad = createDreamLinkAndroidGamepad(
+				env,
+				maple_port,
+				id,
+				joyname.c_str(),
+				unique_id.c_str(),
+				full,
+				half,
+				vendorId,
+				productId,
+				device
+			);
 		}
 		else {
 			gamepad = std::make_shared<AndroidGamepadDevice>(maple_port, id, joyname.c_str(), unique_id.c_str(), full, half);

@@ -18,11 +18,11 @@
 */
 #pragma once
 
-#include "android_gamepad.h"
+#include "dreamlink_android_gamepad.h"
 
 #include <memory>
 
-class AndroidDreamPicoPortGamepad : public AndroidGamepadDevice
+class AndroidDreamPicoPortGamepad : public DreamLinkAndroidGamepad
 {
 public:
 	AndroidDreamPicoPortGamepad(
