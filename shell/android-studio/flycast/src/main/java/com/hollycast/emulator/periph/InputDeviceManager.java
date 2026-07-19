@@ -1,11 +1,18 @@
 package com.hollycast.emulator.periph;
 
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.Context;
 import android.hardware.input.InputManager;
 import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.view.InputDevice;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbManager;
 
 import com.hollycast.emulator.Emulator;
 
@@ -21,10 +28,17 @@ import org.apache.commons.lang3.ArrayUtils;
 public final class InputDeviceManager implements InputManager.InputDeviceListener {
     public static final int VIRTUAL_GAMEPAD_ID = 0x12345678;
 
+    private static final String ACTION_USB_PERMISSION = "com.hollycast.emulator.USB_PERMISSION";
+
     static { System.loadLibrary("Hollycast"); }
     private static final InputDeviceManager INSTANCE = new InputDeviceManager();
+    private Context appContext;
     private InputManager inputManager;
+    private UsbManager usbManager;
     private int maple_port = 0;
+
+    private final Set<String> pendingPermissionRequests = new HashSet<>();
+    private boolean receiverRegistered = false;
 
     private boolean hasTouchscreen = false;
 
@@ -36,6 +50,32 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
     private Map<Integer, VibrationParams> vibParams = new HashMap<>();
     private Set<Integer> knownDevices = new HashSet<>();
 
+    private final BroadcastReceiver usbPermissionReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (ACTION_USB_PERMISSION.equals(intent.getAction())) {
+                synchronized (this) {
+                    UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+                    boolean granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
+
+                    if (device != null) {
+                        pendingPermissionRequests.remove(device.getDeviceName());
+                    }
+
+                    if (granted && device != null) {
+                        permissionGranted(getKnownDeviceIdsByVidPid(device.getVendorId(), device.getProductId()));
+                    }
+
+                    // Only unregister once every in-flight request has been resolved
+                    if (pendingPermissionRequests.isEmpty() && receiverRegistered) {
+                        appContext.unregisterReceiver(this);
+                        receiverRegistered = false;
+                    }
+                }
+            }
+        }
+    };
+
     public InputDeviceManager()
     {
         init();
@@ -43,6 +83,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
 
     public void startListening(Context applicationContext)
     {
+        appContext = applicationContext;
         maple_port = 0;
         hasTouchscreen = applicationContext.getPackageManager().hasSystemFeature("android.hardware.touchscreen");
         if (hasTouchscreen)
@@ -62,15 +103,38 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         }
         inputManager = (InputManager)applicationContext.getSystemService(Context.INPUT_SERVICE);
         inputManager.registerInputDeviceListener(this, null);
+        usbManager = (UsbManager)applicationContext.getSystemService(Context.USB_SERVICE);
     }
 
     public void stopListening()
     {
+        if (receiverRegistered) {
+            appContext.unregisterReceiver(usbPermissionReceiver);
+            receiverRegistered = false;
+        }
+        pendingPermissionRequests.clear();
+
         if (inputManager != null) {
             inputManager.unregisterInputDeviceListener(this);
             inputManager = null;
         }
         joystickRemoved(VIRTUAL_GAMEPAD_ID);
+    }
+
+    private void ensureReceiverRegistered() {
+        if (receiverRegistered) {
+            return;
+        }
+
+        IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            appContext.registerReceiver(usbPermissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            appContext.registerReceiver(usbPermissionReceiver, filter);
+        }
+
+        receiverRegistered = true;
     }
 
     @Override
@@ -229,6 +293,36 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
                 fullAxes.add(range.getAxis());
         }
 
+        int vid = device.getVendorId();
+        int pid = device.getProductId();
+
+        if (isPermissionRequired(vid, pid))
+        {
+            HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
+
+            for (UsbDevice usbDevice : deviceList.values()) {
+                if (usbDevice.getVendorId() == vid && usbDevice.getProductId() == pid) {
+                    String devName = usbDevice.getDeviceName();
+                    if (!usbManager.hasPermission(usbDevice) && !pendingPermissionRequests.contains(devName)) {
+
+                        int flags = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) ? PendingIntent.FLAG_MUTABLE : 0;
+
+                        PendingIntent permissionIntent = PendingIntent.getBroadcast(
+                            appContext,
+                            0,
+                            new Intent(ACTION_USB_PERMISSION),
+                            flags
+                        );
+
+                        pendingPermissionRequests.add(devName);
+                        ensureReceiverRegistered();
+
+                        usbManager.requestPermission(usbDevice, permissionIntent);
+                    }
+                }
+            }
+        }
+
         joystickAdded(
             id,
             device.getName(),
@@ -237,8 +331,8 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
             ArrayUtils.toPrimitive(fullAxes.toArray(new Integer[0])),
             ArrayUtils.toPrimitive(halfAxes.toArray(new Integer[0])),
             getVibrator(id) != null,
-            device.getVendorId(),
-            device.getProductId(),
+            vid,
+            pid,
             device
         );
 
@@ -262,6 +356,28 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         return INSTANCE;
     }
 
+    private int[] getKnownDeviceIdsByVidPid(int vendorId, int productId) {
+        List<Integer> matches = new ArrayList<>();
+
+        for (int id : knownDevices) {
+            InputDevice device = InputDevice.getDevice(id);
+            if (
+                device != null &&
+                device.getVendorId() == vendorId &&
+                device.getProductId() == productId
+            ) {
+                matches.add(id);
+            }
+        }
+
+        int[] result = new int[matches.size()];
+        for (int i = 0; i < result.length; i++) {
+            result[i] = matches.get(i);
+        }
+
+        return result;
+    }
+
     public native void init();
     public native void virtualReleaseAll();
     public native void virtualJoystick(float x, float y);
@@ -271,9 +387,11 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
     public native void mouseEvent(int xpos, int ypos, int buttons);
     public native void mouseScrollEvent(int scrollValue);
     public native void touchMouseEvent(int xpos, int ypos, int buttons);
+    private native boolean isPermissionRequired(int vendorId, int productId);
     private native void joystickAdded(
         int id, String name, int maple_port, String uniqueId, int[] fullAxes, int[] halfAxes, boolean rumbleEnabled,
         int vendorId, int productId, InputDevice device);
+    private native void permissionGranted(int[] ids);
     private native void joystickRemoved(int id);
     public native boolean keyboardEvent(int key, boolean pressed);
     public native void keyboardText(int c);

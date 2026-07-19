@@ -107,6 +107,16 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 	});
 }
 
+extern "C" JNIEXPORT jboolean JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_isPermissionRequired(
+	JNIEnv *env,
+	jint vendorId,
+	jint productId
+)
+{
+	// Only DreamPicoPort devices currently need permission
+	return AndroidDreamPicoPortGamepad::identify(vendorId, productId);
+}
+
 extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_joystickAdded(
 	JNIEnv *env,
 	jobject obj,
@@ -152,6 +162,14 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 		AndroidGamepadDevice::AddAndroidGamepad(gamepad);
 		gamepad->setRumbleEnabled(hasRumble);
 	}
+}
+
+extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_permissionGranted(
+	JNIEnv *env,
+	jintArray ids
+)
+{
+	// TODO: ids represent the input device IDs which potentially now have permission granted
 }
 
 extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_joystickRemoved(JNIEnv *env, jobject obj,
