@@ -37,6 +37,7 @@ public:
 	static bool isDreamLinkGamepad(int vid, int pid);
 	static bool isPermissionRequired(int vid, int pid);
 	void resetMappingToDefault(bool arcade, bool gamepad) override;
+	virtual void permissionGranted(JNIEnv *env, jobject usbManager) = 0;
 
 protected:
 	DreamLinkAndroidGamepad(
@@ -66,5 +67,5 @@ std::shared_ptr<DreamLinkAndroidGamepad> createDreamLinkAndroidGamepad(
 	const std::vector<int>& halfAxes,
 	int vid,
 	int pid,
-	jobject device
+	jobject usbManager
 );

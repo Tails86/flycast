@@ -81,6 +81,10 @@ public:
 		INFO_LOG(INPUT, "Android: Joystick '%s' on port %d disconnected", _name.c_str(), maple_port());
 	}
 
+	int get_android_id() {
+		return android_id;
+	}
+
 	std::shared_ptr<InputMapping> getDefaultMapping() override {
 		if (_name == "SHIELD Remote")
 			return std::make_shared<ShieldRemoteInputMapping>();

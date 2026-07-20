@@ -21,6 +21,8 @@
 #include <input/dreamlink/dreampicoport.h>
 #include <jni.h>
 
+#include <optional>
+
 //! Get number of devices that contain the given serial at the specified ID direction
 //! @param[in] env The Java Native Interface environment object
 //! @param[in] id The ID of the target device
@@ -90,8 +92,131 @@ static int get_serial_count(
 	return count;
 }
 
+jobject findUsbDeviceByVidPidSerial(
+	JNIEnv *env,
+	jobject usbManager,
+	jint targetVid,
+	jint targetPid,
+	const char *targetSerial
+)
+{
+	jclass usbManagerClass = env->GetObjectClass(usbManager);
+	jmethodID getDeviceListMethod = env->GetMethodID(
+			usbManagerClass, "getDeviceList", "()Ljava/util/HashMap;");
+	jobject deviceMap = env->CallObjectMethod(usbManager, getDeviceListMethod);
+
+	if (deviceMap == nullptr) {
+		return nullptr;
+	}
+
+	jclass mapClass = env->GetObjectClass(deviceMap);
+	jmethodID valuesMethod = env->GetMethodID(mapClass, "values", "()Ljava/util/Collection;");
+	jobject valuesCollection = env->CallObjectMethod(deviceMap, valuesMethod);
+
+	jclass collectionClass = env->GetObjectClass(valuesCollection);
+	jmethodID iteratorMethod = env->GetMethodID(
+			collectionClass, "iterator", "()Ljava/util/Iterator;");
+	jobject iterator = env->CallObjectMethod(valuesCollection, iteratorMethod);
+
+	jclass iteratorClass = env->GetObjectClass(iterator);
+	jmethodID hasNextMethod = env->GetMethodID(iteratorClass, "hasNext", "()Z");
+	jmethodID nextMethod = env->GetMethodID(iteratorClass, "next", "()Ljava/lang/Object;");
+
+	jclass usbDeviceClass = env->FindClass("android/hardware/usb/UsbDevice");
+	jmethodID getVendorIdMethod = env->GetMethodID(usbDeviceClass, "getVendorId", "()I");
+	jmethodID getProductIdMethod = env->GetMethodID(usbDeviceClass, "getProductId", "()I");
+	jmethodID getSerialNumberMethod = env->GetMethodID(
+			usbDeviceClass, "getSerialNumber", "()Ljava/lang/String;");
+
+	jobject result = nullptr;
+
+	while (env->CallBooleanMethod(iterator, hasNextMethod)) {
+		jobject device = env->CallObjectMethod(iterator, nextMethod);
+
+		jint vid = env->CallIntMethod(device, getVendorIdMethod);
+		jint pid = env->CallIntMethod(device, getProductIdMethod);
+
+		bool matches = (vid == targetVid && pid == targetPid);
+
+		if (matches && targetSerial != nullptr) {
+			auto deviceSerial = (jstring) env->CallObjectMethod(device, getSerialNumberMethod);
+
+			if (deviceSerial == nullptr) {
+				// Permission not yet granted, or device has no serial — can't match
+				matches = false;
+			} else {
+				const char *serialChars = env->GetStringUTFChars(deviceSerial, nullptr);
+				matches = (strcmp(serialChars, targetSerial) == 0);
+				env->ReleaseStringUTFChars(deviceSerial, serialChars);
+				env->DeleteLocalRef(deviceSerial);
+			}
+		}
+
+		if (matches) {
+			result = device;
+			break;
+		}
+
+		env->DeleteLocalRef(device);
+	}
+
+	env->DeleteLocalRef(usbManagerClass);
+	env->DeleteLocalRef(deviceMap);
+	env->DeleteLocalRef(mapClass);
+	env->DeleteLocalRef(valuesCollection);
+	env->DeleteLocalRef(collectionClass);
+	env->DeleteLocalRef(iterator);
+	env->DeleteLocalRef(iteratorClass);
+	env->DeleteLocalRef(usbDeviceClass);
+
+	// Caller will need to DeleteLocalRef
+	return result;
+}
+
+// Returns the interface ID at position n (0-based) in the sorted list of
+// distinct interface IDs present on the device. Returns -1 if n is out of range.
+static int getNthInterfaceId(JNIEnv *env, jobject usbDevice, int n) {
+    jclass usbDeviceClass = env->GetObjectClass(usbDevice);
+    jmethodID getInterfaceCountMethod = env->GetMethodID(
+            usbDeviceClass, "getInterfaceCount", "()I");
+    jmethodID getInterfaceMethod = env->GetMethodID(
+            usbDeviceClass, "getInterface", "(I)Landroid/hardware/usb/UsbInterface;");
+
+    jint interfaceCount = env->CallIntMethod(usbDevice, getInterfaceCountMethod);
+
+    jclass usbInterfaceClass = env->FindClass("android/hardware/usb/UsbInterface");
+    jmethodID getIdMethod = env->GetMethodID(usbInterfaceClass, "getId", "()I");
+
+    std::vector<jint> interfaceIds;
+    interfaceIds.reserve(interfaceCount);
+
+    for (jint i = 0; i < interfaceCount; i++) {
+        jobject usbInterface = env->CallObjectMethod(usbDevice, getInterfaceMethod, i);
+        jint id = env->CallIntMethod(usbInterface, getIdMethod);
+        interfaceIds.push_back(id);
+        env->DeleteLocalRef(usbInterface);
+    }
+
+    env->DeleteLocalRef(usbDeviceClass);
+    env->DeleteLocalRef(usbInterfaceClass);
+
+    std::sort(interfaceIds.begin(), interfaceIds.end());
+    interfaceIds.erase(std::unique(interfaceIds.begin(), interfaceIds.end()), interfaceIds.end());
+
+    if (n < 0 || n >= static_cast<jint>(interfaceIds.size())) {
+        return -1; // out of range
+    }
+
+    return interfaceIds[n];
+}
+
 //! Only to be called during instantiation to determine hardware information
-static DreamPicoPort::HardwareInfo parse_hw_info(JNIEnv *env, int id, const std::string& name)
+static std::optional<DreamPicoPort::HardwareInfo> parse_hw_info(
+	JNIEnv *env,
+	jobject usbManager,
+	int id,
+	const std::string& name
+)
 {
 	DreamPicoPort::HardwareInfo hwInfo;
 	hwInfo.serial_number = DreamPicoPort::getSerialFromName(name);
@@ -99,28 +224,47 @@ static DreamPicoPort::HardwareInfo parse_hw_info(JNIEnv *env, int id, const std:
 	if (hwInfo.serial_number.empty())
 	{
 		NOTICE_LOG(INPUT, "Failed to retrieve serial from DreamPicoPort name: %s", name.c_str());
-		return hwInfo;
+		return std::nullopt;
+	}
+
+	// Attempt to retrieve the UsbDevice for this serial number
+	jobject usbDev = findUsbDeviceByVidPidSerial(
+		env,
+		usbManager,
+		DreamPicoPort::VID,
+		DreamPicoPort::PID,
+		hwInfo.serial_number.c_str()
+	);
+
+	if (!usbDev)
+	{
+		// Probably don't have permission yet
+		NOTICE_LOG(INPUT, "Failed to retrieve DreamPicoPort UsbDevice for %s", hwInfo.serial_number.c_str());
+		return std::nullopt;
 	}
 
 	jclass inputDeviceClass = env->FindClass("android/view/InputDevice");
 	if (!inputDeviceClass)
 	{
 		NOTICE_LOG(INPUT, "Failed to locate android/view/InputDevice");
-		return hwInfo;
+		env->DeleteLocalRef(usbDev);
+		return std::nullopt;
 	}
 
 	jmethodID getDeviceMethodId = env->GetStaticMethodID(inputDeviceClass, "getDevice", "(I)Landroid/view/InputDevice;");
 	if (!getDeviceMethodId)
 	{
 		NOTICE_LOG(INPUT, "Failed to locate InputDevice.getDevice()");
-		return hwInfo;
+		env->DeleteLocalRef(usbDev);
+		return std::nullopt;
 	}
 
 	jmethodID getNameMethodId = env->GetMethodID(inputDeviceClass, "getName", "()Ljava/lang/String;");
 	if (!getNameMethodId)
 	{
 		NOTICE_LOG(INPUT, "Failed to locate InputDevice.getName()");
-		return hwInfo;
+		env->DeleteLocalRef(usbDev);
+		return std::nullopt;
 	}
 
 	hwInfo.hardware_bus = get_serial_count(
@@ -156,9 +300,37 @@ static DreamPicoPort::HardwareInfo parse_hw_info(JNIEnv *env, int id, const std:
 		hwInfo.is_single_device = false;
 	}
 
-	// TODO: Need to interrogate what interfaces the USB device has - this will require permission
+	// Interfaces 0-3 correspond to the four gamepad ports. If only ports B and D are connected,
+	// their interface IDs would otherwise be seen as 0 and 1; remapping them to their true
+	// slot indices (1 and 3) keeps hardware_bus consistent with the physical port layout.
+	hwInfo.hardware_bus = getNthInterfaceId(env, usbDev, hwInfo.hardware_bus);
+
+	env->DeleteLocalRef(usbDev);
 
 	return hwInfo;
+}
+
+static std::shared_ptr<DreamPicoPort> make_dpp(
+	JNIEnv *env,
+	jobject usbManager,
+	int maple_port,
+	int id,
+	const char *name
+)
+{
+	std::optional<DreamPicoPort::HardwareInfo> hwInfo = parse_hw_info(env, usbManager, id, name);
+
+	if (!hwInfo.has_value())
+	{
+		return nullptr;
+	}
+
+	if (hwInfo->hardware_bus >= 0)
+	{
+		return std::make_shared<DreamPicoPort>(maple_port, hwInfo.value());
+	}
+
+	return nullptr;
 }
 
 AndroidDreamPicoPortGamepad::AndroidDreamPicoPortGamepad(
@@ -169,10 +341,10 @@ AndroidDreamPicoPortGamepad::AndroidDreamPicoPortGamepad(
 	const char *unique_id,
 	const std::vector<int>& fullAxes,
 	const std::vector<int>& halfAxes,
-	jobject device
+	jobject usbManager
 ) :
 	DreamLinkAndroidGamepad(
-		std::make_shared<DreamPicoPort>(maple_port, parse_hw_info(env, id, name)),
+		make_dpp(env, usbManager, maple_port, id, name),
 		maple_port,
 		id,
 		name,
@@ -180,38 +352,51 @@ AndroidDreamPicoPortGamepad::AndroidDreamPicoPortGamepad(
 		fullAxes,
 		halfAxes
 	),
-	dpp(std::dynamic_pointer_cast<DreamPicoPort>(dreamlink))
+	dpp(std::dynamic_pointer_cast<DreamPicoPort>(dreamlink)),
+	android_name(name)
 {
 	// The name will be the main device name, not the specific gamepad name
 	// e.x. "OrangeFox86 DreamPicoPort-E66141040371972A v1.2.4"
 
-	assert(dpp != nullptr);
-	_name = dpp->getName();
+	if (dpp) {
+		_name = dpp->getName();
 
-	const DreamPicoPort::HardwareInfo& hw_info = dpp->getHardwareInfo();
+		const DreamPicoPort::HardwareInfo& hw_info = dpp->getHardwareInfo();
 
-	if (!hw_info.serial_number.empty()) {
-		// TODO: need to handle sort ID
-		// Ensure this is ordered by product name, serial, and port char
-		// _sort_id = (
-		// 	hw_info.getProductName() + std::string("_") +
-		// 	hw_info.serial_number + std::string("_") +
-		// 	std::string(1, hw_info.getPortChar())
-		// );
-		// Locking to name, which includes A-D, plus serial number will ensure correct enumeration every time
-		_unique_id = hw_info.getName("", true) + std::string("_") + hw_info.serial_number;
-		// Reload mapping now that unique ID changed
-		loadMapping();
+		if (!hw_info.serial_number.empty()) {
+			// TODO: need to handle sort ID
+			// Ensure this is ordered by product name, serial, and port char
+			// _sort_id = (
+			// 	hw_info.getProductName() + std::string("_") +
+			// 	hw_info.serial_number + std::string("_") +
+			// 	std::string(1, hw_info.getPortChar())
+			// );
+			// Locking to name, which includes A-D, plus serial number will ensure correct enumeration every time
+			_unique_id = hw_info.getName("", true) + std::string("_") + hw_info.serial_number;
+			// Reload mapping now that unique ID changed
+			loadMapping();
+		}
+
+		int bus = dpp->getDefaultBus();
+		if (DreamLink::isValidBus(bus))
+			set_maple_port(bus);
 	}
-
-	int bus = dpp->getDefaultBus();
-	if (DreamLink::isValidBus(bus))
-		set_maple_port(bus);
 }
 
 // Need to define destructor in source because DreamPicoPort has a forward declaration
 AndroidDreamPicoPortGamepad::~AndroidDreamPicoPortGamepad()
 {
+}
+
+void AndroidDreamPicoPortGamepad::permissionGranted(JNIEnv *env, jobject usbManager)
+{
+	if (!dpp) {
+		// Try to recreate the device and update parent if this was successful
+		dpp = make_dpp(env, usbManager, maple_port(), get_android_id(), android_name.c_str());
+		if (dpp) {
+			updateDreamLink(dpp);
+		}
+	}
 }
 
 bool AndroidDreamPicoPortGamepad::identify(int vendorId, int productId)

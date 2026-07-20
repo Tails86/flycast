@@ -194,7 +194,7 @@ std::shared_ptr<DreamLinkAndroidGamepad> createDreamLinkAndroidGamepad(
 	const std::vector<int>& halfAxes,
 	int vid,
 	int pid,
-	jobject device
+	jobject usbManager
 )
 {
 	if (AndroidDreamPicoPortGamepad::identify(vid, pid))
@@ -206,7 +206,7 @@ std::shared_ptr<DreamLinkAndroidGamepad> createDreamLinkAndroidGamepad(
 			unique_id,
 			fullAxes,
 			halfAxes,
-			device
+			usbManager
 		);
 	return nullptr;
 }

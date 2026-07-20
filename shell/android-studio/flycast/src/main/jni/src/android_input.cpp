@@ -128,7 +128,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 	jboolean hasRumble,
 	jint vendorId,
 	jint productId,
-	jobject device
+	jobject usbManager
 )
 {
 	if (id == 0)
@@ -163,7 +163,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 				half,
 				vendorId,
 				productId,
-				device
+				usbManager
 			);
 		}
 		else {
@@ -176,10 +176,18 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 
 extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_permissionGranted(
 	JNIEnv *env,
-	jintArray ids
+	jintArray ids,
+	jobject usbManager
 )
 {
-	// TODO: ids represent the input device IDs which potentially now have permission granted
+	std::vector<int> idVec = jni::IntArray(ids, false);
+	for (int id : idVec) {
+		std::shared_ptr<AndroidGamepadDevice> device = AndroidGamepadDevice::GetAndroidGamepad(id);
+		std::shared_ptr<DreamLinkAndroidGamepad> dreamLinkDevice = std::dynamic_pointer_cast<DreamLinkAndroidGamepad>(device);
+		if (dreamLinkDevice) {
+			dreamLinkDevice->permissionGranted(env, usbManager);
+		}
+	}
 }
 
 extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_joystickRemoved(JNIEnv *env, jobject obj,

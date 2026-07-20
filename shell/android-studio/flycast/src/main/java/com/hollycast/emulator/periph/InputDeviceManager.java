@@ -63,7 +63,10 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
                     }
 
                     if (granted && device != null) {
-                        permissionGranted(getKnownDeviceIdsByVidPid(device.getVendorId(), device.getProductId()));
+                        permissionGranted(
+                            getKnownDeviceIdsByVidPid(device.getVendorId(), device.getProductId()),
+                            usbManager
+                        );
                     }
 
                     // Only unregister once every in-flight request has been resolved
@@ -333,7 +336,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
             getVibrator(id) != null,
             vid,
             pid,
-            device
+            usbManager
         );
 
         knownDevices.add(id);
@@ -390,8 +393,8 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
     private native boolean isPermissionRequired(int vendorId, int productId);
     private native void joystickAdded(
         int id, String name, int maple_port, String uniqueId, int[] fullAxes, int[] halfAxes, boolean rumbleEnabled,
-        int vendorId, int productId, InputDevice device);
-    private native void permissionGranted(int[] ids);
+        int vendorId, int productId, UsbManager usbManager);
+    private native void permissionGranted(int[] ids, UsbManager usbManager);
     private native void joystickRemoved(int id);
     public native boolean keyboardEvent(int key, boolean pressed);
     public native void keyboardText(int c);

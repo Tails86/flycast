@@ -33,12 +33,15 @@ public:
 		const char *unique_id,
 		const std::vector<int>& fullAxes,
 		const std::vector<int>& halfAxes,
-		jobject device
+		jobject usbManager
 	);
 	~AndroidDreamPicoPortGamepad();
+
+	void permissionGranted(JNIEnv *env, jobject usbManager) override;
 
 	static bool identify(int vendorId, int productId);
 
 private:
-	const std::shared_ptr<class DreamPicoPort> dpp;
+	std::shared_ptr<class DreamPicoPort> dpp;
+	const std::string android_name;
 };
