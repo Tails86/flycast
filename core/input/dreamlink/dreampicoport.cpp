@@ -211,6 +211,7 @@ public:
     {
         std::lock_guard<std::mutex> lock(all_dpp_api_devices_mutex);
 
+        // TODO: connect using sys_dev file pointer if provided
         auto iter = all_dpp_api_devices.find(serial_number);
         if (iter != all_dpp_api_devices.end()) {
             dpp_api_device = iter->second.lock();
@@ -1251,7 +1252,7 @@ void DreamPicoPort::internalConnect() {
     // Attempt to connect to new API
     if (!hw_info.serial_number.empty()) {
         dpp_comms = std::make_unique<ApiDreamPicoPortComms>(
-            hw_info.serial_number,
+            hw_info.serial_number, // TODO: connect using sys_dev if found
             software_bus,
             hw_info.hardware_bus
         );

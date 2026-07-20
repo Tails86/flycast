@@ -42,6 +42,8 @@ public:
         bool is_single_device = true;
         //! The located serial number of this device or empty string if could not be found
         std::string serial_number;
+        //! When set to a positive integer, this is the file descriptor that must be passed to libusb
+        intptr_t sys_dev = -1;
 
         //! @return The hardware port character identifier
         char getPortChar() const;

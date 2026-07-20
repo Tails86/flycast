@@ -203,7 +203,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 	else {
 		std::shared_ptr<AndroidGamepadDevice> device = AndroidGamepadDevice::GetAndroidGamepad(id);
 		if (device)
-			AndroidGamepadDevice::RemoveAndroidGamepad(device);
+			AndroidGamepadDevice::RemoveAndroidGamepad(env, device);
 	}
 }
 
@@ -298,7 +298,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 	touchMouse->setButton(Mouse::MIDDLE_BUTTON, (buttons & 4) != 0);
 }
 
-void input_term()
+void input_term(JNIEnv *env)
 {
 	GamepadDevice::Unregister(mouse);
 	mouse.reset();
@@ -308,5 +308,5 @@ void input_term()
 	keyboard.reset();
 	GamepadDevice::Unregister(virtualGamepad);
 	virtualGamepad.reset();
-	AndroidGamepadDevice::RemoveAll();
+	AndroidGamepadDevice::RemoveAll(env);
 }

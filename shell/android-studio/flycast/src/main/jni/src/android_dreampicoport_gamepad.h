@@ -20,6 +20,8 @@
 
 #include "dreamlink_android_gamepad.h"
 
+#include <jni.h>
+
 #include <memory>
 
 class AndroidDreamPicoPortGamepad : public DreamLinkAndroidGamepad
@@ -37,11 +39,12 @@ public:
 	);
 	~AndroidDreamPicoPortGamepad();
 
+	void close(JNIEnv *env) override;
 	void permissionGranted(JNIEnv *env, jobject usbManager) override;
 
 	static bool identify(int vendorId, int productId);
 
 private:
-	std::shared_ptr<class DreamPicoPort> dpp;
+	std::shared_ptr<class AndroidDreamPicoPort> dpp;
 	const std::string android_name;
 };

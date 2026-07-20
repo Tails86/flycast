@@ -37,6 +37,7 @@ public:
 	static bool isDreamLinkGamepad(int vid, int pid);
 	static bool isPermissionRequired(int vid, int pid);
 	void resetMappingToDefault(bool arcade, bool gamepad) override;
+	void close(JNIEnv *env) override;
 	virtual void permissionGranted(JNIEnv *env, jobject usbManager) = 0;
 
 protected:

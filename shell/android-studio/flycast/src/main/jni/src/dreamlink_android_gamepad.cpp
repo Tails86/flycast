@@ -47,24 +47,6 @@
 
 DreamLinkAndroidGamepad::~DreamLinkAndroidGamepad()
 {
-	if (dreamlink != nullptr)
-	{
-		const char* const name = dreamlink->getProductName();
-		dreamlink->term();
-		dreamlink.reset();
-
-		if (!gui_is_open()) {
-			if (!settings.network.online) {
-				// Make sure settings are open in case disconnection happened mid-game
-				gui_open_settings();
-			} else {
-				// While connected online, just pop up a toast
-				char buffer[128];
-				snprintf(buffer, sizeof(buffer), i18n::T("%s was disconnected"), name);
-				os_notify(buffer, 6000);
-			}
-		}
-	}
 }
 
 bool DreamLinkAndroidGamepad::isDreamLinkGamepad(int vid, int pid)
@@ -142,6 +124,29 @@ void DreamLinkAndroidGamepad::resetMappingToDefault(bool arcade, bool gamepad) {
 	if (input_mapper) {
 		setCustomMapping(input_mapper);
 		setBaseDefaultMapping(input_mapper);
+	}
+}
+
+void DreamLinkAndroidGamepad::close(JNIEnv *env)
+{
+	AndroidGamepadDevice::close(env);
+	if (dreamlink != nullptr)
+	{
+		const char* const name = dreamlink->getProductName();
+		dreamlink->term();
+		dreamlink.reset();
+
+		if (!gui_is_open()) {
+			if (!settings.network.online) {
+				// Make sure settings are open in case disconnection happened mid-game
+				gui_open_settings();
+			} else {
+				// While connected online, just pop up a toast
+				char buffer[128];
+				snprintf(buffer, sizeof(buffer), i18n::T("%s was disconnected"), name);
+				os_notify(buffer, 6000);
+			}
+		}
 	}
 }
 

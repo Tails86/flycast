@@ -81,6 +81,8 @@ public:
 		INFO_LOG(INPUT, "Android: Joystick '%s' on port %d disconnected", _name.c_str(), maple_port());
 	}
 
+	virtual void close(JNIEnv *env) {}
+
 	int get_android_id() {
 		return android_id;
 	}
@@ -202,16 +204,19 @@ public:
 		GamepadDevice::Register(gamepad);
 	};
 
-	static void RemoveAndroidGamepad(std::shared_ptr<AndroidGamepadDevice> gamepad)
+	static void RemoveAndroidGamepad(JNIEnv *env, std::shared_ptr<AndroidGamepadDevice> gamepad)
 	{
+		gamepad->close(env);
 		android_gamepads.erase(gamepad->android_id);
 		GamepadDevice::Unregister(gamepad);
 	};
 
-	static void RemoveAll()
+	static void RemoveAll(JNIEnv *env)
 	{
-		for (auto [id, gamepad] : android_gamepads)
+		for (auto [id, gamepad] : android_gamepads) {
+			gamepad->close(env);
 			GamepadDevice::Unregister(gamepad);
+		}
 		android_gamepads.clear();
 	}
 
