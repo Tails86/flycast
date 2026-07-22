@@ -205,14 +205,13 @@ class ApiDreamPicoPortComms
 public:
     ApiDreamPicoPortComms() = delete;
 
-    ApiDreamPicoPortComms(const std::string& serial_number, int software_bus, int hardware_bus) :
+    ApiDreamPicoPortComms(const DreamPicoPort::HardwareInfo& hw_info, int software_bus) :
         software_bus(software_bus),
         hardware_bus(hardware_bus)
     {
         std::lock_guard<std::mutex> lock(all_dpp_api_devices_mutex);
 
-        // TODO: connect using sys_dev file pointer if provided
-        auto iter = all_dpp_api_devices.find(serial_number);
+        auto iter = all_dpp_api_devices.find(hw_info.serial_number);
         if (iter != all_dpp_api_devices.end()) {
             dpp_api_device = iter->second.lock();
             if (!dpp_api_device) {
@@ -222,13 +221,13 @@ public:
         }
 
         if (!dpp_api_device) {
-            dpp_api_device = makeNewDppDevice(serial_number);
+            dpp_api_device = makeNewDppDevice(hw_info);
             if (!dpp_api_device) {
                 return; // Failed to make the new device
             }
 
             // Save this instance to the map
-            all_dpp_api_devices.insert(std::make_pair(serial_number, dpp_api_device));
+            all_dpp_api_devices.insert(std::make_pair(hw_info.serial_number, dpp_api_device));
         }
         else if (!dpp_api_device->isConnected()) {
             // Note: it is possible to reach here if DreamPicoPort is connected, removed from USB, and then reattached
@@ -361,15 +360,24 @@ public:
     }
 
 private:
-    std::shared_ptr<dpp_api::DppDevice> makeNewDppDevice(const std::string& serial_number)
+    std::shared_ptr<dpp_api::DppDevice> makeNewDppDevice(const DreamPicoPort::HardwareInfo& hw_info)
     {
         std::shared_ptr<dpp_api::DppDevice> newDev;
-        dpp_api::DppDevice::Filter dppFilter;
-        dppFilter.serial = serial_number;
-        newDev = dpp_api::DppDevice::find(dppFilter);
-        if (!newDev) {
+
+        if (hw_info.sys_dev >= 0)
+        {
+            newDev = dpp_api::DppDevice::open(hw_info.sys_dev);
+        }
+        else
+        {
+            dpp_api::DppDevice::Filter dppFilter;
+            dppFilter.serial = hw_info.serial_number;
             dppFilter.minBcdDevice = 0;
+
             newDev = dpp_api::DppDevice::find(dppFilter);
+        }
+
+        if (!newDev || newDev->getVersion() < std::array<std::uint8_t, 3>{1,2,1}) {
             if (newDev) {
                 upgrade_required = true;
                 std::array<std::uint8_t, 3> ver = newDev->getVersion();
@@ -378,7 +386,7 @@ private:
                     "DreamPicoPort[%s] API connect failed: device with serial \"%s\" uses version %i.%i.%i\n"
                     "Update DreamPicoPort firmware to version 1.2.1 or later to enable peripheral connection",
                     getLocDesc().c_str(),
-                    serial_number.c_str(),
+                    hw_info.serial_number.c_str(),
                     static_cast<int>(ver[0]),
                     static_cast<int>(ver[1]),
                     static_cast<int>(ver[2])
@@ -389,7 +397,7 @@ private:
                     INPUT,
                     "DreamPicoPort[%s] API connect failed: find failed for serial %s",
                     getLocDesc().c_str(),
-                    serial_number.c_str()
+                    hw_info.serial_number.c_str()
                 );
             }
 
@@ -1251,11 +1259,7 @@ void DreamPicoPort::internalConnect() {
 
     // Attempt to connect to new API
     if (!hw_info.serial_number.empty()) {
-        dpp_comms = std::make_unique<ApiDreamPicoPortComms>(
-            hw_info.serial_number, // TODO: connect using sys_dev if found
-            software_bus,
-            hw_info.hardware_bus
-        );
+        dpp_comms = std::make_unique<ApiDreamPicoPortComms>(hw_info, software_bus);
 
         if (dpp_comms->isConnected() && dpp_comms->initialize(timeout_ms)) {
             // Connected and initialized!
