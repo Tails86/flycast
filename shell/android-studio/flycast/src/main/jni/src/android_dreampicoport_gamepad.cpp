@@ -405,6 +405,13 @@ static std::shared_ptr<AndroidDreamPicoPort> make_dpp(
 	{
 		return std::make_shared<AndroidDreamPicoPort>(maple_port, hwInfo.value());
 	}
+	else
+	{
+		if (hwInfo->usb_device_connection)
+		{
+			env->DeleteGlobalRef(hwInfo->usb_device_connection);
+		}
+	}
 
 	return nullptr;
 }
@@ -467,8 +474,10 @@ AndroidDreamPicoPortGamepad::~AndroidDreamPicoPortGamepad()
 void AndroidDreamPicoPortGamepad::close(JNIEnv *env)
 {
 	DreamLinkAndroidGamepad::close(env);
-	dpp->close(env);
-	dpp.reset();
+	if (dpp) {
+		dpp->close(env);
+		dpp.reset();
+	}
 }
 
 void AndroidDreamPicoPortGamepad::permissionGranted(JNIEnv *env, jobject usbManager)
