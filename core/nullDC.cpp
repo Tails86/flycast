@@ -19,12 +19,20 @@
 #include "stdclass.h"
 #include "serialize.h"
 #include "oslib/i18n.h"
+<<<<<<< HEAD
 #include "input/maplelinkregistry.h"
 #include <time.h>
+=======
+#include "input/maplelink.h"
+>>>>>>> flycast/dev
 #ifdef TARGET_UWP
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.Foundation.h>
 #endif
+
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 
 static std::string lastStateFile;
 static time_t lastStateTime;

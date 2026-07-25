@@ -18,6 +18,7 @@
     along with reicast.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "gui_util.h"
+<<<<<<< HEAD
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -26,6 +27,8 @@
 #include <cctype>
 #include <ctime>
 
+=======
+>>>>>>> flycast/dev
 #include "types.h"
 #include "stdclass.h"
 #include "oslib/oslib.h"
@@ -43,6 +46,13 @@
 #include "stdclass.h"
 #include "rend/osd.h"
 #include <stb_image.h>
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <future>
+#include <string>
+#include <vector>
 
 using namespace i18n;
 

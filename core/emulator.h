@@ -29,8 +29,12 @@
 #include <mutex>
 #include <utility>
 #include <vector>
+<<<<<<< HEAD
 #include <chrono>
 #include <time.h>
+=======
+#include <ctime>
+>>>>>>> flycast/dev
 
 void loadGameSpecificSettings();
 void SaveSettings();

@@ -12,8 +12,12 @@
 #include <vector>
 #include <functional>
 #include <cassert>
+<<<<<<< HEAD
 #include <map>
 #include <time.h>
+=======
+#include <ctime>
+>>>>>>> flycast/dev
 
 #if defined(__ANDROID__)
 #undef PAGE_MASK
