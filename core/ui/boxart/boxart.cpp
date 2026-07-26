@@ -26,7 +26,9 @@
 #include "arcade_scraper.h"
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <memory>
+#include <mutex>
 #include <unordered_set>
 
 namespace {

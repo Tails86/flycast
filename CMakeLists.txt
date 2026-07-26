@@ -49,6 +49,11 @@ else()
 	project(Hollycast)
 endif()
 
+option(FLYCAST_PRESEED_DARWIN_XCODE_CHECKS "Pre-seed stable macOS feature checks for faster Xcode generation" ON)
+if(FLYCAST_PRESEED_DARWIN_XCODE_CHECKS)
+	include(DarwinXcodeProbeCache)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(CMAKE_SYSTEM_NAME MATCHES "NetBSD|Haiku" OR NINTENDO_SWITCH)
@@ -86,6 +91,7 @@ option(USE_HOST_SDL "Use host SDL library" ${USE_HOST_SDL_DEFAULT})
 option(USE_HOST_LIBCHDR "Use host libchdr" OFF)
 option(USE_OPENMP "Use OpenMP if available" ON)
 option(USE_VULKAN "Build with Vulkan support" ON)
+set(MOLTENVK_DYLIB "" CACHE FILEPATH "Path to macOS MoltenVK dylib for macOS Vulkan builds")
 option(USE_DX9 "Build with Direct3D 9 support" ON)
 option(USE_DX11 "Build with Direct3D 11 support" ON)
 option(LIBRETRO "Build libretro core" OFF)
@@ -1415,26 +1421,15 @@ if(NOT LIBRETRO)
 				${IOSURFACE_LIBRARY}
 				${MULTITOUCH_SUPPORT_LIBRARY})
 
-			# Determine the source path of MoltenVK
-			if(NOT "$ENV{VULKAN_SDK}" STREQUAL "")
-				message(STATUS "Searching for MoltenVK under VULKAN_SDK: $ENV{VULKAN_SDK}")
-				set(MOLTENVK_SRC "$ENV{VULKAN_SDK}/lib/libMoltenVK.dylib")
-			else()
-				# Fallback assumption (default location after: brew install molten-vk)
-				set(MOLTENVK_SRC "/usr/local/lib/libMoltenVK.dylib")
+			if(USE_VULKAN)
+				set(MOLTENVK_DYLIB_PATH "${MOLTENVK_DYLIB}")
+				if(NOT MOLTENVK_DYLIB_PATH OR NOT EXISTS "${MOLTENVK_DYLIB_PATH}")
+					message(FATAL_ERROR "A macOS MoltenVK dylib is required for macOS Vulkan builds. Run shell/apple/generate_xcode_project.command to download the configured MoltenVK release, or pass -DMOLTENVK_DYLIB=/path/to/libMoltenVK.dylib.")
+				endif()
+				add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+					COMMAND ${CMAKE_COMMAND} -E copy "${MOLTENVK_DYLIB_PATH}"
+					$<TARGET_FILE_DIR:flycast>/../Frameworks/libMoltenVK.dylib)
 			endif()
-
-			if(NOT EXISTS "${MOLTENVK_SRC}")
-				message(
-					FATAL_ERROR
-					"MoltenVK library not found! Set VULKAN_SDK in environment or install with: brew install molten-vk"
-				)
-			endif()
-			message(STATUS "Found MoltenVK at: ${MOLTENVK_SRC}")
-
-			add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E copy "${MOLTENVK_SRC}"
-				$<TARGET_FILE_DIR:Hollycast>/../Frameworks/libvulkan.dylib)
 		endif()
 	elseif(UNIX)
 		if(NOT BUILD_TESTING)
