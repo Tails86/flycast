@@ -239,6 +239,7 @@ int hexValue(char c)
 
 std::string decodeUriComponent(const std::string& value)
 {
+	// Android SAF encodes document IDs in URIs: "primary%3ARoms%2Fcovers" becomes "primary:Roms/covers".
 	std::string decoded;
 	decoded.reserve(value.size());
 	for (size_t i = 0; i < value.size(); ++i)
@@ -261,6 +262,7 @@ std::string decodeUriComponent(const std::string& value)
 
 std::string getAndroidDocumentId(const std::string& uri, const char* marker)
 {
+	// The shared media scanner uses this only for Android Storage Access Framework content:// URIs.
 	const std::string decoded = decodeUriComponent(uri);
 	const size_t markerPos = decoded.find(marker);
 	if (markerPos == std::string::npos)
