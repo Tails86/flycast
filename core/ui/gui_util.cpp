@@ -18,17 +18,6 @@
     along with reicast.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "gui_util.h"
-<<<<<<< HEAD
-#include <string>
-#include <vector>
-#include <algorithm>
-#include <cstdlib>
-#include <cstring>
-#include <cctype>
-#include <ctime>
-
-=======
->>>>>>> flycast/dev
 #include "types.h"
 #include "stdclass.h"
 #include "oslib/oslib.h"

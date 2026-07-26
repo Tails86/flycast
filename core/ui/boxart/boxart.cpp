@@ -26,8 +26,9 @@
 #include "arcade_scraper.h"
 #include <atomic>
 #include <chrono>
-<<<<<<< HEAD
+#include <future>
 #include <memory>
+#include <mutex>
 #include <unordered_set>
 
 namespace {
@@ -215,11 +216,6 @@ void scrapePhysicalBoxart(std::vector<GameBoxart>& boxart, const std::string& sa
 }
 
 } // namespace
-=======
-#include <future>
-#include <memory>
-#include <mutex>
->>>>>>> flycast/dev
 
 GameBoxart Boxart::getBoxart(const GameMedia& media)
 {

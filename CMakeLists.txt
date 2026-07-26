@@ -1421,28 +1421,6 @@ if(NOT LIBRETRO)
 				${IOSURFACE_LIBRARY}
 				${MULTITOUCH_SUPPORT_LIBRARY})
 
-<<<<<<< HEAD
-			# Determine the source path of MoltenVK
-			if(NOT "$ENV{VULKAN_SDK}" STREQUAL "")
-				message(STATUS "Searching for MoltenVK under VULKAN_SDK: $ENV{VULKAN_SDK}")
-				set(MOLTENVK_SRC "$ENV{VULKAN_SDK}/lib/libMoltenVK.dylib")
-			else()
-				# Fallback assumption (default location after: brew install molten-vk)
-				set(MOLTENVK_SRC "/usr/local/lib/libMoltenVK.dylib")
-			endif()
-
-			if(NOT EXISTS "${MOLTENVK_SRC}")
-				message(
-					FATAL_ERROR
-					"MoltenVK library not found! Set VULKAN_SDK in environment or install with: brew install molten-vk"
-				)
-			endif()
-			message(STATUS "Found MoltenVK at: ${MOLTENVK_SRC}")
-
-			add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E copy "${MOLTENVK_SRC}"
-				$<TARGET_FILE_DIR:Hollycast>/../Frameworks/libvulkan.dylib)
-=======
 			if(USE_VULKAN)
 				set(MOLTENVK_DYLIB_PATH "${MOLTENVK_DYLIB}")
 				if(NOT MOLTENVK_DYLIB_PATH OR NOT EXISTS "${MOLTENVK_DYLIB_PATH}")
@@ -1452,7 +1430,6 @@ if(NOT LIBRETRO)
 					COMMAND ${CMAKE_COMMAND} -E copy "${MOLTENVK_DYLIB_PATH}"
 					$<TARGET_FILE_DIR:flycast>/../Frameworks/libMoltenVK.dylib)
 			endif()
->>>>>>> flycast/dev
 		endif()
 	elseif(UNIX)
 		if(NOT BUILD_TESTING)

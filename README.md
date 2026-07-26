@@ -41,57 +41,7 @@ Hollycast aims to support every platform and release offered by Flycast. If Flyc
 
 ### Build Prerequisites for Linux
 
-<<<<<<< HEAD
 Run the following to install all prerequisites.
-=======
-3. Run Flycast:
-
-`flatpak run org.flycast.Flycast`
-
-### Homebrew (macOS ![apple logo](https://flyinghead.github.io/flycast-builds/apple.png))
-
-1. [Set up Homebrew](https://brew.sh).
-
-2. Install Flycast via Homebrew:
-
-`brew install --cask flycast`
-
-### iOS
-
-Due to persistent harassment from an iOS user, support for this platform has been dropped.
-
-### Xbox One/Series ![xbox logo](https://flyinghead.github.io/flycast-builds/xbox.png)
-
-Grab the latest build from [**the builds page**](https://flyinghead.github.io/flycast-builds/), or the [**GitHub Actions**](https://github.com/flyinghead/flycast/actions/workflows/uwp.yml). Then install it using the **Xbox Device Portal**.
-
-## Build from source
-
-### macOS
-
-Right-click the bootstrap script and choose **Open**:
-
-`shell/apple/generate_xcode_project.command`
-
-### Windows
-
-Double-click the bootstrap script:
-
-`shell\windows\generate_vs_project.bat`
-
-### Linux
-
-#### Dependencies
-
-- **C/C++ compiler toolchain** (e.g. `gcc`/`g++`)
-- **CMake**
-- **make**
-- **libcurl** (development headers)
-- **libudev** (development headers)
-- **SDL2** (development headers)
-- **Graphics API**: Vulkan, OpenGL
-
-#### Build
->>>>>>> flycast/dev
 
 ```
 sudo apt-get update

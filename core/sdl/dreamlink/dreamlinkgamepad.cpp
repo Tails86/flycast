@@ -25,11 +25,8 @@
 #include "hw/maple/maple_devs.h"
 #include "ui/gui.h"
 #include "oslib/i18n.h"
-<<<<<<< HEAD:core/sdl/dreamlink/dreamlinkgamepad.cpp
 #include "oslib/oslib.h"
 #include <cfg/option.h>
-=======
->>>>>>> flycast/dev:core/sdl/dreamlink.cpp
 #include <SDL.h>
 #include <memory>
 

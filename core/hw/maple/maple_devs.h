@@ -362,7 +362,6 @@ struct RFIDReaderWriter : public BaseMIE
 	static std::shared_ptr<maple_device> Create();
 };
 
-<<<<<<< HEAD
 //
 // Specific Devices
 //
@@ -573,9 +572,9 @@ struct maple_dreamparapara_controller : maple_device
 	MapleDeviceType get_device_type() override;
 	u16 get_state();
 	u32 RawDma(const u32 *buffer_in, u32 buffer_in_len, u32 *buffer_out) override;
-=======
+};
+
 struct WccfCamera : public BaseMIE
 {
 	static std::shared_ptr<maple_device> Create();
->>>>>>> flycast/dev
 };
