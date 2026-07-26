@@ -1428,7 +1428,7 @@ if(NOT LIBRETRO)
 				endif()
 				add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 					COMMAND ${CMAKE_COMMAND} -E copy "${MOLTENVK_DYLIB_PATH}"
-					$<TARGET_FILE_DIR:flycast>/../Frameworks/libMoltenVK.dylib)
+					$<TARGET_FILE_DIR:Hollycast>/../Frameworks/libMoltenVK.dylib)
 			endif()
 		endif()
 	elseif(UNIX)
