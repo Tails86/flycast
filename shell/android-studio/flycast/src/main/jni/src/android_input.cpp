@@ -109,6 +109,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 
 extern "C" JNIEXPORT jboolean JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_isPermissionRequired(
 	JNIEnv *env,
+	jobject obj,
 	jint vendorId,
 	jint productId
 )
