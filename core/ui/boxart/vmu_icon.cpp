@@ -41,8 +41,19 @@ namespace {
 constexpr size_t VMU_BLOCK_SIZE = 512;
 constexpr size_t VMU_BLOCK_COUNT = 256;
 constexpr size_t VMU_FLASH_SIZE = VMU_BLOCK_SIZE * VMU_BLOCK_COUNT;
+constexpr size_t VMU_ROOT_BLOCK_INDEX = VMU_BLOCK_COUNT - 1;
+constexpr u16 VMU_DEFAULT_FAT_BLOCK_INDEX = VMU_ROOT_BLOCK_INDEX - 1;
+constexpr u16 VMU_DEFAULT_DIRECTORY_BLOCK_INDEX = VMU_ROOT_BLOCK_INDEX - 2;
+constexpr u16 VMU_MAX_DIRECTORY_BLOCK_COUNT = 13;
+constexpr size_t VMU_ROOT_FAT_BLOCK_OFFSET = 0x46;
+constexpr size_t VMU_ROOT_DIRECTORY_BLOCK_OFFSET = 0x4a;
+constexpr size_t VMU_ROOT_DIRECTORY_BLOCK_COUNT_OFFSET = 0x4c;
+constexpr size_t VMU_DIRECTORY_ENTRY_FIRST_BLOCK_OFFSET = 0x02;
+constexpr size_t VMU_DIRECTORY_ENTRY_BLOCK_COUNT_OFFSET = 0x18;
+constexpr u16 VMU_MAX_FILE_BLOCK_COUNT = 200;
 constexpr u16 VMU_FAT_END = 0xfffa;
 constexpr u16 VMU_FAT_FREE = 0xfffc;
+constexpr int ICON_CACHE_VERSION = 1;
 std::mutex cacheMutex;
 std::unordered_map<std::string, time_t> lastBootedByKey;
 std::unordered_map<std::string, time_t> lastBootedByPath;
@@ -187,7 +198,7 @@ json loadIconCache(const std::string& path)
 	std::vector<u8> data;
 	if (!readFile(path, data))
 		return json{
-			{ "version", 1 },
+			{ "version", ICON_CACHE_VERSION },
 			{ "games", json::object() },
 		};
 
@@ -196,11 +207,11 @@ json loadIconCache(const std::string& path)
 		json j = json::parse(jsonStart, jsonStart + data.size());
 		if (!j.contains("games") || !j["games"].is_object())
 			j["games"] = json::object();
-		j["version"] = 1;
+		j["version"] = ICON_CACHE_VERSION;
 		return j;
 	} catch (const json::exception&) {
 		return json{
-			{ "version", 1 },
+			{ "version", ICON_CACHE_VERSION },
 			{ "games", json::object() },
 		};
 	}
@@ -289,7 +300,7 @@ bool cachedLiveIconEntry(const json& cache, const std::string& key, u32& frameCo
 void updateIconCacheEntry(json& cache, const std::string& key, const hostfs::FileInfo& sourceInfo,
 		bool iconWasExtracted, u32 frameCount, u16 animationSpeed)
 {
-	cache["version"] = 1;
+	cache["version"] = ICON_CACHE_VERSION;
 	if (!cache.contains("games") || !cache["games"].is_object())
 		cache["games"] = json::object();
 	json entry = cache["games"].value(key, json::object());
@@ -307,7 +318,7 @@ void updateIconCacheEntry(json& cache, const std::string& key, const hostfs::Fil
 
 void updateLastBootedCacheEntry(json& cache, const std::string& key, const std::string& gamePath, time_t lastBooted)
 {
-	cache["version"] = 1;
+	cache["version"] = ICON_CACHE_VERSION;
 	if (!cache.contains("games") || !cache["games"].is_object())
 		cache["games"] = json::object();
 	json entry = cache["games"].value(key, json::object());
@@ -360,7 +371,7 @@ time_t readLastBootedCacheEntry(const json& cache, const std::string& key, const
 void updateLiveIconCacheEntry(json& cache, const std::string& key, bool iconWasExtracted,
 		u32 frameCount, u16 animationSpeed)
 {
-	cache["version"] = 1;
+	cache["version"] = ICON_CACHE_VERSION;
 	if (!cache.contains("games") || !cache["games"].is_object())
 		cache["games"] = json::object();
 	if (!iconWasExtracted && cache["games"].contains(key) && cache["games"][key].value("ok", false))
@@ -567,9 +578,9 @@ bool extractIconFromVmsHeader(const std::vector<u8>& fileData, size_t headerOffs
 
 bool readVmuFile(const std::vector<u8>& flash, const u8 *entry, const u16 *fat, std::vector<u8>& fileData)
 {
-	const u16 firstBlock = readLe16(entry + 0x02);
-	const u16 blockCount = readLe16(entry + 0x18);
-	if (firstBlock >= VMU_BLOCK_COUNT || blockCount == 0 || blockCount > 200)
+	const u16 firstBlock = readLe16(entry + VMU_DIRECTORY_ENTRY_FIRST_BLOCK_OFFSET);
+	const u16 blockCount = readLe16(entry + VMU_DIRECTORY_ENTRY_BLOCK_COUNT_OFFSET);
+	if (firstBlock >= VMU_BLOCK_COUNT || blockCount == 0 || blockCount > VMU_MAX_FILE_BLOCK_COUNT)
 		return false;
 
 	fileData.clear();
@@ -596,16 +607,16 @@ bool extractBestIconFromFlash(const std::vector<u8>& flash, const std::string& c
 	if (flash.size() != VMU_FLASH_SIZE)
 		return false;
 
-	const u8 *root = flash.data() + 255 * VMU_BLOCK_SIZE;
-	u16 fatStart = readLe16(root + 0x46);
-	u16 dirStart = readLe16(root + 0x4a);
-	u16 dirBlocks = readLe16(root + 0x4c);
+	const u8 *root = flash.data() + VMU_ROOT_BLOCK_INDEX * VMU_BLOCK_SIZE;
+	u16 fatStart = readLe16(root + VMU_ROOT_FAT_BLOCK_OFFSET);
+	u16 dirStart = readLe16(root + VMU_ROOT_DIRECTORY_BLOCK_OFFSET);
+	u16 dirBlocks = readLe16(root + VMU_ROOT_DIRECTORY_BLOCK_COUNT_OFFSET);
 	if (fatStart >= VMU_BLOCK_COUNT)
-		fatStart = 254;
+		fatStart = VMU_DEFAULT_FAT_BLOCK_INDEX;
 	if (dirStart >= VMU_BLOCK_COUNT)
-		dirStart = 253;
-	if (dirBlocks == 0 || dirBlocks > 13)
-		dirBlocks = 13;
+		dirStart = VMU_DEFAULT_DIRECTORY_BLOCK_INDEX;
+	if (dirBlocks == 0 || dirBlocks > VMU_MAX_DIRECTORY_BLOCK_COUNT)
+		dirBlocks = VMU_MAX_DIRECTORY_BLOCK_COUNT;
 
 	std::array<u16, VMU_BLOCK_COUNT> fat;
 	const u8 *fatData = flash.data() + fatStart * VMU_BLOCK_SIZE;
