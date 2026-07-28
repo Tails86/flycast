@@ -198,7 +198,7 @@ class ApiDreamPicoPortComms
     //! The bus ID dictated by flycast
     int software_bus = -1;
     //! The bus index of the hardware connection which will differ from the software bus
-    int hardware_bus = -1;
+    const int hardware_bus = -1;
     //! Set to true when upgrade is required to continue
     bool upgrade_required = false;
 
@@ -207,7 +207,7 @@ public:
 
     ApiDreamPicoPortComms(const DreamPicoPort::HardwareInfo& hw_info, int software_bus) :
         software_bus(software_bus),
-        hardware_bus(hardware_bus)
+        hardware_bus(hw_info.hardware_bus)
     {
         std::lock_guard<std::mutex> lock(all_dpp_api_devices_mutex);
 
@@ -245,10 +245,6 @@ public:
     }
 
     virtual ~ApiDreamPicoPortComms() = default;
-
-    void changeHardwareBus(int hardware_bus) {
-        this->hardware_bus = hardware_bus;
-    }
 
     void changeSoftwareBus(int software_bus) {
         this->software_bus = software_bus;
