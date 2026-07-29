@@ -167,7 +167,11 @@ jobject findUsbDeviceByVidPidSerial(
 		if (matches && targetSerial != nullptr) {
 			auto deviceSerial = (jstring) env->CallObjectMethod(device, getSerialNumberMethod);
 
-			if (deviceSerial == nullptr) {
+			if (env->ExceptionCheck()) {
+				// SecurityException: permission not granted for this device
+				env->ExceptionClear();
+				matches = false;
+			} else if (deviceSerial == nullptr) {
 				// Permission not yet granted, or device has no serial — can't match
 				matches = false;
 			} else {
@@ -442,27 +446,13 @@ AndroidDreamPicoPortGamepad::AndroidDreamPicoPortGamepad(
 	// e.x. "OrangeFox86 DreamPicoPort-E66141040371972A v1.2.4"
 
 	if (dpp) {
-		_name = dpp->getName();
-
-		const DreamPicoPort::HardwareInfo& hw_info = dpp->getHardwareInfo();
-
-		if (!hw_info.serial_number.empty()) {
-			// TODO: need to handle sort ID
-			// Ensure this is ordered by product name, serial, and port char
-			// _sort_id = (
-			// 	hw_info.getProductName() + std::string("_") +
-			// 	hw_info.serial_number + std::string("_") +
-			// 	std::string(1, hw_info.getPortChar())
-			// );
-			// Locking to name, which includes A-D, plus serial number will ensure correct enumeration every time
-			_unique_id = hw_info.getName("", true) + std::string("_") + hw_info.serial_number;
-			// Reload mapping now that unique ID changed
-			loadMapping();
-		}
+		updateNames();
 
 		int bus = dpp->getDefaultBus();
 		if (DreamLink::isValidBus(bus))
 			set_maple_port(bus);
+	} else {
+		_name = "DreamPicoPort";
 	}
 }
 
@@ -486,6 +476,7 @@ void AndroidDreamPicoPortGamepad::permissionGranted(JNIEnv *env, jobject usbMana
 		// Try to recreate the device and update parent if this was successful
 		dpp = make_dpp(env, usbManager, maple_port(), get_android_id(), android_name.c_str());
 		if (dpp) {
+			updateNames();
 			updateDreamLink(dpp);
 		}
 	}
@@ -494,4 +485,27 @@ void AndroidDreamPicoPortGamepad::permissionGranted(JNIEnv *env, jobject usbMana
 bool AndroidDreamPicoPortGamepad::identify(int vendorId, int productId)
 {
 	return (vendorId == DreamPicoPort::VID && productId == DreamPicoPort::PID);
+}
+
+void AndroidDreamPicoPortGamepad::updateNames()
+{
+	if (dpp) {
+		_name = dpp->getName();
+
+		const DreamPicoPort::HardwareInfo& hw_info = dpp->getHardwareInfo();
+
+		if (!hw_info.serial_number.empty()) {
+			// TODO: need to handle sort ID
+			// Ensure this is ordered by product name, serial, and port char
+			// _sort_id = (
+			// 	hw_info.getProductName() + std::string("_") +
+			// 	hw_info.serial_number + std::string("_") +
+			// 	std::string(1, hw_info.getPortChar())
+			// );
+			// Locking to name, which includes A-D, plus serial number will ensure correct enumeration every time
+			_unique_id = hw_info.getName("", true) + std::string("_") + hw_info.serial_number;
+			// Reload mapping now that unique ID changed
+			loadMapping();
+		}
+	}
 }

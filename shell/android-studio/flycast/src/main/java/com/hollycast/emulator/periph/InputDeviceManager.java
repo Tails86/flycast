@@ -10,6 +10,8 @@ import android.hardware.input.InputManager;
 import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.InputDevice;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
@@ -305,22 +307,25 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
 
             for (UsbDevice usbDevice : deviceList.values()) {
                 if (usbDevice.getVendorId() == vid && usbDevice.getProductId() == pid) {
-                    String devName = usbDevice.getDeviceName();
+                    final String devName = usbDevice.getDeviceName();
                     if (!usbManager.hasPermission(usbDevice) && !pendingPermissionRequests.contains(devName)) {
-
-                        int flags = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) ? PendingIntent.FLAG_MUTABLE : 0;
-
-                        PendingIntent permissionIntent = PendingIntent.getBroadcast(
-                            appContext,
-                            0,
-                            new Intent(ACTION_USB_PERMISSION),
-                            flags
-                        );
 
                         pendingPermissionRequests.add(devName);
                         ensureReceiverRegistered();
 
-                        usbManager.requestPermission(usbDevice, permissionIntent);
+                        final UsbDevice finalUsbDevice = usbDevice;
+                        new Handler(Looper.getMainLooper()).post(() -> {
+                            int flags = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                                ? PendingIntent.FLAG_MUTABLE
+                                : 0;
+
+                            Intent intent = new Intent(ACTION_USB_PERMISSION);
+                            intent.setPackage(appContext.getPackageName());
+
+                            PendingIntent permissionIntent = PendingIntent.getBroadcast(appContext, 0, intent, flags);
+
+                            usbManager.requestPermission(finalUsbDevice, permissionIntent);
+                        });
                     }
                 }
             }

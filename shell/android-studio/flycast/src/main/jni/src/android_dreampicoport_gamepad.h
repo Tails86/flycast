@@ -45,6 +45,9 @@ public:
 	static bool identify(int vendorId, int productId);
 
 private:
+	void updateNames();
+
+private:
 	std::shared_ptr<class AndroidDreamPicoPort> dpp;
 	const std::string android_name;
 };

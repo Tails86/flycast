@@ -177,12 +177,14 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 
 extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_permissionGranted(
 	JNIEnv *env,
+	jobject obj,
 	jintArray ids,
 	jobject usbManager
 )
 {
 	std::vector<int> idVec = jni::IntArray(ids, false);
 	for (int id : idVec) {
+		// TODO: it may be better to remove and re-add rather than try to grant permission while installed
 		std::shared_ptr<AndroidGamepadDevice> device = AndroidGamepadDevice::GetAndroidGamepad(id);
 		std::shared_ptr<DreamLinkAndroidGamepad> dreamLinkDevice = std::dynamic_pointer_cast<DreamLinkAndroidGamepad>(device);
 		if (dreamLinkDevice) {
