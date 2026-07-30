@@ -96,7 +96,6 @@ static DreamPicoPort::HardwareInfo parse_hw_info(int joystick_idx, SDL_Joystick*
 	// Windows will cache the joystick name, so it's not a good idea to check SDL_JoystickName() on Windows
 #if !defined(_WIN32)
 	if (hw_info.serial_number.empty()) {
-	{
 		// Version 1.2.0 and later embeds serial in name as a workaround for MacOS and Linux
 		// Serial is expected between a dash (-) and space ( ) character or until end of string
 		// Will normally reach here on macOS systems
