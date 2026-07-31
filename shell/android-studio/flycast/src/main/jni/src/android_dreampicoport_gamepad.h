@@ -39,10 +39,16 @@ public:
 	);
 	~AndroidDreamPicoPortGamepad();
 
+	const char *get_button_name(u32 code) override;
 	void close(JNIEnv *env) override;
 	void permissionGranted(JNIEnv *env, jobject usbManager) override;
 
 	static bool identify(int vendorId, int productId);
+
+	bool gamepad_btn_input(u32 code, bool pressed) override;
+
+protected:
+	void setCustomMapping(const std::shared_ptr<InputMapping>& mapping) override;
 
 private:
 	void updateNames();

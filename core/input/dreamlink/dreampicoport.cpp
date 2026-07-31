@@ -1183,45 +1183,6 @@ bool DreamPicoPort::queryPeripherals(bool clearOnFailure) {
     return true;
 }
 
-void DreamPicoPort::setCustomMapping(const std::shared_ptr<InputMapping>& mapping)
-{
-    // Since this is a real DC controller, no deadzone adjustment is needed
-    mapping->dead_zone = 0.0f;
-    // Map the things not set by SDL
-    mapping->set_button(DC_BTN_C, 2);
-    mapping->set_button(DC_BTN_Z, 5);
-    mapping->set_button(DC_BTN_D, 10);
-    mapping->set_button(DC_DPAD2_UP, 9);
-    mapping->set_button(DC_DPAD2_DOWN, 8);
-    mapping->set_button(DC_DPAD2_LEFT, 7);
-    mapping->set_button(DC_DPAD2_RIGHT, 6);
-}
-
-const char *DreamPicoPort::getButtonName(u32 code)
-{
-    using namespace i18n;
-    switch (code) {
-        // Coincides with buttons setup in setDefaultMapping
-        case 2: return "C";
-        case 5: return "Z";
-        case 10: return "D";
-        case 9: return T("DPad2 Up");
-        case 8: return T("DPad2 Down");
-        case 7: return T("DPad2 Left");
-        case 6: return T("DPad2 Right");
-
-        // These buttons are normally not physically accessible but are mapped on DreamPicoPort
-        case 12: return T("VMU1 A");
-        case 15: return T("VMU1 B");
-        case 16: return T("VMU1 Up");
-        case 17: return T("VMU1 Down");
-        case 18: return T("VMU1 Left");
-        case 19: return T("VMU1 Right");
-
-        default: return nullptr; // use the default name
-    }
-}
-
 std::string DreamPicoPort::getSerialFromName(const std::string& name)
 {
     std::string serial;

@@ -167,16 +167,6 @@ public:
     //! @return true iff the query was successful
     bool queryPeripherals(bool clearOnFailure = true);
 
-    //! Set custom mapping associated with the DreamPicoPort
-    //! @param[in,out] mapping The mapping to update
-    static void setCustomMapping(const std::shared_ptr<InputMapping>& mapping);
-
-    //! Retrieves button name of non-standard button codes
-    //! @param[in] code Button index
-    //! @return button name for the given code
-    //! @return nullptr if the default name should be used
-    static const char *getButtonName(u32 code);
-
     //! Extracts DreamPicoPort serial from its name
     //! @param[in] name The name to parse
     //! @return the extracted serial number

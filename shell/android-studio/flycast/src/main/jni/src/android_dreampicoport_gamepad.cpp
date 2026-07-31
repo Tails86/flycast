@@ -461,6 +461,30 @@ AndroidDreamPicoPortGamepad::~AndroidDreamPicoPortGamepad()
 {
 }
 
+const char *AndroidDreamPicoPortGamepad::get_button_name(u32 code)
+{
+	using namespace i18n;
+	switch (static_cast<s32>(code)) {
+		case AKEYCODE_BUTTON_SELECT: return "D";
+		case AKEYCODE_BUTTON_R2: return T("DPad2 Up");
+		case AKEYCODE_BUTTON_L2: return T("DPad2 Down");
+		case AKEYCODE_BUTTON_R1: return T("DPad2 Left");
+		case AKEYCODE_BUTTON_L1: return T("DPad2 Right");
+
+		// These buttons are normally not physically accessible but are mapped on DreamPicoPort
+		case AKEYCODE_BUTTON_MODE: return T("VMU1 A");
+		case -319: return T("VMU1 B");
+		case -704: return T("VMU1 Up");
+		case -705: return T("VMU1 Down");
+		case -706: return T("VMU1 Left");
+		case -707: return T("VMU1 Right");
+
+		case -708: return T("Device Change");
+
+		default: return DreamLinkAndroidGamepad::get_button_name(code); // use the default name
+	}
+}
+
 void AndroidDreamPicoPortGamepad::close(JNIEnv *env)
 {
 	DreamLinkAndroidGamepad::close(env);
@@ -485,6 +509,39 @@ void AndroidDreamPicoPortGamepad::permissionGranted(JNIEnv *env, jobject usbMana
 bool AndroidDreamPicoPortGamepad::identify(int vendorId, int productId)
 {
 	return (vendorId == DreamPicoPort::VID && productId == DreamPicoPort::PID);
+}
+
+bool AndroidDreamPicoPortGamepad::gamepad_btn_input(u32 code, bool pressed)
+{
+	if (code == 20 && !pressed)
+	{
+		if (dpp)
+		{
+			dpp->queryPeripherals(false);
+		}
+	}
+
+	return DreamLinkAndroidGamepad::gamepad_btn_input(code, pressed);
+}
+
+void AndroidDreamPicoPortGamepad::setCustomMapping(const std::shared_ptr<InputMapping>& mapping)
+{
+	// Since this is a real DC controller, no deadzone adjustment is needed
+	mapping->dead_zone = 0.0f;
+	// Map the things not set by default
+	mapping->set_button(DC_BTN_C, AKEYCODE_BUTTON_C);
+	mapping->set_button(DC_BTN_Z, AKEYCODE_BUTTON_Z);
+	mapping->set_button(DC_BTN_D, AKEYCODE_BUTTON_SELECT);
+	mapping->set_button(DC_DPAD2_UP, AKEYCODE_BUTTON_R2);
+	mapping->set_button(DC_DPAD2_DOWN, AKEYCODE_BUTTON_L2);
+	mapping->set_button(DC_DPAD2_LEFT, AKEYCODE_BUTTON_R1);
+	mapping->set_button(DC_DPAD2_RIGHT, AKEYCODE_BUTTON_L1);
+	mapping->set_axis(DC_AXIS_LT, AMOTION_EVENT_AXIS_Z, true);
+	mapping->set_axis(DC_AXIS_RT, AMOTION_EVENT_AXIS_RZ, true);
+	mapping->set_axis(DC_AXIS2_LEFT, AMOTION_EVENT_AXIS_RX, false);
+	mapping->set_axis(DC_AXIS2_RIGHT, AMOTION_EVENT_AXIS_RX, true);
+	mapping->set_axis(DC_AXIS2_UP, AMOTION_EVENT_AXIS_RY, false);
+	mapping->set_axis(DC_AXIS2_DOWN, AMOTION_EVENT_AXIS_RY, true);
 }
 
 void AndroidDreamPicoPortGamepad::updateNames()
