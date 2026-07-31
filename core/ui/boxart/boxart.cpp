@@ -272,7 +272,7 @@ std::string getAndroidDocumentId(const std::string& uri, const char* marker)
 	return decoded.substr(idStart, idEnd == std::string::npos ? std::string::npos : idEnd - idStart);
 }
 
-std::string getFolderFirstComponent(const std::string& root, const std::string& path)
+std::string getParentPath(const std::string& root, const std::string& path)
 {
 	if (root.find("content://") == 0 || path.find("content://") == 0)
 	{
@@ -1014,7 +1014,7 @@ void Boxart::refreshCustomBoxartIndex(bool force)
 				if (key.empty())
 					continue;
 
-				const std::string firstFolder = toLowerString(getFolderFirstComponent(root, entry.path));
+				const std::string firstFolder = toLowerString(getParentPath(root, entry.path));
 				const MediaFolderAlias* alias = findMediaFolderAlias(firstFolder);
 				if (alias == nullptr)
 				{

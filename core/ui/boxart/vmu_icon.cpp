@@ -271,7 +271,8 @@ bool cachedAnyIconEntry(const json& cache, const std::string& key, u32& frameCou
 {
 	try {
 		const json& entry = cache.at("games").at(key);
-		if (entry.value("source", "") == "live-vmu")
+		const std::string source = entry.value("source", "");
+		if (source.rfind("live-vmu", 0) == 0)
 			return false;
 		if (!entry.value("ok", false))
 			return false;
