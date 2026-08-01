@@ -495,8 +495,8 @@ const char *AndroidDreamPicoPortGamepad::get_axis_name(u32 code)
 {
 	using namespace i18n;
 	switch (static_cast<s32>(code)) {
-		case static_cast<s32>(AxisCode::LEFT_TRIGGER): return T("Left Trigger");
-		case static_cast<s32>(AxisCode::RIGHT_TRIGGER): return T("Left Trigger");
+		case static_cast<s32>(AxisCode::LEFT_TRIGGER): return T("LT");
+		case static_cast<s32>(AxisCode::RIGHT_TRIGGER): return T("RT");
 
 		default: return DreamLinkAndroidGamepad::get_axis_name(code); // use the default name
 	}

@@ -43,6 +43,7 @@ public:
 		D = AKEYCODE_BUTTON_SELECT,
 		START = AKEYCODE_BUTTON_START,
 		VMU1_BUTTON_A = AKEYCODE_BUTTON_MODE,
+		// The following come through as scan codes
 		VMU1_BUTTON_B = -319,
 		VMU1_BUTTON_UP = -704,
 		VMU1_BUTTON_DOWN = -705,
@@ -66,6 +67,7 @@ public:
 		RIGHT_TRIGGER = AMOTION_EVENT_AXIS_RZ
 	};
 
+public:
 	AndroidDreamPicoPortGamepad(
 		JNIEnv *env,
 		int maple_port,

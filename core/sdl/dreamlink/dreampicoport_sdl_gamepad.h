@@ -78,6 +78,7 @@ public:
 		RIGHT_TRIGGER = 5
 	};
 
+public:
 	DreamPicoPortSDLGamepad(int maple_port, int joystick_idx, SDL_Joystick* sdl_joystick);
 	~DreamPicoPortSDLGamepad();
 	const char *get_button_name(u32 code) override;
