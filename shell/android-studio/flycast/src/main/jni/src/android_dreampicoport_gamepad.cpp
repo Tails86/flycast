@@ -465,23 +465,40 @@ const char *AndroidDreamPicoPortGamepad::get_button_name(u32 code)
 {
 	using namespace i18n;
 	switch (static_cast<s32>(code)) {
-		case AKEYCODE_BUTTON_SELECT: return "D";
-		case AKEYCODE_BUTTON_R2: return T("DPad2 Up");
-		case AKEYCODE_BUTTON_L2: return T("DPad2 Down");
-		case AKEYCODE_BUTTON_R1: return T("DPad2 Left");
-		case AKEYCODE_BUTTON_L1: return T("DPad2 Right");
+		case static_cast<s32>(ButtonCode::D): return "D";
+		case static_cast<s32>(ButtonCode::UP_B): return T("DPad2 Up");
+		case static_cast<s32>(ButtonCode::DOWN_B): return T("DPad2 Down");
+		case static_cast<s32>(ButtonCode::LEFT_B): return T("DPad2 Left");
+		case static_cast<s32>(ButtonCode::RIGHT_B): return T("DPad2 Right");
+
+		// Alternate directional buttons
+		case static_cast<s32>(ButtonCode::ALT_UP): return T("Alt Up");
+		case static_cast<s32>(ButtonCode::ALT_DOWN): return T("Alt Down");
+		case static_cast<s32>(ButtonCode::ALT_LEFT): return T("Alt Left");
+		case static_cast<s32>(ButtonCode::ALT_RIGHT): return T("Alt Right");
 
 		// These buttons are normally not physically accessible but are mapped on DreamPicoPort
-		case AKEYCODE_BUTTON_MODE: return T("VMU1 A");
-		case -319: return T("VMU1 B");
-		case -704: return T("VMU1 Up");
-		case -705: return T("VMU1 Down");
-		case -706: return T("VMU1 Left");
-		case -707: return T("VMU1 Right");
+		case static_cast<s32>(ButtonCode::VMU1_BUTTON_A): return T("VMU1 A");
+		case static_cast<s32>(ButtonCode::VMU1_BUTTON_B): return T("VMU1 B");
+		case static_cast<s32>(ButtonCode::VMU1_BUTTON_UP): return T("VMU1 Up");
+		case static_cast<s32>(ButtonCode::VMU1_BUTTON_DOWN): return T("VMU1 Down");
+		case static_cast<s32>(ButtonCode::VMU1_BUTTON_LEFT): return T("VMU1 Left");
+		case static_cast<s32>(ButtonCode::VMU1_BUTTON_RIGHT): return T("VMU1 Right");
 
-		case -708: return T("Device Change");
+		case static_cast<s32>(ButtonCode::CHANGE_EVENT): return T("Device Change");
 
 		default: return DreamLinkAndroidGamepad::get_button_name(code); // use the default name
+	}
+}
+
+const char *AndroidDreamPicoPortGamepad::get_axis_name(u32 code)
+{
+	using namespace i18n;
+	switch (static_cast<s32>(code)) {
+		case static_cast<s32>(AxisCode::LEFT_TRIGGER): return T("Left Trigger");
+		case static_cast<s32>(AxisCode::RIGHT_TRIGGER): return T("Left Trigger");
+
+		default: return DreamLinkAndroidGamepad::get_axis_name(code); // use the default name
 	}
 }
 
@@ -513,7 +530,7 @@ bool AndroidDreamPicoPortGamepad::identify(int vendorId, int productId)
 
 bool AndroidDreamPicoPortGamepad::gamepad_btn_input(u32 code, bool pressed)
 {
-	if (code == 20 && !pressed)
+	if (static_cast<s32>(code) == static_cast<s32>(ButtonCode::CHANGE_EVENT) && !pressed)
 	{
 		if (dpp)
 		{
@@ -529,19 +546,19 @@ void AndroidDreamPicoPortGamepad::setCustomMapping(const std::shared_ptr<InputMa
 	// Since this is a real DC controller, no deadzone adjustment is needed
 	mapping->dead_zone = 0.0f;
 	// Map the things not set by default
-	mapping->set_button(DC_BTN_C, AKEYCODE_BUTTON_C);
-	mapping->set_button(DC_BTN_Z, AKEYCODE_BUTTON_Z);
-	mapping->set_button(DC_BTN_D, AKEYCODE_BUTTON_SELECT);
-	mapping->set_button(DC_DPAD2_UP, AKEYCODE_BUTTON_R2);
-	mapping->set_button(DC_DPAD2_DOWN, AKEYCODE_BUTTON_L2);
-	mapping->set_button(DC_DPAD2_LEFT, AKEYCODE_BUTTON_R1);
-	mapping->set_button(DC_DPAD2_RIGHT, AKEYCODE_BUTTON_L1);
-	mapping->set_axis(DC_AXIS_LT, AMOTION_EVENT_AXIS_Z, true);
-	mapping->set_axis(DC_AXIS_RT, AMOTION_EVENT_AXIS_RZ, true);
-	mapping->set_axis(DC_AXIS2_LEFT, AMOTION_EVENT_AXIS_RX, false);
-	mapping->set_axis(DC_AXIS2_RIGHT, AMOTION_EVENT_AXIS_RX, true);
-	mapping->set_axis(DC_AXIS2_UP, AMOTION_EVENT_AXIS_RY, false);
-	mapping->set_axis(DC_AXIS2_DOWN, AMOTION_EVENT_AXIS_RY, true);
+	mapping->set_button(DC_BTN_C, static_cast<u32>(ButtonCode::C));
+	mapping->set_button(DC_BTN_Z, static_cast<u32>(ButtonCode::Z));
+	mapping->set_button(DC_BTN_D, static_cast<u32>(ButtonCode::D));
+	mapping->set_button(DC_DPAD2_UP, static_cast<u32>(ButtonCode::UP_B));
+	mapping->set_button(DC_DPAD2_DOWN, static_cast<u32>(ButtonCode::DOWN_B));
+	mapping->set_button(DC_DPAD2_LEFT, static_cast<u32>(ButtonCode::LEFT_B));
+	mapping->set_button(DC_DPAD2_RIGHT, static_cast<u32>(ButtonCode::RIGHT_B));
+	mapping->set_axis(DC_AXIS_LT, static_cast<u32>(AxisCode::LEFT_TRIGGER), true);
+	mapping->set_axis(DC_AXIS_RT, static_cast<u32>(AxisCode::RIGHT_TRIGGER), true);
+	mapping->set_axis(DC_AXIS2_LEFT, static_cast<u32>(AxisCode::RIGHT_X), false);
+	mapping->set_axis(DC_AXIS2_RIGHT, static_cast<u32>(AxisCode::RIGHT_X), true);
+	mapping->set_axis(DC_AXIS2_UP, static_cast<u32>(AxisCode::RIGHT_Y), false);
+	mapping->set_axis(DC_AXIS2_DOWN, static_cast<u32>(AxisCode::RIGHT_Y), true);
 }
 
 void AndroidDreamPicoPortGamepad::updateNames()
@@ -552,13 +569,12 @@ void AndroidDreamPicoPortGamepad::updateNames()
 		const DreamPicoPort::HardwareInfo& hw_info = dpp->getHardwareInfo();
 
 		if (!hw_info.serial_number.empty()) {
-			// TODO: need to handle sort ID
 			// Ensure this is ordered by product name, serial, and port char
-			// _sort_id = (
-			// 	hw_info.getProductName() + std::string("_") +
-			// 	hw_info.serial_number + std::string("_") +
-			// 	std::string(1, hw_info.getPortChar())
-			// );
+			_sort_id = (
+				hw_info.getProductName() + std::string("_") +
+				hw_info.serial_number + std::string("_") +
+				std::string(1, hw_info.getPortChar())
+			);
 			// Locking to name, which includes A-D, plus serial number will ensure correct enumeration every time
 			_unique_id = hw_info.getName("", true) + std::string("_") + hw_info.serial_number;
 			// Reload mapping now that unique ID changed

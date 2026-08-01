@@ -30,6 +30,54 @@
 class DreamPicoPortSDLGamepad : public DreamLinkSDLGamepad
 {
 public:
+	//! Enumerates the raw button codes in SDL for DreamPicoPort
+	enum class ButtonCode : s32
+	{
+		A = 0,
+		B = 1,
+		C = 2,
+		X = 3,
+		Y = 4,
+		Z = 5,
+		RIGHT_B = 6,
+		LEFT_B = 7,
+		DOWN_B = 8,
+		UP_B = 9,
+		D = 10,
+		START = 11,
+		VMU1_BUTTON_A = 12,
+		// UNASSIGNED = 13,
+		// UNASSIGNED = 14,
+		VMU1_BUTTON_B = 15,
+		VMU1_BUTTON_UP = 16,
+		VMU1_BUTTON_DOWN = 17,
+		VMU1_BUTTON_LEFT = 18,
+		VMU1_BUTTON_RIGHT = 19,
+		CHANGE_EVENT = 20,
+		// UNASSIGNED = 21,
+		// UNASSIGNED = 22,
+		// UNASSIGNED = 23,
+		ALT_UP = 24,
+		ALT_DOWN = 25,
+		ALT_LEFT = 26,
+		ALT_RIGHT = 27,
+		PLAYER_4 = 28,
+		PLAYER_3 = 29,
+		PLAYER_2 = 30,
+		PLAYER_1 = 31
+	};
+
+	//! Enumerates the raw axis codes in SDL for DreamPicoPort
+	enum class AxisCode : s32
+	{
+		LEFT_X = 0,
+		LEFT_Y = 1,
+		RIGHT_X = 2,
+		RIGHT_Y = 3,
+		LEFT_TRIGGER = 4,
+		RIGHT_TRIGGER = 5
+	};
+
 	DreamPicoPortSDLGamepad(int maple_port, int joystick_idx, SDL_Joystick* sdl_joystick);
 	~DreamPicoPortSDLGamepad();
 	const char *get_button_name(u32 code) override;

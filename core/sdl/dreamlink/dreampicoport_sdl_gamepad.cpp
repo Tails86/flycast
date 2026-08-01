@@ -215,37 +215,43 @@ void DreamPicoPortSDLGamepad::setCustomMapping(const std::shared_ptr<InputMappin
 	// Since this is a real DC controller, no deadzone adjustment is needed
 	mapping->dead_zone = 0.0f;
 	// Map the things not set by SDL
-	mapping->set_button(DC_BTN_C, 2);
-	mapping->set_button(DC_BTN_Z, 5);
-	mapping->set_button(DC_BTN_D, 10);
-	mapping->set_button(DC_DPAD2_UP, 9);
-	mapping->set_button(DC_DPAD2_DOWN, 8);
-	mapping->set_button(DC_DPAD2_LEFT, 7);
-	mapping->set_button(DC_DPAD2_RIGHT, 6);
+	mapping->set_button(DC_BTN_C, static_cast<u32>(ButtonCode::C));
+	mapping->set_button(DC_BTN_Z, static_cast<u32>(ButtonCode::Z));
+	mapping->set_button(DC_BTN_D, static_cast<u32>(ButtonCode::D));
+	mapping->set_button(DC_DPAD2_UP, static_cast<u32>(ButtonCode::UP_B));
+	mapping->set_button(DC_DPAD2_DOWN, static_cast<u32>(ButtonCode::DOWN_B));
+	mapping->set_button(DC_DPAD2_LEFT, static_cast<u32>(ButtonCode::LEFT_B));
+	mapping->set_button(DC_DPAD2_RIGHT, static_cast<u32>(ButtonCode::RIGHT_B));
 }
 
 const char *DreamPicoPortSDLGamepad::get_button_name(u32 code)
 {
 	using namespace i18n;
 	switch (code) {
-		// Coincides with buttons setup in setDefaultMapping
-		case 2: return "C";
-		case 5: return "Z";
-		case 10: return "D";
-		case 9: return T("DPad2 Up");
-		case 8: return T("DPad2 Down");
-		case 7: return T("DPad2 Left");
-		case 6: return T("DPad2 Right");
+		// Coincides with buttons setup in setCustomMapping
+		case static_cast<u32>(ButtonCode::C): return "C";
+		case static_cast<u32>(ButtonCode::Z): return "Z";
+		case static_cast<u32>(ButtonCode::D): return "D";
+		case static_cast<u32>(ButtonCode::UP_B): return T("DPad2 Up");
+		case static_cast<u32>(ButtonCode::DOWN_B): return T("DPad2 Down");
+		case static_cast<u32>(ButtonCode::LEFT_B): return T("DPad2 Left");
+		case static_cast<u32>(ButtonCode::RIGHT_B): return T("DPad2 Right");
+
+		// Alternate directional buttons
+		case static_cast<u32>(ButtonCode::ALT_UP): return T("Alt Up");
+		case static_cast<u32>(ButtonCode::ALT_DOWN): return T("Alt Down");
+		case static_cast<u32>(ButtonCode::ALT_LEFT): return T("Alt Left");
+		case static_cast<u32>(ButtonCode::ALT_RIGHT): return T("Alt Right");
 
 		// These buttons are normally not physically accessible but are mapped on DreamPicoPort
-		case 12: return T("VMU1 A");
-		case 15: return T("VMU1 B");
-		case 16: return T("VMU1 Up");
-		case 17: return T("VMU1 Down");
-		case 18: return T("VMU1 Left");
-		case 19: return T("VMU1 Right");
+		case static_cast<u32>(ButtonCode::VMU1_BUTTON_A): return T("VMU1 A");
+		case static_cast<u32>(ButtonCode::VMU1_BUTTON_B): return T("VMU1 B");
+		case static_cast<u32>(ButtonCode::VMU1_BUTTON_UP): return T("VMU1 Up");
+		case static_cast<u32>(ButtonCode::VMU1_BUTTON_DOWN): return T("VMU1 Down");
+		case static_cast<u32>(ButtonCode::VMU1_BUTTON_LEFT): return T("VMU1 Left");
+		case static_cast<u32>(ButtonCode::VMU1_BUTTON_RIGHT): return T("VMU1 Right");
 
-		case 20: return T("Device Change");
+		case static_cast<u32>(ButtonCode::CHANGE_EVENT): return T("Device Change");
 
 		default: return DreamLinkSDLGamepad::get_button_name(code); // use the default name
 	}
@@ -253,7 +259,7 @@ const char *DreamPicoPortSDLGamepad::get_button_name(u32 code)
 
 bool DreamPicoPortSDLGamepad::gamepad_btn_input(u32 code, bool pressed)
 {
-	if (code == 20 && !pressed)
+	if (code == static_cast<u32>(ButtonCode::CHANGE_EVENT) && !pressed)
 	{
 		DreamPicoPort *picoPort = dynamic_cast<DreamPicoPort*>(dreamlink.get());
 		if (picoPort)
