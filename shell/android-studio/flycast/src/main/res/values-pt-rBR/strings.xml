@@ -11,7 +11,7 @@
     <string name="exporting_home_folder">Exportando pasta inicial</string>
     <string name="select_an_import_folder">Selecione uma pasta de importação</string>
     <string name="importing_home_folder">Importando pasta inicial</string>
-    <string name="hollycast_error">Erro no Hollycast</string>
+    <string name="flycast_error">Erro no Hollycast</string>
     <string name="init_failed_message">Falha na inicialização. Tente novamente ou reinstale.\n\nErro:</string>
     <string name="exit">Sair</string>
     <string name="copying">Copiando</string>
