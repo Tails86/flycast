@@ -29,12 +29,12 @@ public:
 	struct ExtendedHardwareInfo
 	{
 		HardwareInfo base_info;
-		jobject usb_device_connection = nullptr;
+		jni::Object usb_device_connection = {};
 	};
 
-	AndroidDreamPicoPort(int bus, ExtendedHardwareInfo hw_info) :
+	AndroidDreamPicoPort(int bus, ExtendedHardwareInfo& hw_info) :
 		DreamPicoPort(bus, hw_info.base_info),
-		usb_device_connection(hw_info.usb_device_connection)
+		usb_device_connection(std::move(hw_info.usb_device_connection))
 	{}
 
 	~AndroidDreamPicoPort()
@@ -42,11 +42,11 @@ public:
 
 	void close(JNIEnv *env)
 	{
-		env->DeleteGlobalRef(usb_device_connection);
+		usb_device_connection = jni::Object();
 	}
 
 private:
-	const jobject usb_device_connection;
+	jobject usb_device_connection;
 };
 
 //! Get number of devices that contain the given serial at the specified ID direction
@@ -64,148 +64,109 @@ static int get_serial_count(
 	int id,
 	const std::string& serial,
 	int direction,
-	jclass inputDeviceClass,
+	const jni::Class& inputDeviceClass,
 	jmethodID getDeviceMethodId,
 	jmethodID getNameMethodId,
 	int maxCount = 3
 )
 {
-	// Normalize direction
-	if (direction < 0)
-	{
-		direction = -1;
-	}
-	else
-	{
-		direction = 1;
-	}
-
+	const int increment = (direction < 0) ? -1 : 1;
 	int count = 0;
-
 	static const int kMaxMisses = 10;
 	jint lastKnownId = id;
-	jint testId = id + direction;
-	while (testId >= 0 && ((testId - lastKnownId) * direction) < kMaxMisses && count < maxCount)
+	jint testId = id + increment;
+	while (testId >= 0 && ((testId - lastKnownId) * increment) < kMaxMisses && count < maxCount)
 	{
-		jobject device = env->CallStaticObjectMethod(inputDeviceClass, getDeviceMethodId, testId);
-		if (device)
+		jni::Object device(env->CallStaticObjectMethod(inputDeviceClass, getDeviceMethodId, testId));
+		if (!device.isNull())
 		{
-			jstring jName = (jstring)env->CallObjectMethod(device, getNameMethodId);
+			jni::String jName(env->CallObjectMethod(device, getNameMethodId));
 
-			if (jName)
+			if (!jName.isNull())
 			{
-				const char* nativeString = env->GetStringUTFChars(jName, nullptr);
-
-				if (nativeString)
+				std::string deviceName(jName.to_string());
+				if (deviceName.find(serial) != std::string::npos)
 				{
-					std::string deviceName(nativeString);
-					if (deviceName.find(serial) != std::string::npos)
-					{
-						lastKnownId = testId;
-						++count;
-					}
+					lastKnownId = testId;
+					++count;
 				}
-
-				env->DeleteLocalRef(jName);
 			}
-
-			env->DeleteLocalRef(device);
 		}
 
-		testId += direction;
+		testId += increment;
 	}
 
 	return count;
 }
 
-jobject findUsbDeviceByVidPidSerial(
+static jni::Object findUsbDeviceByVidPidSerial(
 	JNIEnv *env,
 	jobject usbManager,
 	jint targetVid,
 	jint targetPid,
-	const char *targetSerial
+	const std::string& targetSerial
 )
 {
-	jclass usbManagerClass = env->GetObjectClass(usbManager);
-	jmethodID getDeviceListMethod = env->GetMethodID(
-			usbManagerClass, "getDeviceList", "()Ljava/util/HashMap;");
-	jobject deviceMap = env->CallObjectMethod(usbManager, getDeviceListMethod);
+	jni::Class usbManagerClass(env->GetObjectClass(usbManager));
+	jmethodID getDeviceListMethod = env->GetMethodID(usbManagerClass, "getDeviceList", "()Ljava/util/HashMap;");
+	jni::Object deviceMap(env->CallObjectMethod(usbManager, getDeviceListMethod));
 
-	if (deviceMap == nullptr) {
+	if (deviceMap.isNull()) {
 		return nullptr;
 	}
 
-	jclass mapClass = env->GetObjectClass(deviceMap);
+	jni::Class mapClass(env->GetObjectClass(deviceMap));
 	jmethodID valuesMethod = env->GetMethodID(mapClass, "values", "()Ljava/util/Collection;");
-	jobject valuesCollection = env->CallObjectMethod(deviceMap, valuesMethod);
+	jni::Object valuesCollection(env->CallObjectMethod(deviceMap, valuesMethod));
 
-	jclass collectionClass = env->GetObjectClass(valuesCollection);
-	jmethodID iteratorMethod = env->GetMethodID(
-			collectionClass, "iterator", "()Ljava/util/Iterator;");
-	jobject iterator = env->CallObjectMethod(valuesCollection, iteratorMethod);
+	jni::Class collectionClass(env->GetObjectClass(valuesCollection));
+	jmethodID iteratorMethod = env->GetMethodID(collectionClass, "iterator", "()Ljava/util/Iterator;");
+	jni::Object iterator(env->CallObjectMethod(valuesCollection, iteratorMethod));
 
-	jclass iteratorClass = env->GetObjectClass(iterator);
+	jni::Class iteratorClass(env->GetObjectClass(iterator));
 	jmethodID hasNextMethod = env->GetMethodID(iteratorClass, "hasNext", "()Z");
 	jmethodID nextMethod = env->GetMethodID(iteratorClass, "next", "()Ljava/lang/Object;");
 
-	jclass usbDeviceClass = env->FindClass("android/hardware/usb/UsbDevice");
+	jni::Class usbDeviceClass(env->FindClass("android/hardware/usb/UsbDevice"));
 	jmethodID getVendorIdMethod = env->GetMethodID(usbDeviceClass, "getVendorId", "()I");
 	jmethodID getProductIdMethod = env->GetMethodID(usbDeviceClass, "getProductId", "()I");
-	jmethodID getSerialNumberMethod = env->GetMethodID(
-			usbDeviceClass, "getSerialNumber", "()Ljava/lang/String;");
-
-	jobject result = nullptr;
+	jmethodID getSerialNumberMethod = env->GetMethodID(usbDeviceClass, "getSerialNumber", "()Ljava/lang/String;");
 
 	while (env->CallBooleanMethod(iterator, hasNextMethod)) {
-		jobject device = env->CallObjectMethod(iterator, nextMethod);
+		jni::Object device(env->CallObjectMethod(iterator, nextMethod));
 
 		jint vid = env->CallIntMethod(device, getVendorIdMethod);
 		jint pid = env->CallIntMethod(device, getProductIdMethod);
 
 		bool matches = (vid == targetVid && pid == targetPid);
 
-		if (matches && targetSerial != nullptr) {
-			auto deviceSerial = (jstring) env->CallObjectMethod(device, getSerialNumberMethod);
+		if (matches) {
+			jni::String deviceSerial(env->CallObjectMethod(device, getSerialNumberMethod));
 
 			if (env->ExceptionCheck()) {
 				// SecurityException: permission not granted for this device
 				env->ExceptionClear();
 				matches = false;
-			} else if (deviceSerial == nullptr) {
+			} else if (deviceSerial.isNull()) {
 				// Permission not yet granted, or device has no serial — can't match
 				matches = false;
 			} else {
-				const char *serialChars = env->GetStringUTFChars(deviceSerial, nullptr);
-				matches = (strcmp(serialChars, targetSerial) == 0);
-				env->ReleaseStringUTFChars(deviceSerial, serialChars);
-				env->DeleteLocalRef(deviceSerial);
+				matches = (deviceSerial.to_string() == targetSerial);
 			}
 		}
 
 		if (matches) {
-			result = device;
-			break;
+			return device;
 		}
-
-		env->DeleteLocalRef(device);
 	}
 
-	env->DeleteLocalRef(usbManagerClass);
-	env->DeleteLocalRef(deviceMap);
-	env->DeleteLocalRef(mapClass);
-	env->DeleteLocalRef(valuesCollection);
-	env->DeleteLocalRef(collectionClass);
-	env->DeleteLocalRef(iterator);
-	env->DeleteLocalRef(iteratorClass);
-	env->DeleteLocalRef(usbDeviceClass);
-
-	return result; // local ref, or nullptr — caller must DeleteLocalRef when done
+	return jni::Object(); // null
 }
 
 // Returns the interface ID at position n (0-based) in the sorted list of
 // distinct interface IDs present on the device. Returns -1 if n is out of range.
 static int getNthInterfaceId(JNIEnv *env, jobject usbDevice, int n) {
-	jclass usbDeviceClass = env->GetObjectClass(usbDevice);
+	jni::Class usbDeviceClass(env->GetObjectClass(usbDevice));
 	jmethodID getInterfaceCountMethod = env->GetMethodID(usbDeviceClass, "getInterfaceCount", "()I");
 	jmethodID getInterfaceMethod = env->GetMethodID(
 		usbDeviceClass,
@@ -215,21 +176,17 @@ static int getNthInterfaceId(JNIEnv *env, jobject usbDevice, int n) {
 
 	jint interfaceCount = env->CallIntMethod(usbDevice, getInterfaceCountMethod);
 
-	jclass usbInterfaceClass = env->FindClass("android/hardware/usb/UsbInterface");
+	jni::Class usbInterfaceClass(env->FindClass("android/hardware/usb/UsbInterface"));
 	jmethodID getIdMethod = env->GetMethodID(usbInterfaceClass, "getId", "()I");
 
 	std::vector<jint> interfaceIds;
 	interfaceIds.reserve(interfaceCount);
 
 	for (jint i = 0; i < interfaceCount; i++) {
-		jobject usbInterface = env->CallObjectMethod(usbDevice, getInterfaceMethod, i);
+		jni::Object usbInterface(env->CallObjectMethod(usbDevice, getInterfaceMethod, i));
 		jint id = env->CallIntMethod(usbInterface, getIdMethod);
 		interfaceIds.push_back(id);
-		env->DeleteLocalRef(usbInterface);
 	}
-
-	env->DeleteLocalRef(usbDeviceClass);
-	env->DeleteLocalRef(usbInterfaceClass);
 
 	std::sort(interfaceIds.begin(), interfaceIds.end());
 	interfaceIds.erase(std::unique(interfaceIds.begin(), interfaceIds.end()), interfaceIds.end());
@@ -244,31 +201,29 @@ static int getNthInterfaceId(JNIEnv *env, jobject usbDevice, int n) {
 // Returns the native fd for the device, or -1 on failure.
 // Also outputs the UsbDeviceConnection via outConnection (as a global ref) —
 // you MUST keep this alive for as long as libusb is using the fd.
-static intptr_t openUsbDeviceAndGetFd(JNIEnv *env, jobject usbManager, jobject usbDev, jobject *outConnection) {
-	jclass usbManagerClass = env->GetObjectClass(usbManager);
+static intptr_t openUsbDeviceAndGetFd(JNIEnv *env, jobject usbManager, jobject usbDev, jni::Object& outConnection) {
+	jni::Class usbManagerClass(env->GetObjectClass(usbManager));
 	jmethodID openDeviceMethod = env->GetMethodID(
-			usbManagerClass, "openDevice",
-			"(Landroid/hardware/usb/UsbDevice;)Landroid/hardware/usb/UsbDeviceConnection;");
+		usbManagerClass,
+		"openDevice",
+		"(Landroid/hardware/usb/UsbDevice;)Landroid/hardware/usb/UsbDeviceConnection;"
+	);
 
-	jobject connection = env->CallObjectMethod(usbManager, openDeviceMethod, usbDev);
-	env->DeleteLocalRef(usbManagerClass);
+	jni::Object connection(env->CallObjectMethod(usbManager, openDeviceMethod, usbDev));
 
 	if (connection == nullptr) {
 		// openDevice failed — permission not granted, or device disconnected
 		return -1;
 	}
 
-	jclass connectionClass = env->GetObjectClass(connection);
-	jmethodID getFileDescriptorMethod = env->GetMethodID(
-			connectionClass, "getFileDescriptor", "()I");
+	jni::Class connectionClass(env->GetObjectClass(connection));
+	jmethodID getFileDescriptorMethod = env->GetMethodID(connectionClass, "getFileDescriptor", "()I");
 
 	jint fd = env->CallIntMethod(connection, getFileDescriptorMethod);
-	env->DeleteLocalRef(connectionClass);
 
 	// Promote to global ref so it survives past this call — required since
 	// libusb will use the fd beyond the lifetime of this native call frame
-	*outConnection = env->NewGlobalRef(connection);
-	env->DeleteLocalRef(connection);
+	outConnection = connection.globalRef<jni::Object>();
 
 	return (intptr_t)fd;
 }
@@ -291,26 +246,25 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 	}
 
 	// Attempt to retrieve the UsbDevice for this serial number
-	jobject usbDev = findUsbDeviceByVidPidSerial(
+	jni::Object usbDev = findUsbDeviceByVidPidSerial(
 		env,
 		usbManager,
 		DreamPicoPort::VID,
 		DreamPicoPort::PID,
-		hwInfo.base_info.serial_number.c_str()
+		hwInfo.base_info.serial_number
 	);
 
-	if (!usbDev)
+	if (usbDev.isNull())
 	{
 		// Probably don't have permission yet
 		NOTICE_LOG(INPUT, "Failed to retrieve DreamPicoPort UsbDevice for %s", hwInfo.base_info.serial_number.c_str());
 		return std::nullopt;
 	}
 
-	jclass inputDeviceClass = env->FindClass("android/view/InputDevice");
-	if (!inputDeviceClass)
+	jni::Class inputDeviceClass(env->FindClass("android/view/InputDevice"));
+	if (inputDeviceClass.isNull())
 	{
 		NOTICE_LOG(INPUT, "Failed to locate android/view/InputDevice");
-		env->DeleteLocalRef(usbDev);
 		return std::nullopt;
 	}
 
@@ -318,8 +272,6 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 	if (!getDeviceMethodId)
 	{
 		NOTICE_LOG(INPUT, "Failed to locate InputDevice.getDevice()");
-		env->DeleteLocalRef(inputDeviceClass);
-		env->DeleteLocalRef(usbDev);
 		return std::nullopt;
 	}
 
@@ -327,8 +279,6 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 	if (!getNameMethodId)
 	{
 		NOTICE_LOG(INPUT, "Failed to locate InputDevice.getName()");
-		env->DeleteLocalRef(inputDeviceClass);
-		env->DeleteLocalRef(usbDev);
 		return std::nullopt;
 	}
 
@@ -365,25 +315,17 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 		hwInfo.base_info.is_single_device = false;
 	}
 
-	env->DeleteLocalRef(inputDeviceClass);
-
 	// Interfaces 0-3 correspond to the four gamepad ports. If only ports B and D are connected,
 	// their interface IDs would otherwise be seen as 0 and 1; remapping them to their true
 	// slot indices (1 and 3) keeps hardware_bus consistent with the physical port layout.
 	hwInfo.base_info.hardware_bus = getNthInterfaceId(env, usbDev, hwInfo.base_info.hardware_bus);
 
 	// TODO: it may be a good idea to cache serial -> usb_device_connection so it's not opened 4 times
-	hwInfo.base_info.sys_dev = openUsbDeviceAndGetFd(env, usbManager, usbDev, &hwInfo.usb_device_connection);
-
-	env->DeleteLocalRef(usbDev);
+	hwInfo.base_info.sys_dev = openUsbDeviceAndGetFd(env, usbManager, usbDev, hwInfo.usb_device_connection);
 
 	if (hwInfo.base_info.sys_dev < 0)
 	{
 		NOTICE_LOG(INPUT, "Failed to open file descriptor to DreamPicoPort device");
-		if (hwInfo.usb_device_connection)
-		{
-			env->DeleteGlobalRef(hwInfo.usb_device_connection);
-		}
 		return std::nullopt;
 	}
 
@@ -405,16 +347,9 @@ static std::shared_ptr<AndroidDreamPicoPort> make_dpp(
 		return nullptr;
 	}
 
-	if (hwInfo->base_info.hardware_bus >= 0 && hwInfo->usb_device_connection)
+	if (hwInfo->base_info.hardware_bus >= 0 && !hwInfo->usb_device_connection.isNull())
 	{
 		return std::make_shared<AndroidDreamPicoPort>(maple_port, hwInfo.value());
-	}
-	else
-	{
-		if (hwInfo->usb_device_connection)
-		{
-			env->DeleteGlobalRef(hwInfo->usb_device_connection);
-		}
 	}
 
 	return nullptr;

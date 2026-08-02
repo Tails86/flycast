@@ -23,6 +23,7 @@
 #include "ui/vgamepad.h"
 #include "cfg/option.h"
 #include "hw/maple/maple_if.h"
+#include "jni_util.h"
 
 static std::shared_ptr<AndroidMouse> mouse;
 static std::shared_ptr<TouchMouse> touchMouse;
@@ -123,8 +124,8 @@ static AndroidGamepadDevice::AndroidJoystickData getJoystickData(JNIEnv *env, jo
 	if (obj == nullptr)
 		return data;
 
-	jclass inputDeviceManagerClass = env->GetObjectClass(obj);
-	if (inputDeviceManagerClass == nullptr)
+	jni::Class inputDeviceManagerClass(env->GetObjectClass(obj));
+	if (inputDeviceManagerClass.isNull())
 		return data;
 
 	jmethodID getJoystickDataMid = env->GetStaticMethodID(
@@ -134,22 +135,18 @@ static AndroidGamepadDevice::AndroidJoystickData getJoystickData(JNIEnv *env, jo
 	);
 	if (getJoystickDataMid == nullptr)
 	{
-		env->DeleteLocalRef(inputDeviceManagerClass);
 		return data;
 	}
 
-	jobject joystickData = env->CallStaticObjectMethod(inputDeviceManagerClass, getJoystickDataMid, id);
-	if (joystickData == nullptr)
+	jni::Object joystickData(env->CallStaticObjectMethod(inputDeviceManagerClass, getJoystickDataMid, id));
+	if (joystickData.isNull())
 	{
-		env->DeleteLocalRef(inputDeviceManagerClass);
 		return data;
 	}
 
-	jclass joystickDataClass = env->GetObjectClass(joystickData);
-	if (joystickDataClass == nullptr)
+	jni::Class joystickDataClass(env->GetObjectClass(joystickData));
+	if (joystickDataClass.isNull())
 	{
-		env->DeleteLocalRef(joystickData);
-		env->DeleteLocalRef(inputDeviceManagerClass);
 		return data;
 	}
 
@@ -170,47 +167,27 @@ static AndroidGamepadDevice::AndroidJoystickData getJoystickData(JNIEnv *env, jo
 
 	if (joynameFid != nullptr)
 	{
-		jstring joyname = (jstring)env->GetObjectField(joystickData, joynameFid);
-		if (joyname != nullptr)
-		{
-			data.joyname = jni::String(joyname, false);
-			env->DeleteLocalRef(joyname);
-		}
+		jni::String joyname(env->GetObjectField(joystickData, joynameFid));
+		data.joyname = joyname.to_string();
 	}
 
 	if (uniqueIdFid != nullptr)
 	{
-		jstring uniqueId = (jstring)env->GetObjectField(joystickData, uniqueIdFid);
-		if (uniqueId != nullptr)
-		{
-			data.uniqueId = jni::String(uniqueId, false);
-			env->DeleteLocalRef(uniqueId);
-		}
+		jni::String uniqueId(env->GetObjectField(joystickData, uniqueIdFid));
+		data.uniqueId = uniqueId.to_string();
 	}
 
 	if (fullAxesFid != nullptr)
 	{
-		jintArray fullAxes = (jintArray)env->GetObjectField(joystickData, fullAxesFid);
-		if (fullAxes != nullptr)
-		{
-			data.fullAxes = jni::IntArray(fullAxes, false);
-			env->DeleteLocalRef(fullAxes);
-		}
+		jni::IntArray fullAxes(env->GetObjectField(joystickData, fullAxesFid));
+		data.fullAxes = fullAxes;
 	}
 
 	if (halfAxesFid != nullptr)
 	{
-		jintArray halfAxes = (jintArray)env->GetObjectField(joystickData, halfAxesFid);
-		if (halfAxes != nullptr)
-		{
-			data.halfAxes = jni::IntArray(halfAxes, false);
-			env->DeleteLocalRef(halfAxes);
-		}
+		jni::IntArray halfAxes(env->GetObjectField(joystickData, halfAxesFid));
+		data.halfAxes = halfAxes;
 	}
-
-	env->DeleteLocalRef(joystickDataClass);
-	env->DeleteLocalRef(joystickData);
-	env->DeleteLocalRef(inputDeviceManagerClass);
 
 	return data;
 }
