@@ -591,7 +591,6 @@ u32 DppMapleLinkDevice::dma(u32 cmd)
         virtualVmuDma(cmd);
     }
 
-    u32 response = MDRS_JVSNone;
     std::unique_lock<std::mutex> lock(writeMutex, std::defer_lock);
 
     // If doing write operation, serialize operation and delay 10 ms between writes

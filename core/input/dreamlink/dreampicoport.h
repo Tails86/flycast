@@ -214,8 +214,6 @@ private:
     std::chrono::milliseconds timeout_ms = {};
     //! The bus ID dictated by flycast
     int software_bus = -1;
-    //! The queried interface version
-    double interface_version = 0.0;
     //! Set to true if update is required
     bool update_required = false;
     //! The queried peripherals; for each function, index 0 is function code and index 1 is the function definition
