@@ -1,6 +1,7 @@
 package com.hollycast.emulator;
 
 import android.content.Context;
+import android.content.Intent;
 import android.os.Bundle;
 import android.text.InputType;
 import android.util.Log;
@@ -13,6 +14,8 @@ import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.RelativeLayout;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbManager;
 
 import androidx.annotation.Nullable;
 
@@ -40,6 +43,19 @@ public final class NativeGLActivity extends BaseGLActivity {
 
         setContentView(mLayout);
         Log.i("hollycast", "NativeGLActivity.onCreate done");
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent); // so getIntent() reflects the latest one if you read it elsewhere
+
+        if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())) {
+            UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+            if (device != null) {
+                InputDeviceManager.getInstance().handleUsbDeviceAttached(device);
+            }
+        }
     }
 
     @Override

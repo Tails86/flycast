@@ -99,6 +99,12 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         }
     };
 
+    public void handleUsbDeviceAttached(UsbDevice device) {
+        if (usbManager.hasPermission(device)) {
+            permissionGranted(usbManager, getKnownDeviceIdsByVidPid(device.getVendorId(), device.getProductId()));
+        }
+    }
+
     public InputDeviceManager()
     {
         init();
@@ -116,6 +122,13 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         inputManager = (InputManager)applicationContext.getSystemService(Context.INPUT_SERVICE);
         inputManager.registerInputDeviceListener(this, null);
         usbManager = (UsbManager)applicationContext.getSystemService(Context.USB_SERVICE);
+
+        // Parse already-known devices
+        int[] ids = InputDevice.getDeviceIds();
+        for (int i = 0; i < ids.length; i++) {
+            int id = ids[i];
+            onInputDeviceAdded(id);
+        }
     }
 
     public void stopListening()
@@ -150,7 +163,19 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
     }
 
     @Override
-    public void onInputDeviceAdded(int i) {
+    public void onInputDeviceAdded(int id) {
+        if (id == 0)
+            return;
+        if (knownDevices.contains(id))
+            return;
+        InputDevice device = InputDevice.getDevice(id);
+
+        int vid = device.getVendorId();
+        int pid = device.getProductId();
+        if (isPriorityDevice(vid, pid)) {
+            // Create this device now
+            createDevice(id);
+        }
     }
 
     @Override
@@ -412,6 +437,11 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         }
 
         return result;
+    }
+
+    private boolean isPriorityDevice(int vendorId, int productId) {
+        // At the moment, devices which have priority are 1:1 with devices that require permission
+        return isPermissionRequired(vendorId, productId);
     }
 
     public native void init();
