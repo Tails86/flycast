@@ -60,14 +60,34 @@ public:
 class AndroidGamepadDevice : public GamepadDevice
 {
 public:
-	AndroidGamepadDevice(int maple_port, int id, const char *name, const char *unique_id,
-			const std::vector<int>& fullAxes, const std::vector<int>& halfAxes)
-		: GamepadDevice(maple_port, "Android"), android_id(id),
-		  fullAxes(fullAxes), halfAxes(halfAxes)
+	//! Contains all pertinent joystick data from Android
+	struct AndroidJoystickData
 	{
-		_name = name;
-		_unique_id = unique_id;
-		INFO_LOG(INPUT, "Android: Opened joystick %d on port %d: '%s' descriptor '%s'", id, maple_port, _name.c_str(), _unique_id.c_str());
+		int id = -1;
+		int vid = -1;
+		int pid = -1;
+		std::string joyname = {};
+		std::string uniqueId = {};
+		std::vector<int> fullAxes = {};
+		std::vector<int> halfAxes = {};
+		bool hasRumble = false;
+	};
+
+public:
+	AndroidGamepadDevice(int maple_port, const AndroidJoystickData& joystickData)
+		: GamepadDevice(maple_port, "Android"), android_id(joystickData.id),
+		  fullAxes(joystickData.fullAxes), halfAxes(joystickData.halfAxes)
+	{
+		_name = joystickData.joyname;
+		_unique_id = joystickData.uniqueId;
+		INFO_LOG(
+			INPUT,
+			"Android: Opened joystick %d on port %d: '%s' descriptor '%s'",
+			joystickData.id,
+			maple_port,
+			_name.c_str(),
+			_unique_id.c_str()
+		);
 
 		loadMapping();
 		for (int axis : halfAxes)
@@ -76,6 +96,8 @@ public:
 			input_mapper->deleteTrigger(axis);
 		save_mapping();
 		hasAnalogStick = !fullAxes.empty();
+
+		setRumbleEnabled(joystickData.hasRumble);
 	}
 	~AndroidGamepadDevice() override {
 		INFO_LOG(INPUT, "Android: Joystick '%s' on port %d disconnected", _name.c_str(), maple_port());

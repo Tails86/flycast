@@ -44,11 +44,7 @@ protected:
 	DreamLinkAndroidGamepad(
 		std::shared_ptr<GamepadDreamLink> dreamlink,
 		int maple_port,
-		int id,
-		const char *name,
-		const char *unique_id,
-		const std::vector<int>& fullAxes,
-		const std::vector<int>& halfAxes
+		const AndroidGamepadDevice::AndroidJoystickData& joystickData
 	);
 	std::shared_ptr<InputMapping> getDefaultMapping() override;
 	void setBaseDefaultMapping(const std::shared_ptr<InputMapping>& mapping) const;
@@ -60,13 +56,7 @@ protected:
 
 std::shared_ptr<DreamLinkAndroidGamepad> createDreamLinkAndroidGamepad(
 	JNIEnv *env,
+	jobject usbManager,
 	int maple_port,
-	int id,
-	const char *name,
-	const char *unique_id,
-	const std::vector<int>& fullAxes,
-	const std::vector<int>& halfAxes,
-	int vid,
-	int pid,
-	jobject usbManager
+	const AndroidGamepadDevice::AndroidJoystickData& joystickData
 );

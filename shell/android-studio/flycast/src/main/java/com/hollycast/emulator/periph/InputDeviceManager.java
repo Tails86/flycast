@@ -25,10 +25,28 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.commons.lang3.ArrayUtils;
-
 public final class InputDeviceManager implements InputManager.InputDeviceListener {
     public static final int VIRTUAL_GAMEPAD_ID = 0x12345678;
+
+    public static final class JoystickData {
+        public final int vid;
+        public final int pid;
+        public final String joyname;
+        public final String uniqueId;
+        public final int[] fullAxes;
+        public final int[] halfAxes;
+        public final boolean hasRumble;
+
+        public JoystickData(int vid, int pid, String joyname, String uniqueId, int[] fullAxes, int[] halfAxes, boolean hasRumble) {
+            this.vid = vid;
+            this.pid = pid;
+            this.joyname = joyname;
+            this.uniqueId = uniqueId;
+            this.fullAxes = fullAxes;
+            this.halfAxes = halfAxes;
+            this.hasRumble = hasRumble;
+        }
+    }
 
     private static final String ACTION_USB_PERMISSION = "com.hollycast.emulator.USB_PERMISSION";
 
@@ -66,8 +84,8 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
 
                     if (granted && device != null) {
                         permissionGranted(
-                            getKnownDeviceIdsByVidPid(device.getVendorId(), device.getProductId()),
-                            usbManager
+                            usbManager,
+                            getKnownDeviceIdsByVidPid(device.getVendorId(), device.getProductId())
                         );
                     }
 
@@ -93,18 +111,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         hasTouchscreen = applicationContext.getPackageManager().hasSystemFeature("android.hardware.touchscreen");
         if (hasTouchscreen)
         {
-            joystickAdded(
-                VIRTUAL_GAMEPAD_ID,
-                null,
-                0,
-                null,
-                null,
-                null,
-                getVibrator(VIRTUAL_GAMEPAD_ID) != null,
-                0,
-                0,
-                null
-            );
+            joystickAdded(usbManager, VIRTUAL_GAMEPAD_ID, 0);
         }
         inputManager = (InputManager)applicationContext.getSystemService(Context.INPUT_SERVICE);
         inputManager.registerInputDeviceListener(this, null);
@@ -285,64 +292,15 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         if ((device.getSources() & InputDevice.SOURCE_CLASS_JOYSTICK) == InputDevice.SOURCE_CLASS_JOYSTICK) {
             port = this.maple_port == 3 ? 3 : this.maple_port++;
         }
-        List<InputDevice.MotionRange> axes = device.getMotionRanges();
-        List<Integer> fullAxes = new ArrayList<>();
-        List<Integer> halfAxes = new ArrayList<>();
-        for (InputDevice.MotionRange range : axes) {
-            if ((range.getSource() & InputDevice.SOURCE_CLASS_MASK) != InputDevice.SOURCE_CLASS_JOYSTICK)
-                // Ignore mouse/touchpad axes
-                continue;
-            if (range.getMin() == 0)
-                halfAxes.add(range.getAxis());
-            else
-                fullAxes.add(range.getAxis());
-        }
 
         int vid = device.getVendorId();
         int pid = device.getProductId();
-
         if (isPermissionRequired(vid, pid))
         {
-            HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
-
-            for (UsbDevice usbDevice : deviceList.values()) {
-                if (usbDevice.getVendorId() == vid && usbDevice.getProductId() == pid) {
-                    final String devName = usbDevice.getDeviceName();
-                    if (!usbManager.hasPermission(usbDevice) && !pendingPermissionRequests.contains(devName)) {
-
-                        pendingPermissionRequests.add(devName);
-                        ensureReceiverRegistered();
-
-                        final UsbDevice finalUsbDevice = usbDevice;
-                        new Handler(Looper.getMainLooper()).post(() -> {
-                            int flags = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                                ? PendingIntent.FLAG_MUTABLE
-                                : 0;
-
-                            Intent intent = new Intent(ACTION_USB_PERMISSION);
-                            intent.setPackage(appContext.getPackageName());
-
-                            PendingIntent permissionIntent = PendingIntent.getBroadcast(appContext, 0, intent, flags);
-
-                            usbManager.requestPermission(finalUsbDevice, permissionIntent);
-                        });
-                    }
-                }
-            }
+            requestUsbPermission(vid, pid);
         }
 
-        joystickAdded(
-            id,
-            device.getName(),
-            port,
-            device.getDescriptor(),
-            ArrayUtils.toPrimitive(fullAxes.toArray(new Integer[0])),
-            ArrayUtils.toPrimitive(halfAxes.toArray(new Integer[0])),
-            getVibrator(id) != null,
-            vid,
-            pid,
-            usbManager
-        );
+        joystickAdded(usbManager, id, port);
 
         knownDevices.add(id);
         return true;
@@ -362,6 +320,76 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
 
     public static InputDeviceManager getInstance() {
         return INSTANCE;
+    }
+
+    public static JoystickData getJoystickData(int id) {
+        InputDevice device = InputDevice.getDevice(id);
+        if (device == null) {
+            return null;
+        }
+
+        List<InputDevice.MotionRange> axes = device.getMotionRanges();
+        List<Integer> fullAxes = new ArrayList<>();
+        List<Integer> halfAxes = new ArrayList<>();
+        for (InputDevice.MotionRange range : axes) {
+            if ((range.getSource() & InputDevice.SOURCE_CLASS_MASK) != InputDevice.SOURCE_CLASS_JOYSTICK)
+                // Ignore mouse/touchpad axes
+                continue;
+            if (range.getMin() == 0)
+                halfAxes.add(range.getAxis());
+            else
+                fullAxes.add(range.getAxis());
+        }
+
+        int[] fullAxesArray = new int[fullAxes.size()];
+        for (int i = 0; i < fullAxesArray.length; i++) {
+            fullAxesArray[i] = fullAxes.get(i);
+        }
+
+        int[] halfAxesArray = new int[halfAxes.size()];
+        for (int i = 0; i < halfAxesArray.length; i++) {
+            halfAxesArray[i] = halfAxes.get(i);
+        }
+
+        return new JoystickData(
+            device.getVendorId(),
+            device.getProductId(),
+            device.getName(),
+            device.getDescriptor(),
+            fullAxesArray,
+            halfAxesArray,
+            INSTANCE.getVibrator(id) != null
+        );
+    }
+
+    private void requestUsbPermission(int vendorId, int productId) {
+        HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
+
+        for (UsbDevice usbDevice : deviceList.values()) {
+            if (usbDevice.getVendorId() == vendorId && usbDevice.getProductId() == productId) {
+                // This is the device's unique kernel file path
+                final String devName = usbDevice.getDeviceName();
+                if (!usbManager.hasPermission(usbDevice) && !pendingPermissionRequests.contains(devName)) {
+
+                    pendingPermissionRequests.add(devName);
+                    ensureReceiverRegistered();
+
+                    final UsbDevice finalUsbDevice = usbDevice;
+                    new Handler(Looper.getMainLooper()).post(() -> {
+                        int flags = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                            ? PendingIntent.FLAG_MUTABLE
+                            : 0;
+
+                        Intent intent = new Intent(ACTION_USB_PERMISSION);
+                        intent.setPackage(appContext.getPackageName());
+
+                        PendingIntent permissionIntent = PendingIntent.getBroadcast(appContext, 0, intent, flags);
+
+                        usbManager.requestPermission(finalUsbDevice, permissionIntent);
+                    });
+                }
+            }
+        }
     }
 
     private int[] getKnownDeviceIdsByVidPid(int vendorId, int productId) {
@@ -396,10 +424,8 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
     public native void mouseScrollEvent(int scrollValue);
     public native void touchMouseEvent(int xpos, int ypos, int buttons);
     private native boolean isPermissionRequired(int vendorId, int productId);
-    private native void joystickAdded(
-        int id, String name, int maple_port, String uniqueId, int[] fullAxes, int[] halfAxes, boolean rumbleEnabled,
-        int vendorId, int productId, UsbManager usbManager);
-    private native void permissionGranted(int[] ids, UsbManager usbManager);
+    private native void joystickAdded(UsbManager usbManager, int id, int maple_port);
+    private native void permissionGranted(UsbManager usbManager, int[] ids);
     private native void joystickRemoved(int id);
     public native boolean keyboardEvent(int key, boolean pressed);
     public native void keyboardText(int c);

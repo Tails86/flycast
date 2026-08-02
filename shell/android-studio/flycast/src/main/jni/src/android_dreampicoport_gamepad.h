@@ -70,13 +70,9 @@ public:
 public:
 	AndroidDreamPicoPortGamepad(
 		JNIEnv *env,
+		jobject usbManager,
 		int maple_port,
-		int id,
-		const char *name,
-		const char *unique_id,
-		const std::vector<int>& fullAxes,
-		const std::vector<int>& halfAxes,
-		jobject usbManager
+		const AndroidGamepadDevice::AndroidJoystickData& joystickData
 	);
 	~AndroidDreamPicoPortGamepad();
 

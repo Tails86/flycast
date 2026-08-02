@@ -65,13 +65,9 @@ bool DreamLinkAndroidGamepad::isPermissionRequired(int vid, int pid)
 DreamLinkAndroidGamepad::DreamLinkAndroidGamepad(
 	std::shared_ptr<GamepadDreamLink> dreamlink,
 	int maple_port,
-	int id,
-	const char *name,
-	const char *unique_id,
-	const std::vector<int>& fullAxes,
-	const std::vector<int>& halfAxes
+	const AndroidGamepadDevice::AndroidJoystickData& joystickData
 )
-	: AndroidGamepadDevice(maple_port, id, name, unique_id, fullAxes, halfAxes), dreamlink(std::move(dreamlink))
+	: AndroidGamepadDevice(maple_port, joystickData), dreamlink(std::move(dreamlink))
 {}
 
 const char* DreamLinkAndroidGamepad::status()
@@ -190,27 +186,12 @@ void DreamLinkAndroidGamepad::updateDreamLink(std::shared_ptr<GamepadDreamLink> 
 
 std::shared_ptr<DreamLinkAndroidGamepad> createDreamLinkAndroidGamepad(
 	JNIEnv *env,
+	jobject usbManager,
 	int maple_port,
-	int id,
-	const char *name,
-	const char *unique_id,
-	const std::vector<int>& fullAxes,
-	const std::vector<int>& halfAxes,
-	int vid,
-	int pid,
-	jobject usbManager
+	const AndroidGamepadDevice::AndroidJoystickData& joystickData
 )
 {
-	if (AndroidDreamPicoPortGamepad::identify(vid, pid))
-		return std::make_shared<AndroidDreamPicoPortGamepad>(
-			env,
-			maple_port,
-			id,
-			name,
-			unique_id,
-			fullAxes,
-			halfAxes,
-			usbManager
-		);
+	if (AndroidDreamPicoPortGamepad::identify(joystickData.vid, joystickData.pid))
+		return std::make_shared<AndroidDreamPicoPortGamepad>(env, usbManager, maple_port, joystickData);
 	return nullptr;
 }

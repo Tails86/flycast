@@ -117,27 +117,119 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_hollycast_emulator_periph_InputDe
 	return DreamLinkAndroidGamepad::isPermissionRequired(vendorId, productId);
 }
 
+static AndroidGamepadDevice::AndroidJoystickData getJoystickData(JNIEnv *env, jobject obj, jint id)
+{
+	AndroidGamepadDevice::AndroidJoystickData data { id };
+	if (obj == nullptr)
+		return data;
+
+	jclass inputDeviceManagerClass = env->GetObjectClass(obj);
+	if (inputDeviceManagerClass == nullptr)
+		return data;
+
+	jmethodID getJoystickDataMid = env->GetStaticMethodID(
+		inputDeviceManagerClass,
+		"getJoystickData",
+		"(I)Lcom/hollycast/emulator/periph/InputDeviceManager$JoystickData;"
+	);
+	if (getJoystickDataMid == nullptr)
+	{
+		env->DeleteLocalRef(inputDeviceManagerClass);
+		return data;
+	}
+
+	jobject joystickData = env->CallStaticObjectMethod(inputDeviceManagerClass, getJoystickDataMid, id);
+	if (joystickData == nullptr)
+	{
+		env->DeleteLocalRef(inputDeviceManagerClass);
+		return data;
+	}
+
+	jclass joystickDataClass = env->GetObjectClass(joystickData);
+	if (joystickDataClass == nullptr)
+	{
+		env->DeleteLocalRef(joystickData);
+		env->DeleteLocalRef(inputDeviceManagerClass);
+		return data;
+	}
+
+	jfieldID vidFid = env->GetFieldID(joystickDataClass, "vid", "I");
+	jfieldID pidFid = env->GetFieldID(joystickDataClass, "pid", "I");
+	jfieldID joynameFid = env->GetFieldID(joystickDataClass, "joyname", "Ljava/lang/String;");
+	jfieldID uniqueIdFid = env->GetFieldID(joystickDataClass, "uniqueId", "Ljava/lang/String;");
+	jfieldID fullAxesFid = env->GetFieldID(joystickDataClass, "fullAxes", "[I");
+	jfieldID halfAxesFid = env->GetFieldID(joystickDataClass, "halfAxes", "[I");
+	jfieldID hasRumbleFid = env->GetFieldID(joystickDataClass, "hasRumble", "Z");
+
+	if (vidFid != nullptr)
+		data.vid = env->GetIntField(joystickData, vidFid);
+	if (pidFid != nullptr)
+		data.pid = env->GetIntField(joystickData, pidFid);
+	if (hasRumbleFid != nullptr)
+		data.hasRumble = env->GetBooleanField(joystickData, hasRumbleFid) == JNI_TRUE;
+
+	if (joynameFid != nullptr)
+	{
+		jstring joyname = (jstring)env->GetObjectField(joystickData, joynameFid);
+		if (joyname != nullptr)
+		{
+			data.joyname = jni::String(joyname, false);
+			env->DeleteLocalRef(joyname);
+		}
+	}
+
+	if (uniqueIdFid != nullptr)
+	{
+		jstring uniqueId = (jstring)env->GetObjectField(joystickData, uniqueIdFid);
+		if (uniqueId != nullptr)
+		{
+			data.uniqueId = jni::String(uniqueId, false);
+			env->DeleteLocalRef(uniqueId);
+		}
+	}
+
+	if (fullAxesFid != nullptr)
+	{
+		jintArray fullAxes = (jintArray)env->GetObjectField(joystickData, fullAxesFid);
+		if (fullAxes != nullptr)
+		{
+			data.fullAxes = jni::IntArray(fullAxes, false);
+			env->DeleteLocalRef(fullAxes);
+		}
+	}
+
+	if (halfAxesFid != nullptr)
+	{
+		jintArray halfAxes = (jintArray)env->GetObjectField(joystickData, halfAxesFid);
+		if (halfAxes != nullptr)
+		{
+			data.halfAxes = jni::IntArray(halfAxes, false);
+			env->DeleteLocalRef(halfAxes);
+		}
+	}
+
+	env->DeleteLocalRef(joystickDataClass);
+	env->DeleteLocalRef(joystickData);
+	env->DeleteLocalRef(inputDeviceManagerClass);
+
+	return data;
+}
+
 extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_joystickAdded(
 	JNIEnv *env,
 	jobject obj,
+	jobject usbManager,
 	jint id,
-	jstring name,
-	jint maple_port,
-	jstring junique_id,
-	jintArray fullAxes,
-	jintArray halfAxes,
-	jboolean hasRumble,
-	jint vendorId,
-	jint productId,
-	jobject usbManager
+	jint maple_port
 )
 {
 	if (id == 0)
 		return;
+	AndroidGamepadDevice::AndroidJoystickData joystickData = getJoystickData(env, obj, id);
 	if (id == AndroidVirtualGamepad::GAMEPAD_ID)
 	{
 		if (virtualGamepad == nullptr) {
-			virtualGamepad = std::make_shared<AndroidVirtualGamepad>(hasRumble);
+			virtualGamepad = std::make_shared<AndroidVirtualGamepad>(joystickData.hasRumble);
 			GamepadDevice::Register(virtualGamepad);
 		}
 		if (touchMouse == nullptr) {
@@ -147,39 +239,22 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 	}
 	else
 	{
-		std::string joyname = jni::String(name, false);
-		std::string unique_id = jni::String(junique_id, false);
-		std::vector<int> full = jni::IntArray(fullAxes, false);
-		std::vector<int> half = jni::IntArray(halfAxes, false);
-
 		std::shared_ptr<AndroidGamepadDevice> gamepad;
-		if (DreamLinkAndroidGamepad::isDreamLinkGamepad(vendorId, productId)) {
-			gamepad = createDreamLinkAndroidGamepad(
-				env,
-				maple_port,
-				id,
-				joyname.c_str(),
-				unique_id.c_str(),
-				full,
-				half,
-				vendorId,
-				productId,
-				usbManager
-			);
+		if (DreamLinkAndroidGamepad::isDreamLinkGamepad(joystickData.vid, joystickData.pid)) {
+			gamepad = createDreamLinkAndroidGamepad(env, usbManager, maple_port, joystickData);
 		}
 		else {
-			gamepad = std::make_shared<AndroidGamepadDevice>(maple_port, id, joyname.c_str(), unique_id.c_str(), full, half);
+			gamepad = std::make_shared<AndroidGamepadDevice>(maple_port, joystickData);
 		}
 		AndroidGamepadDevice::AddAndroidGamepad(gamepad);
-		gamepad->setRumbleEnabled(hasRumble);
 	}
 }
 
 extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_permissionGranted(
 	JNIEnv *env,
 	jobject obj,
-	jintArray ids,
-	jobject usbManager
+	jobject usbManager,
+	jintArray ids
 )
 {
 	std::vector<int> idVec = jni::IntArray(ids, false);

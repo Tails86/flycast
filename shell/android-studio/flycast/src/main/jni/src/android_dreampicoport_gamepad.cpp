@@ -395,7 +395,7 @@ static std::shared_ptr<AndroidDreamPicoPort> make_dpp(
 	jobject usbManager,
 	int maple_port,
 	int id,
-	const char *name
+	const std::string& name
 )
 {
 	std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> hwInfo = parse_hw_info(env, usbManager, id, name);
@@ -422,25 +422,17 @@ static std::shared_ptr<AndroidDreamPicoPort> make_dpp(
 
 AndroidDreamPicoPortGamepad::AndroidDreamPicoPortGamepad(
 	JNIEnv *env,
+	jobject usbManager,
 	int maple_port,
-	int id,
-	const char *name,
-	const char *unique_id,
-	const std::vector<int>& fullAxes,
-	const std::vector<int>& halfAxes,
-	jobject usbManager
+	const AndroidGamepadDevice::AndroidJoystickData& joystickData
 ) :
 	DreamLinkAndroidGamepad(
-		make_dpp(env, usbManager, maple_port, id, name),
+		make_dpp(env, usbManager, maple_port, joystickData.id, joystickData.joyname),
 		maple_port,
-		id,
-		name,
-		unique_id,
-		fullAxes,
-		halfAxes
+		joystickData
 	),
 	dpp(std::dynamic_pointer_cast<AndroidDreamPicoPort>(dreamlink)),
-	android_name(name)
+	android_name(joystickData.joyname)
 {
 	// The name will be the main device name, not the specific gamepad name
 	// e.x. "OrangeFox86 DreamPicoPort-E66141040371972A v1.2.4"
@@ -515,7 +507,7 @@ void AndroidDreamPicoPortGamepad::permissionGranted(JNIEnv *env, jobject usbMana
 {
 	if (!dpp) {
 		// Try to recreate the device and update parent if this was successful
-		dpp = make_dpp(env, usbManager, maple_port(), get_android_id(), android_name.c_str());
+		dpp = make_dpp(env, usbManager, maple_port(), get_android_id(), android_name);
 		if (dpp) {
 			updateNames();
 			updateDreamLink(dpp);
