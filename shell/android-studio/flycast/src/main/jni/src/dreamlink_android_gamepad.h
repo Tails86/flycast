@@ -38,7 +38,7 @@ public:
 	static bool isPermissionRequired(int vid, int pid);
 	void resetMappingToDefault(bool arcade, bool gamepad) override;
 	void close(JNIEnv *env) override;
-	virtual void permissionGranted(JNIEnv *env, jobject usbManager) = 0;
+	virtual bool isAwaitingPermission() const = 0;
 
 protected:
 	DreamLinkAndroidGamepad(
@@ -49,7 +49,6 @@ protected:
 	std::shared_ptr<InputMapping> getDefaultMapping() override;
 	void setBaseDefaultMapping(const std::shared_ptr<InputMapping>& mapping) const;
 	virtual void setCustomMapping(const std::shared_ptr<InputMapping>& mapping) {}
-	void updateDreamLink(std::shared_ptr<GamepadDreamLink> dreamlink);
 
 	std::shared_ptr<GamepadDreamLink> dreamlink;
 };

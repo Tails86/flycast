@@ -174,16 +174,6 @@ void DreamLinkAndroidGamepad::setBaseDefaultMapping(const std::shared_ptr<InputM
 	}
 }
 
-void DreamLinkAndroidGamepad::updateDreamLink(std::shared_ptr<GamepadDreamLink> dreamlink)
-{
-	this->dreamlink = std::move(dreamlink);
-	if (this->dreamlink)
-	{
-		this->dreamlink->changeBus(maple_port());
-		this->dreamlink->registered();
-	}
-}
-
 std::shared_ptr<DreamLinkAndroidGamepad> createDreamLinkAndroidGamepad(
 	JNIEnv *env,
 	jobject usbManager,

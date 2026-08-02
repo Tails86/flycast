@@ -227,24 +227,6 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 	}
 }
 
-extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_permissionGranted(
-	JNIEnv *env,
-	jobject obj,
-	jobject usbManager,
-	jintArray ids
-)
-{
-	std::vector<int> idVec = jni::IntArray(ids, false);
-	for (int id : idVec) {
-		// TODO: it may be better to remove and re-add rather than try to grant permission while installed
-		std::shared_ptr<AndroidGamepadDevice> device = AndroidGamepadDevice::GetAndroidGamepad(id);
-		std::shared_ptr<DreamLinkAndroidGamepad> dreamLinkDevice = std::dynamic_pointer_cast<DreamLinkAndroidGamepad>(device);
-		if (dreamLinkDevice) {
-			dreamLinkDevice->permissionGranted(env, usbManager);
-		}
-	}
-}
-
 extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_joystickRemoved(JNIEnv *env, jobject obj,
 		jint id)
 {
@@ -259,6 +241,26 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 		std::shared_ptr<AndroidGamepadDevice> device = AndroidGamepadDevice::GetAndroidGamepad(id);
 		if (device)
 			AndroidGamepadDevice::RemoveAndroidGamepad(env, device);
+	}
+}
+
+extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDeviceManager_permissionGranted(
+	JNIEnv *env,
+	jobject obj,
+	jobject usbManager,
+	jintArray ids
+)
+{
+	// Remove and re-add each device that is waiting for permission so it may see if it can get permission
+	std::vector<int> idVec = jni::IntArray(ids, false);
+	for (int id : idVec) {
+		std::shared_ptr<AndroidGamepadDevice> device = AndroidGamepadDevice::GetAndroidGamepad(id);
+		std::shared_ptr<DreamLinkAndroidGamepad> dreamLinkDevice = std::dynamic_pointer_cast<DreamLinkAndroidGamepad>(device);
+		if (dreamLinkDevice->isAwaitingPermission()) {
+			int maplePort = dreamLinkDevice->maple_port();
+			Java_com_hollycast_emulator_periph_InputDeviceManager_joystickRemoved(env, obj, id);
+			Java_com_hollycast_emulator_periph_InputDeviceManager_joystickAdded(env, obj, usbManager, id, maplePort);
+		}
 	}
 }
 

@@ -373,7 +373,22 @@ AndroidDreamPicoPortGamepad::AndroidDreamPicoPortGamepad(
 	// e.x. "OrangeFox86 DreamPicoPort-E66141040371972A v1.2.4"
 
 	if (dpp) {
-		updateNames();
+		_name = dpp->getName();
+
+		const DreamPicoPort::HardwareInfo& hw_info = dpp->getHardwareInfo();
+
+		if (!hw_info.serial_number.empty()) {
+			// Ensure this is ordered by product name, serial, and port char
+			_sort_id = (
+				hw_info.getProductName() + std::string("_") +
+				hw_info.serial_number + std::string("_") +
+				std::string(1, hw_info.getPortChar())
+			);
+			// Locking to name, which includes A-D, plus serial number will ensure correct enumeration every time
+			_unique_id = hw_info.getName("", true) + std::string("_") + hw_info.serial_number;
+			// Reload mapping now that unique ID changed
+			loadMapping();
+		}
 
 		int bus = dpp->getDefaultBus();
 		if (DreamLink::isValidBus(bus))
@@ -434,19 +449,6 @@ void AndroidDreamPicoPortGamepad::close(JNIEnv *env)
 	DreamLinkAndroidGamepad::close(env);
 	if (dpp) {
 		dpp->close(env);
-		dpp.reset();
-	}
-}
-
-void AndroidDreamPicoPortGamepad::permissionGranted(JNIEnv *env, jobject usbManager)
-{
-	if (!dpp) {
-		// Try to recreate the device and update parent if this was successful
-		dpp = make_dpp(env, usbManager, maple_port(), get_android_id(), android_name);
-		if (dpp) {
-			updateNames();
-			updateDreamLink(dpp);
-		}
 	}
 }
 
@@ -486,26 +488,4 @@ void AndroidDreamPicoPortGamepad::setCustomMapping(const std::shared_ptr<InputMa
 	mapping->set_axis(DC_AXIS2_RIGHT, static_cast<u32>(AxisCode::RIGHT_X), true);
 	mapping->set_axis(DC_AXIS2_UP, static_cast<u32>(AxisCode::RIGHT_Y), false);
 	mapping->set_axis(DC_AXIS2_DOWN, static_cast<u32>(AxisCode::RIGHT_Y), true);
-}
-
-void AndroidDreamPicoPortGamepad::updateNames()
-{
-	if (dpp) {
-		_name = dpp->getName();
-
-		const DreamPicoPort::HardwareInfo& hw_info = dpp->getHardwareInfo();
-
-		if (!hw_info.serial_number.empty()) {
-			// Ensure this is ordered by product name, serial, and port char
-			_sort_id = (
-				hw_info.getProductName() + std::string("_") +
-				hw_info.serial_number + std::string("_") +
-				std::string(1, hw_info.getPortChar())
-			);
-			// Locking to name, which includes A-D, plus serial number will ensure correct enumeration every time
-			_unique_id = hw_info.getName("", true) + std::string("_") + hw_info.serial_number;
-			// Reload mapping now that unique ID changed
-			loadMapping();
-		}
-	}
 }

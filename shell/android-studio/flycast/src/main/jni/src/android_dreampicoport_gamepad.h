@@ -79,7 +79,6 @@ public:
 	const char *get_button_name(u32 code) override;
 	const char *get_axis_name(u32 code) override;
 	void close(JNIEnv *env) override;
-	void permissionGranted(JNIEnv *env, jobject usbManager) override;
 
 	static bool identify(int vendorId, int productId);
 
@@ -90,11 +89,13 @@ public:
 
 	bool gamepad_btn_input(u32 code, bool pressed) override;
 
+	inline bool isAwaitingPermission() const override
+	{
+		return (dpp == nullptr);
+	}
+
 protected:
 	void setCustomMapping(const std::shared_ptr<InputMapping>& mapping) override;
-
-private:
-	void updateNames();
 
 private:
 	std::shared_ptr<class AndroidDreamPicoPort> dpp;

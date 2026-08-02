@@ -425,8 +425,8 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
     public native void touchMouseEvent(int xpos, int ypos, int buttons);
     private native boolean isPermissionRequired(int vendorId, int productId);
     private native void joystickAdded(UsbManager usbManager, int id, int maple_port);
-    private native void permissionGranted(UsbManager usbManager, int[] ids);
     private native void joystickRemoved(int id);
+    private native void permissionGranted(UsbManager usbManager, int[] ids);
     public native boolean keyboardEvent(int key, boolean pressed);
     public native void keyboardText(int c);
     public static native boolean isMicPluggedIn();
