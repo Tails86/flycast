@@ -22,19 +22,27 @@
 #include <jni.h>
 
 #include <optional>
+#include <unordered_map>
+#include <mutex>
 
 class AndroidDreamPicoPort : public DreamPicoPort
 {
 public:
+	struct UsbDeviceConnection
+	{
+		jni::Object connection_obj = {};
+		intptr_t sys_dev = -1;
+	};
+
 	struct ExtendedHardwareInfo
 	{
 		HardwareInfo base_info;
-		jni::Object usb_device_connection = {};
+		std::shared_ptr<UsbDeviceConnection> usb_device_connection = {};
 	};
 
 	AndroidDreamPicoPort(int bus, ExtendedHardwareInfo& hw_info) :
 		DreamPicoPort(bus, hw_info.base_info),
-		usb_device_connection(std::move(hw_info.usb_device_connection))
+		usb_device_connection(hw_info.usb_device_connection)
 	{}
 
 	~AndroidDreamPicoPort()
@@ -42,11 +50,65 @@ public:
 
 	void close(JNIEnv *env)
 	{
-		usb_device_connection = jni::Object();
+		usb_device_connection.reset();
+	}
+
+	static std::shared_ptr<UsbDeviceConnection> openUsbDeviceAndGetFd(
+		JNIEnv *env,
+		jobject usbManager,
+		jobject usbDev,
+		const std::string& serial
+	) {
+		// A lookup is used because up to 4 controllers may have the same serial and don't need redundant connections
+		static std::unordered_map<std::string, std::weak_ptr<UsbDeviceConnection>> lookup;
+		static std::mutex lookupMutex;
+
+		std::lock_guard<std::mutex> lock(lookupMutex);
+
+		auto iter = lookup.find(serial);
+		if (iter != lookup.end()) {
+			std::shared_ptr<UsbDeviceConnection> ptr = iter->second.lock();
+			if (ptr) {
+				return ptr;
+			}
+			// Weak pointer no longer valid; remove it
+			lookup.erase(iter);
+		}
+
+		jni::Class usbManagerClass(env->GetObjectClass(usbManager));
+		jmethodID openDeviceMethod = env->GetMethodID(
+			usbManagerClass,
+			"openDevice",
+			"(Landroid/hardware/usb/UsbDevice;)Landroid/hardware/usb/UsbDeviceConnection;"
+		);
+
+		jni::Object connection(env->CallObjectMethod(usbManager, openDeviceMethod, usbDev));
+
+		if (connection == nullptr) {
+			// openDevice failed — permission not granted, or device disconnected
+			return nullptr;
+		}
+
+		jni::Class connectionClass(env->GetObjectClass(connection));
+		jmethodID getFileDescriptorMethod = env->GetMethodID(connectionClass, "getFileDescriptor", "()I");
+
+		jint fd = env->CallIntMethod(connection, getFileDescriptorMethod);
+
+		std::shared_ptr<UsbDeviceConnection> newConnection = std::make_shared<UsbDeviceConnection>();
+		// Promote to global ref so it survives past this call — required since
+		// libusb will use the fd beyond the lifetime of this native call frame
+		newConnection->connection_obj = connection.globalRef<jni::Object>();
+		newConnection->sys_dev = (intptr_t)fd;
+
+		// Save to lookup for future use
+		lookup[serial] = newConnection;
+
+		// Warning: this connection should not be retained once the USB device is disconnected
+		return newConnection;
 	}
 
 private:
-	jobject usb_device_connection;
+	std::shared_ptr<UsbDeviceConnection> usb_device_connection;
 };
 
 //! Get number of devices that contain the given serial at the specified ID direction
@@ -198,36 +260,6 @@ static int getNthInterfaceId(JNIEnv *env, jobject usbDevice, int n) {
 	return interfaceIds[n];
 }
 
-// Returns the native fd for the device, or -1 on failure.
-// Also outputs the UsbDeviceConnection via outConnection (as a global ref) —
-// you MUST keep this alive for as long as libusb is using the fd.
-static intptr_t openUsbDeviceAndGetFd(JNIEnv *env, jobject usbManager, jobject usbDev, jni::Object& outConnection) {
-	jni::Class usbManagerClass(env->GetObjectClass(usbManager));
-	jmethodID openDeviceMethod = env->GetMethodID(
-		usbManagerClass,
-		"openDevice",
-		"(Landroid/hardware/usb/UsbDevice;)Landroid/hardware/usb/UsbDeviceConnection;"
-	);
-
-	jni::Object connection(env->CallObjectMethod(usbManager, openDeviceMethod, usbDev));
-
-	if (connection == nullptr) {
-		// openDevice failed — permission not granted, or device disconnected
-		return -1;
-	}
-
-	jni::Class connectionClass(env->GetObjectClass(connection));
-	jmethodID getFileDescriptorMethod = env->GetMethodID(connectionClass, "getFileDescriptor", "()I");
-
-	jint fd = env->CallIntMethod(connection, getFileDescriptorMethod);
-
-	// Promote to global ref so it survives past this call — required since
-	// libusb will use the fd beyond the lifetime of this native call frame
-	outConnection = connection.globalRef<jni::Object>();
-
-	return (intptr_t)fd;
-}
-
 //! Only to be called during instantiation to determine hardware information
 static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 	JNIEnv *env,
@@ -320,14 +352,16 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 	// slot indices (1 and 3) keeps hardware_bus consistent with the physical port layout.
 	hwInfo.base_info.hardware_bus = getNthInterfaceId(env, usbDev, hwInfo.base_info.hardware_bus);
 
-	// TODO: it may be a good idea to cache serial -> usb_device_connection so it's not opened 4 times
-	hwInfo.base_info.sys_dev = openUsbDeviceAndGetFd(env, usbManager, usbDev, hwInfo.usb_device_connection);
+	hwInfo.usb_device_connection =
+		AndroidDreamPicoPort::openUsbDeviceAndGetFd(env, usbManager, usbDev, hwInfo.base_info.serial_number);
 
-	if (hwInfo.base_info.sys_dev < 0)
+	if (!hwInfo.usb_device_connection)
 	{
 		NOTICE_LOG(INPUT, "Failed to open file descriptor to DreamPicoPort device");
 		return std::nullopt;
 	}
+
+	hwInfo.base_info.sys_dev = hwInfo.usb_device_connection->sys_dev;
 
 	return hwInfo;
 }
@@ -347,7 +381,7 @@ static std::shared_ptr<AndroidDreamPicoPort> make_dpp(
 		return nullptr;
 	}
 
-	if (hwInfo->base_info.hardware_bus >= 0 && !hwInfo->usb_device_connection.isNull())
+	if (hwInfo->base_info.hardware_bus >= 0 && hwInfo->usb_device_connection)
 	{
 		return std::make_shared<AndroidDreamPicoPort>(maple_port, hwInfo.value());
 	}
