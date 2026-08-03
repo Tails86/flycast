@@ -1,3 +1,6 @@
+/*
+	Portions Copyright 2026 The Hollycast Authors
+ */
 package com.hollycast.emulator;
 
 import android.content.Context;
@@ -45,6 +48,8 @@ public final class NativeGLActivity extends BaseGLActivity {
         Log.i("hollycast", "NativeGLActivity.onCreate done");
     }
 
+    //! This gets called when the system level permission request has been handled by the user
+    //! Refer to res/xml/device_filter.xml for devices linked to this app
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);

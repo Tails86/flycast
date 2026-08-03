@@ -68,37 +68,65 @@ public:
 	};
 
 public:
+	//! Constructor
+	//! @param[in] env The local Java environment
+	//! @param[in] usbManager A UsbManager object created from the current app context
+	//! @param[in] maple_port The requested maple port index to use
+	//! @param[in] joystickData All joystick data associated with the InputDevice
 	AndroidDreamPicoPortGamepad(
 		JNIEnv *env,
 		jobject usbManager,
 		int maple_port,
 		const AndroidGamepadDevice::AndroidJoystickData& joystickData
 	);
+
+	//! Destructor
 	~AndroidDreamPicoPortGamepad();
 
+	//! Overridden from GamepadDevice
+	//! Returns the locally-known button name for a given code
 	const char *get_button_name(u32 code) override;
+
+	//! Overridden from GamepadDevice
+	//! Returns the locally-known axis name for a given code
 	const char *get_axis_name(u32 code) override;
+
+	//! Overridden from AndroidGamepadDevice
+	//! Called just before destruction in order to do cleanup
 	void close(JNIEnv *env) override;
 
+	//! Determines if a VID/PID is a DreamPicoPort gamepad
+	//! @param[in] vendorId Vendor ID (16-bit value)
+	//! @param[in] productId Product ID (16-bit value)
+	//! @return true iff the given VID/PID is a DreamPicoPort
 	static bool identify(int vendorId, int productId);
 
+	//! Overridden from GamepadDevice
+	//! @return the sort ID in order to ensure the proper display order of DreamPicoPort devices
 	inline const std::string& sort_id() override
 	{
 		return !_sort_id.empty() ? _sort_id : DreamLinkAndroidGamepad::sort_id();
 	}
 
+	//! Overridden from GamepadDevice
+	//! Checks for gamepad-changed events
 	bool gamepad_btn_input(u32 code, bool pressed) override;
 
+	//! Overridden from DreamLinkAndroidGamepad
+	//! @return true if this device couldn't fully connect because it's waiting on permission from the user
 	inline bool isAwaitingPermission() const override
 	{
 		return (dpp == nullptr);
 	}
 
 protected:
+	//! Overridden from DreamLinkAndroidGamepad
 	void setCustomMapping(const std::shared_ptr<InputMapping>& mapping) override;
 
 private:
+	//! The DreamPicoPort device handle associated with this gamepad (nullptr when waiting for permission)
 	std::shared_ptr<class AndroidDreamPicoPort> dpp;
+	//! The raw name provided from Android
 	const std::string android_name;
 	//! ID used for sorting on the UI
 	std::string _sort_id;

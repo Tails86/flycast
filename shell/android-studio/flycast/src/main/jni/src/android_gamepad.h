@@ -103,11 +103,8 @@ public:
 		INFO_LOG(INPUT, "Android: Joystick '%s' on port %d disconnected", _name.c_str(), maple_port());
 	}
 
+	//! Called just before destruction in order to do cleanup
 	virtual void close(JNIEnv *env) {}
-
-	int get_android_id() {
-		return android_id;
-	}
 
 	std::shared_ptr<InputMapping> getDefaultMapping() override {
 		if (_name == "SHIELD Remote")

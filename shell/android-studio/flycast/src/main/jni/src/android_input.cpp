@@ -118,6 +118,11 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_hollycast_emulator_periph_InputDe
 	return DreamLinkAndroidGamepad::isPermissionRequired(vendorId, productId);
 }
 
+//! Retrieves the joystick data associated with the InputDevice at the given ID
+//! @param[in] env Local Java environment
+//! @param[in] obj The local InputDeviceManager object
+//! @param[in] id ID of the InputDevice to get data for
+//! @return Data associated with the given ID
 static AndroidGamepadDevice::AndroidJoystickData getJoystickData(JNIEnv *env, jobject obj, jint id)
 {
 	AndroidGamepadDevice::AndroidJoystickData data { id };

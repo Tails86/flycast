@@ -25,34 +25,50 @@
 #include <unordered_map>
 #include <mutex>
 
+//! A DreamPicoPort device which also holds a connection object associated with the connection to a DreamPicoPort
 class AndroidDreamPicoPort : public DreamPicoPort
 {
 public:
+	//! Contains connection data to a UsbDevice associated with a DreamPicoPort
 	struct UsbDeviceConnection
 	{
 		jni::Object connection_obj = {};
 		intptr_t sys_dev = -1;
 	};
 
+	//! Contains hardware information needed to connect to a DreamPicoPort
 	struct ExtendedHardwareInfo
 	{
 		HardwareInfo base_info;
 		std::shared_ptr<UsbDeviceConnection> usb_device_connection = {};
 	};
 
+public:
+	//! Constructor
+	//! @param[in] bus Initial software bus
+	//! @param[in] hw_info Hardware information needed to connect to a DreamPicoPort
 	AndroidDreamPicoPort(int bus, ExtendedHardwareInfo& hw_info) :
 		DreamPicoPort(bus, hw_info.base_info),
 		usb_device_connection(hw_info.usb_device_connection)
 	{}
 
+	//! Destructor
 	~AndroidDreamPicoPort()
 	{}
 
+	//! Called just before destruction in order to do cleanup
 	void close(JNIEnv *env)
 	{
 		usb_device_connection.reset();
 	}
 
+	//! Attempt to open a connection to a UsbDevice
+	//! @param[in] env Local Java environment
+	//! @param[in] usbManager A UsbManager object created from the current app context
+	//! @param[in] usbDev A UsbDevice object to open
+	//! @param[in] serial Serial number associated with usbDev
+	//! @return nullptr if the connection could not be opened
+	//! @return shared_ptr to UsbDeviceConnection which contains a file descriptor to the given usbDev
 	static std::shared_ptr<UsbDeviceConnection> openUsbDeviceAndGetFd(
 		JNIEnv *env,
 		jobject usbManager,
@@ -161,6 +177,14 @@ static int get_serial_count(
 	return count;
 }
 
+//! Attempts to locate a UsbDevice by VID, PID, and serial number
+//! @param[in] env The Java Native Interface environment object
+//! @param[in] usbManager A UsbManager object created from the current app context
+//! @param[in] targetVid Target vendor ID
+//! @param[in] targetPid Target product ID
+//! @param[in] targetSerial Target serial number
+//! @return nullptr if the device could not be located or permission hasn't been granted yet
+//! @return a UsbDevice associated with VID, PID, and serial number otherwise
 static jni::Object findUsbDeviceByVidPidSerial(
 	JNIEnv *env,
 	jobject usbManager,
@@ -225,8 +249,12 @@ static jni::Object findUsbDeviceByVidPidSerial(
 	return jni::Object(); // null
 }
 
-// Returns the interface ID at position n (0-based) in the sorted list of
-// distinct interface IDs present on the device. Returns -1 if n is out of range.
+//! Converts a 0-based positional index to interface index of a UsbDevice
+//! @param[in] env The Java Native Interface environment object
+//! @param[in] usbDevice The UsbDevice to interrogate
+//! @param[in] n 0-based positional index
+//! @return -1 if n is out of range
+//! @return the interface ID at position n (0-based) in the sorted list of distinct interface IDs present on the device
 static int getNthInterfaceId(JNIEnv *env, jobject usbDevice, int n) {
 	jni::Class usbDeviceClass(env->GetObjectClass(usbDevice));
 	jmethodID getInterfaceCountMethod = env->GetMethodID(usbDeviceClass, "getInterfaceCount", "()I");
@@ -261,6 +289,12 @@ static int getNthInterfaceId(JNIEnv *env, jobject usbDevice, int n) {
 }
 
 //! Only to be called during instantiation to determine hardware information
+//! @param[in] env The Java Native Interface environment object
+//! @param[in] usbManager A UsbManager object created from the current app context
+//! @param[in] id ID of an InputDevice associated with a DreamPicoPort
+//! @param[in] name Name of the InputDevice (will contain the serial number of the DreamPicoPort)
+//! @return std::nullopt if hardware information couldn't be retrieved due to failure or permissions issue
+//! @return the hardware information of the given DreamPicoPort otherwise
 static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 	JNIEnv *env,
 	jobject usbManager,
@@ -366,6 +400,14 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 	return hwInfo;
 }
 
+//! Attempts to make a new AndroidDreamPicoPort device
+//! @param[in] env The Java Native Interface environment object
+//! @param[in] usbManager A UsbManager object created from the current app context
+//! @param[in] maple_port The requested maple port index to use
+//! @param[in] id ID of an InputDevice associated with a DreamPicoPort
+//! @param[in] name Name of the InputDevice (will contain the serial number of the DreamPicoPort)
+//! @return nullptr if connection could not be made (usually due to waiting for permission from user)
+//! @return a new AndroidDreamPicoPort otherwise
 static std::shared_ptr<AndroidDreamPicoPort> make_dpp(
 	JNIEnv *env,
 	jobject usbManager,

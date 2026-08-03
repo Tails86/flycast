@@ -1,3 +1,7 @@
+/*
+	Portions Copyright 2026 The Hollycast Authors
+ */
+
 package com.hollycast.emulator.periph;
 
 import android.app.PendingIntent;
@@ -28,6 +32,7 @@ import java.util.Set;
 public final class InputDeviceManager implements InputManager.InputDeviceListener {
     public static final int VIRTUAL_GAMEPAD_ID = 0x12345678;
 
+    //! Holds information about an InputDevice which is needed to construct a new joystick
     public static final class JoystickData {
         public final int vid;
         public final int pid;
@@ -48,11 +53,11 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         }
     }
 
+    //! Intent name when permission is requested to access a UsbDevice
     private static final String ACTION_USB_PERMISSION = "com.hollycast.emulator.USB_PERMISSION";
 
     static { System.loadLibrary("Hollycast"); }
     private static final InputDeviceManager INSTANCE = new InputDeviceManager();
-    private Context appContext;
     private InputManager inputManager;
     private UsbManager usbManager;
     private int maple_port = 0;
@@ -70,6 +75,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
     private Map<Integer, VibrationParams> vibParams = new HashMap<>();
     private Set<Integer> knownDevices = new HashSet<>();
 
+    //! The receiver which is activated after the user handles the UsbDevice permission dialog (approve/deny)
     private final BroadcastReceiver usbPermissionReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -91,7 +97,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
 
                     // Only unregister once every in-flight request has been resolved
                     if (pendingPermissionRequests.isEmpty() && receiverRegistered) {
-                        appContext.unregisterReceiver(this);
+                        Emulator.getAppContext().unregisterReceiver(this);
                         receiverRegistered = false;
                     }
                 }
@@ -112,7 +118,6 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
 
     public void startListening(Context applicationContext)
     {
-        appContext = applicationContext;
         maple_port = 0;
         hasTouchscreen = applicationContext.getPackageManager().hasSystemFeature("android.hardware.touchscreen");
         if (hasTouchscreen)
@@ -134,7 +139,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
     public void stopListening()
     {
         if (receiverRegistered) {
-            appContext.unregisterReceiver(usbPermissionReceiver);
+            Emulator.getAppContext().unregisterReceiver(usbPermissionReceiver);
             receiverRegistered = false;
         }
         pendingPermissionRequests.clear();
@@ -146,6 +151,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         joystickRemoved(VIRTUAL_GAMEPAD_ID);
     }
 
+    //! Ensure that the usbPermissionReceiver is registered in order to listen to permission request approval
     private void ensureReceiverRegistered() {
         if (receiverRegistered) {
             return;
@@ -154,9 +160,9 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            appContext.registerReceiver(usbPermissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            Emulator.getAppContext().registerReceiver(usbPermissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
-            appContext.registerReceiver(usbPermissionReceiver, filter);
+            Emulator.getAppContext().registerReceiver(usbPermissionReceiver, filter);
         }
 
         receiverRegistered = true;
@@ -347,6 +353,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         return INSTANCE;
     }
 
+    //! Retrieve joystick data describing the joystick at the given ID
     public static JoystickData getJoystickData(int id) {
         InputDevice device = InputDevice.getDevice(id);
         if (device == null) {
@@ -387,6 +394,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         );
     }
 
+    //! Request permission to access any USB devices with the given VID and PID if permission isn't already granted
     private void requestUsbPermission(int vendorId, int productId) {
         HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
 
@@ -406,9 +414,14 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
                             : 0;
 
                         Intent intent = new Intent(ACTION_USB_PERMISSION);
-                        intent.setPackage(appContext.getPackageName());
+                        intent.setPackage(Emulator.getAppContext().getPackageName());
 
-                        PendingIntent permissionIntent = PendingIntent.getBroadcast(appContext, 0, intent, flags);
+                        PendingIntent permissionIntent = PendingIntent.getBroadcast(
+                            Emulator.getAppContext(),
+                            0,
+                            intent,
+                            flags
+                        );
 
                         usbManager.requestPermission(finalUsbDevice, permissionIntent);
                     });
@@ -417,6 +430,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         }
     }
 
+    //! Returns a list of InputDevice IDs which have the given VID and PID
     private int[] getKnownDeviceIdsByVidPid(int vendorId, int productId) {
         List<Integer> matches = new ArrayList<>();
 
@@ -439,6 +453,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         return result;
     }
 
+    //! @return true if the given VID and PID is a "priority device" and should be enumerated upon attachment
     private boolean isPriorityDevice(int vendorId, int productId) {
         // At the moment, devices which have priority are 1:1 with devices that require permission
         return isPermissionRequired(vendorId, productId);

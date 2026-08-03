@@ -1,3 +1,6 @@
+/*
+	Portions Copyright 2026 The Hollycast Authors
+ */
 #include "types.h"
 #include "hw/naomi/naomi_cart.h"
 #include "audio/audiostream.h"
