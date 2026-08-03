@@ -499,9 +499,9 @@ class DreamPicoPort : public SDLDreamLink
 
 	//! Hardware information determined on instantiation
 	HardwareInfo hw_info;
-	//! Last game id sent to VMU Pro storage; settings.content is cleared before termination events.
+	//! Game metadata captured when this device is created or a game starts; settings.content is cleared before termination events.
 	std::string activeGameId;
-	//! Last game title loaded while VMU Pro storage was active.
+	//! Game title paired with activeGameId for VMU icon caching.
 	std::string activeGameTitle;
 	//! The name to return on getName
 	const std::string device_name;
@@ -511,6 +511,8 @@ public:
 		SDLDreamLink(true),
 		software_bus(bus),
 		hw_info(parseHardwareInfo(joystick_idx, sdl_joystick)),
+		activeGameId(settings.content.gameId),
+		activeGameTitle(settings.content.title),
 		device_name(hw_info.getName())
 	{
 	}
@@ -555,12 +557,10 @@ public:
 				continue;
 			}
 
-			const std::string& gameId = settings.content.gameId;
+			const std::string& gameId = activeGameId;
 			if (gameId.empty()) {
 				return;
 			}
-			activeGameId = gameId;
-			activeGameTitle = settings.content.title;
 
 			MapleMsg msg{};
 			msg.command = 33;
