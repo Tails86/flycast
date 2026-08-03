@@ -80,7 +80,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
         @Override
         public void onReceive(Context context, Intent intent) {
             if (ACTION_USB_PERMISSION.equals(intent.getAction())) {
-                synchronized (this) {
+                synchronized (pendingPermissionRequests) {
                     UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
                     boolean granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
 
@@ -138,11 +138,13 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
 
     public void stopListening()
     {
-        if (receiverRegistered) {
-            Emulator.getAppContext().unregisterReceiver(usbPermissionReceiver);
-            receiverRegistered = false;
+        synchronized (pendingPermissionRequests) {
+            if (receiverRegistered) {
+                Emulator.getAppContext().unregisterReceiver(usbPermissionReceiver);
+                receiverRegistered = false;
+            }
+            pendingPermissionRequests.clear();
         }
-        pendingPermissionRequests.clear();
 
         if (inputManager != null) {
             inputManager.unregisterInputDeviceListener(this);
@@ -402,29 +404,31 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
             if (usbDevice.getVendorId() == vendorId && usbDevice.getProductId() == productId) {
                 // This is the device's unique kernel file path
                 final String devName = usbDevice.getDeviceName();
-                if (!usbManager.hasPermission(usbDevice) && !pendingPermissionRequests.contains(devName)) {
+                synchronized (pendingPermissionRequests) {
+                    if (!usbManager.hasPermission(usbDevice) && !pendingPermissionRequests.contains(devName)) {
 
-                    pendingPermissionRequests.add(devName);
-                    ensureReceiverRegistered();
+                        pendingPermissionRequests.add(devName);
+                        ensureReceiverRegistered();
 
-                    final UsbDevice finalUsbDevice = usbDevice;
-                    new Handler(Looper.getMainLooper()).post(() -> {
-                        int flags = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                            ? PendingIntent.FLAG_MUTABLE
-                            : 0;
+                        final UsbDevice finalUsbDevice = usbDevice;
+                        new Handler(Looper.getMainLooper()).post(() -> {
+                            int flags = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                                ? PendingIntent.FLAG_MUTABLE
+                                : 0;
 
-                        Intent intent = new Intent(ACTION_USB_PERMISSION);
-                        intent.setPackage(Emulator.getAppContext().getPackageName());
+                            Intent intent = new Intent(ACTION_USB_PERMISSION);
+                            intent.setPackage(Emulator.getAppContext().getPackageName());
 
-                        PendingIntent permissionIntent = PendingIntent.getBroadcast(
-                            Emulator.getAppContext(),
-                            0,
-                            intent,
-                            flags
-                        );
+                            PendingIntent permissionIntent = PendingIntent.getBroadcast(
+                                Emulator.getAppContext(),
+                                0,
+                                intent,
+                                flags
+                            );
 
-                        usbManager.requestPermission(finalUsbDevice, permissionIntent);
-                    });
+                            usbManager.requestPermission(finalUsbDevice, permissionIntent);
+                        });
+                    }
                 }
             }
         }

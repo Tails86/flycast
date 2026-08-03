@@ -261,7 +261,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_periph_InputDevice
 	for (int id : idVec) {
 		std::shared_ptr<AndroidGamepadDevice> device = AndroidGamepadDevice::GetAndroidGamepad(id);
 		std::shared_ptr<DreamLinkAndroidGamepad> dreamLinkDevice = std::dynamic_pointer_cast<DreamLinkAndroidGamepad>(device);
-		if (dreamLinkDevice->isAwaitingPermission()) {
+		if (dreamLinkDevice && dreamLinkDevice->isAwaitingPermission()) {
 			int maplePort = dreamLinkDevice->maple_port();
 			Java_com_hollycast_emulator_periph_InputDeviceManager_joystickRemoved(env, obj, id);
 			Java_com_hollycast_emulator_periph_InputDeviceManager_joystickAdded(env, obj, usbManager, id, maplePort);
