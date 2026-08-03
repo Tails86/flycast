@@ -185,7 +185,7 @@ static int get_serial_count(
 //! @param[in] targetSerial Target serial number
 //! @return nullptr if the device could not be located or permission hasn't been granted yet
 //! @return a UsbDevice associated with VID, PID, and serial number otherwise
-static jni::Object findUsbDeviceByVidPidSerial(
+static jni::Object find_usb_device_by_vid_pid_serial(
 	JNIEnv *env,
 	jobject usbManager,
 	jint targetVid,
@@ -255,7 +255,7 @@ static jni::Object findUsbDeviceByVidPidSerial(
 //! @param[in] n 0-based positional index
 //! @return -1 if n is out of range
 //! @return the interface ID at position n (0-based) in the sorted list of distinct interface IDs present on the device
-static int getNthInterfaceId(JNIEnv *env, jobject usbDevice, int n) {
+static int get_nth_interface_id(JNIEnv *env, jobject usbDevice, int n) {
 	jni::Class usbDeviceClass(env->GetObjectClass(usbDevice));
 	jmethodID getInterfaceCountMethod = env->GetMethodID(usbDeviceClass, "getInterfaceCount", "()I");
 	jmethodID getInterfaceMethod = env->GetMethodID(
@@ -312,7 +312,7 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 	}
 
 	// Attempt to retrieve the UsbDevice for this serial number
-	jni::Object usbDev = findUsbDeviceByVidPidSerial(
+	jni::Object usbDev = find_usb_device_by_vid_pid_serial(
 		env,
 		usbManager,
 		DreamPicoPort::VID,
@@ -384,7 +384,7 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 	// Interfaces 0-3 correspond to the four gamepad ports. If only ports B and D are connected,
 	// their interface IDs would otherwise be seen as 0 and 1; remapping them to their true
 	// slot indices (1 and 3) keeps hardware_bus consistent with the physical port layout.
-	hwInfo.base_info.hardware_bus = getNthInterfaceId(env, usbDev, hwInfo.base_info.hardware_bus);
+	hwInfo.base_info.hardware_bus = get_nth_interface_id(env, usbDev, hwInfo.base_info.hardware_bus);
 
 	hwInfo.usb_device_connection =
 		AndroidDreamPicoPort::openUsbDeviceAndGetFd(env, usbManager, usbDev, hwInfo.base_info.serial_number);
