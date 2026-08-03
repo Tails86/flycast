@@ -19,6 +19,7 @@ import android.os.Looper;
 import android.view.InputDevice;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
+import androidx.core.content.ContextCompat;
 
 import com.hollycast.emulator.Emulator;
 
@@ -161,11 +162,12 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
 
         IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Emulator.getAppContext().registerReceiver(usbPermissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            Emulator.getAppContext().registerReceiver(usbPermissionReceiver, filter);
-        }
+        ContextCompat.registerReceiver(
+            Emulator.getAppContext(),
+            usbPermissionReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        );
 
         receiverRegistered = true;
     }
@@ -178,11 +180,13 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
             return;
         InputDevice device = InputDevice.getDevice(id);
 
-        int vid = device.getVendorId();
-        int pid = device.getProductId();
-        if (isPriorityDevice(vid, pid)) {
-            // Create this device now
-            createDevice(id);
+        if (device != null) {
+            int vid = device.getVendorId();
+            int pid = device.getProductId();
+            if (isPriorityDevice(vid, pid)) {
+                // Create this device now
+                createDevice(id);
+            }
         }
     }
 

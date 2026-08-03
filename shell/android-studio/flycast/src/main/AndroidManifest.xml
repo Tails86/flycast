@@ -76,6 +76,7 @@
         <activity-alias
             android:name="com.hollycast.emulator.MainActivity"
             android:targetActivity="com.hollycast.emulator.NativeGLActivity"
+			android:label="@string/app_name"
 			android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -101,13 +102,16 @@
 				<data
 					android:host="*"
 					android:mimeType="*/*"
-					android:pathPattern=".*\\.CHD"
+					android:pathPattern=".*\\.chd"
 					android:scheme="file" />
 				<data
 					android:host="*"
 					android:mimeType="*/*"
-					android:pathPattern=".*\\.chd"
+					android:pathPattern=".*\\.CHD"
 					android:scheme="file" />
+				<data
+					android:mimeType="*/*"
+					android:scheme="content" />
 				<data
 					android:host="*"
 					android:mimeType="*/*"
