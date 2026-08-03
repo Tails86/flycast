@@ -319,7 +319,7 @@ bool cachedLiveIconEntry(const json& cache, const std::string& key, u32& frameCo
 {
 	try {
 		const json& entry = cache.at("games").at(key);
-		if (entry.value("source", "") != "live-vmu-a1" || !entry.value("ok", false))
+		if (entry.value("source", "").rfind("live-vmu", 0) != 0 || !entry.value("ok", false))
 			return false;
 		frameCount = entry.value("frames", 1);
 		animationSpeed = entry.value("speed", 0);
@@ -336,7 +336,7 @@ void updateIconCacheEntry(json& cache, const std::string& key, const hostfs::Fil
 	if (!cache.contains("games") || !cache["games"].is_object())
 		cache["games"] = json::object();
 	json entry = cache["games"].value(key, json::object());
-	if (!iconWasExtracted && entry.value("source", "") == "live-vmu-a1" && entry.value("ok", false))
+	if (!iconWasExtracted && entry.value("source", "").rfind("live-vmu", 0) == 0 && entry.value("ok", false))
 		return;
 	entry["metadata_only"] = false;
 	entry["source"] = "file-vmu";
