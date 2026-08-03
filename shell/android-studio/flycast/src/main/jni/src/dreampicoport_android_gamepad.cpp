@@ -17,7 +17,7 @@
 	along with Hollycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#include "android_dreampicoport_gamepad.h"
+#include "dreampicoport_android_gamepad.h"
 #include <input/dreamlink/dreampicoport.h>
 #include <jni.h>
 

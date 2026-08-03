@@ -18,7 +18,7 @@
  */
 #include "dreamlink_android_gamepad.h"
 
-#include "android_dreampicoport_gamepad.h"
+#include "dreampicoport_android_gamepad.h"
 
 #include "hw/maple/maple_devs.h"
 #include "hw/maple/maple_if.h"
