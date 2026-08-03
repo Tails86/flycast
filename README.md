@@ -37,6 +37,7 @@ Hollycast aims to support every platform and release offered by Flycast. If Flyc
 
 1. Install Visual Studio with MSVC and C++ CMake tools (under `Desktop development with C++` within the installer)
 2. Add the location of cmake.exe to your PATH environment variable (ex: C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\)
+3. Enable `Developer Mode` under System->Advanced within your Windows Settings in order to allow symlink creation without needing administrative privileges. **Warning:** this is generally considered to be a [vulnerability on Windows](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/create-symbolic-links#vulnerability), and it is currently only necessary to build for Android.
 
 ### Build Prerequisites for Linux
 
@@ -51,7 +52,10 @@ sudo apt-get -y install libwayland-dev libdecor-0-dev libaudio-dev libjack-dev l
 ### Build Prerequisites for macOS
 
 1. Install Xcode application from app store
-2. Accept licensing for Xcode and do first run initialization
+2. Accept licensing for Xcode and do first launch initialization
+```bash
+sudo xcodebuild -runFirstLaunch
+```
 3. Execute:
 ```bash
 xcodebuild -downloadComponent MetalToolchain
@@ -63,36 +67,55 @@ brew install cmake
 brew install molten-vk
 ```
 
-### Build Instructions
-The following assumes prerequisites are already installed.
+### Repository Setup
+
+Run the following to pull down the repository and all submodules.
 
 ```bash
 # Clone repo
-$ git clone --recursive https://github.com/OrangeFox86/hollycast.git
-$ cd hollycast
+git clone https://github.com/OrangeFox86/Hollycast.git
+cd Hollycast
+
+# Ensure symlinks are enabled for this project
+git config core.symlinks true
 
 # Update submodules (this needs to be manually performed when submodule versions are updated)
-$ git submodule update --init --recursive
+git submodule update --init --recursive --force
+```
 
-# Configure the build (make sln file, etc., depending on your platform)
-$ cmake -B build-debug/
+### Build Instructions for Windows/Linux/macOS
 
-# Run the build
-$ cmake --build build-debug/
+The following assumes prerequisites are already installed and working directory is Hollycast.
+
+```bash
+# Find the desired CMake preset for the current platform
+cmake --list-presets
+
+# Run CMake configure. Rerunning this is usually only necessary when certain files like CMakeLists.txt change.
+cmake --preset <PRESET>
+
+# Run the build. Using the same preset name as for the configure will generally work.
+cmake --build --preset <PRESET>
 ```
 
 ### Build Instructions for Android
 
 Ensure Android Studio is installed, and then execute the following.
 
-On Linux or macOS:
 ```bash
+# Your working directory must be changed to shell/android-studio before building.
 cd shell/android-studio
-./gradlew
+
+# Run the following to build for debug.
+./gradlew assembleDebug bundleDebug --parallel
 ```
 
-On Windows:
-```cmd
-cd shell/android-studio
-./gradlew.bat
+If the build gets stuck or encounters and error, run the following before trying again.
+
+```bash
+# Terminate all background Gradle Daemon processes started by gradle.
+./gradlew --stop
+
+# Remove all artifacts of previous build.
+./gradlew clean
 ```

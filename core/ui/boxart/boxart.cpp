@@ -33,7 +33,9 @@
 #include <cctype>
 #include <cstring>
 #include <cstdio>
+#include <future>
 #include <memory>
+#include <mutex>
 #include <string_view>
 #include <unordered_set>
 
@@ -490,11 +492,8 @@ GameBoxart Boxart::getBoxart(const GameMedia& media)
 		if (!customPath.empty())
 			boxart.boxartPath = customPath;
 	}
-	else if (sourceMode == static_cast<int>(BoxartSourceMode::ScrapedOnly))
-	{
-		if (boxart.boxartUrl.empty())
-			boxart.boxartPath.clear();
-	}
+	// Original Box Art prefers scraped art, but still falls back to the disc's
+	// physical media image when the online database has no artwork for the game.
 
 	return boxart;
 }
@@ -576,11 +575,8 @@ GameBoxart Boxart::getBoxartAndQueue(const GameMedia& media, bool startFetch)
 			boxart.busy = false;
 		}
 	}
-	else if (sourceMode == static_cast<int>(BoxartSourceMode::ScrapedOnly))
-	{
-		if (boxart.boxartUrl.empty())
-			boxart.boxartPath.clear();
-	}
+	// Original Box Art keeps the physical media image visible while, or after,
+	// online scraping finds metadata without an original boxart image.
 	if (startFetch)
 		fetchBoxart();
 
