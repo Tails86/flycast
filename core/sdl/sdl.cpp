@@ -423,13 +423,6 @@ void input_sdl_handle()
 						}
 					};
 
-#if defined(__ANDROID__)
-					if (event.key.keysym.scancode == SDL_SCANCODE_AC_BACK)
-					{
-						gui_keyboard_key(0x29, event.type == SDL_KEYDOWN);
-						break;
-					}
-#endif
 					if (event.type == SDL_KEYDOWN)
 					{
 						// Alt-Return and F11 toggle full screen
