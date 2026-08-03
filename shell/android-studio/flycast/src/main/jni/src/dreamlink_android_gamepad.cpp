@@ -50,14 +50,14 @@ DreamLinkAndroidGamepad::~DreamLinkAndroidGamepad()
 
 bool DreamLinkAndroidGamepad::isDreamLinkGamepad(int vid, int pid)
 {
-	if (AndroidDreamPicoPortGamepad::identify(vid, pid))
+	if (DreamPicoPortAndroidGamepad::identify(vid, pid))
 		return true;
 	return false;
 }
 
 bool DreamLinkAndroidGamepad::isPermissionRequired(int vid, int pid)
 {
-	if (AndroidDreamPicoPortGamepad::identify(vid, pid))
+	if (DreamPicoPortAndroidGamepad::identify(vid, pid))
 		return true;
 	return false;
 }
@@ -181,7 +181,7 @@ std::shared_ptr<DreamLinkAndroidGamepad> createDreamLinkAndroidGamepad(
 	const AndroidGamepadDevice::AndroidJoystickData& joystickData
 )
 {
-	if (AndroidDreamPicoPortGamepad::identify(joystickData.vid, joystickData.pid))
-		return std::make_shared<AndroidDreamPicoPortGamepad>(env, usbManager, maple_port, joystickData);
+	if (DreamPicoPortAndroidGamepad::identify(joystickData.vid, joystickData.pid))
+		return std::make_shared<DreamPicoPortAndroidGamepad>(env, usbManager, maple_port, joystickData);
 	return nullptr;
 }

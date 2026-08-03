@@ -24,7 +24,7 @@
 
 #include <memory>
 
-class AndroidDreamPicoPortGamepad : public DreamLinkAndroidGamepad
+class DreamPicoPortAndroidGamepad : public DreamLinkAndroidGamepad
 {
 public:
 	//! Enumerates the raw button codes in Android for DreamPicoPort
@@ -73,7 +73,7 @@ public:
 	//! @param[in] usbManager A UsbManager object created from the current app context
 	//! @param[in] maple_port The requested maple port index to use
 	//! @param[in] joystickData All joystick data associated with the InputDevice
-	AndroidDreamPicoPortGamepad(
+	DreamPicoPortAndroidGamepad(
 		JNIEnv *env,
 		jobject usbManager,
 		int maple_port,
@@ -81,7 +81,7 @@ public:
 	);
 
 	//! Destructor
-	~AndroidDreamPicoPortGamepad();
+	~DreamPicoPortAndroidGamepad();
 
 	//! Overridden from GamepadDevice
 	//! Returns the locally-known button name for a given code

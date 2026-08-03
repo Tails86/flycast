@@ -431,7 +431,7 @@ static std::shared_ptr<AndroidDreamPicoPort> make_dpp(
 	return nullptr;
 }
 
-AndroidDreamPicoPortGamepad::AndroidDreamPicoPortGamepad(
+DreamPicoPortAndroidGamepad::DreamPicoPortAndroidGamepad(
 	JNIEnv *env,
 	jobject usbManager,
 	int maple_port,
@@ -475,11 +475,11 @@ AndroidDreamPicoPortGamepad::AndroidDreamPicoPortGamepad(
 }
 
 // Need to define destructor in source because DreamPicoPort has a forward declaration
-AndroidDreamPicoPortGamepad::~AndroidDreamPicoPortGamepad()
+DreamPicoPortAndroidGamepad::~DreamPicoPortAndroidGamepad()
 {
 }
 
-const char *AndroidDreamPicoPortGamepad::get_button_name(u32 code)
+const char *DreamPicoPortAndroidGamepad::get_button_name(u32 code)
 {
 	using namespace i18n;
 	switch (static_cast<s32>(code)) {
@@ -509,7 +509,7 @@ const char *AndroidDreamPicoPortGamepad::get_button_name(u32 code)
 	}
 }
 
-const char *AndroidDreamPicoPortGamepad::get_axis_name(u32 code)
+const char *DreamPicoPortAndroidGamepad::get_axis_name(u32 code)
 {
 	using namespace i18n;
 	switch (static_cast<s32>(code)) {
@@ -520,7 +520,7 @@ const char *AndroidDreamPicoPortGamepad::get_axis_name(u32 code)
 	}
 }
 
-void AndroidDreamPicoPortGamepad::close(JNIEnv *env)
+void DreamPicoPortAndroidGamepad::close(JNIEnv *env)
 {
 	DreamLinkAndroidGamepad::close(env);
 	if (dpp) {
@@ -528,12 +528,12 @@ void AndroidDreamPicoPortGamepad::close(JNIEnv *env)
 	}
 }
 
-bool AndroidDreamPicoPortGamepad::identify(int vendorId, int productId)
+bool DreamPicoPortAndroidGamepad::identify(int vendorId, int productId)
 {
 	return (vendorId == DreamPicoPort::VID && productId == DreamPicoPort::PID);
 }
 
-bool AndroidDreamPicoPortGamepad::gamepad_btn_input(u32 code, bool pressed)
+bool DreamPicoPortAndroidGamepad::gamepad_btn_input(u32 code, bool pressed)
 {
 	if (static_cast<s32>(code) == static_cast<s32>(ButtonCode::CHANGE_EVENT) && !pressed)
 	{
@@ -546,7 +546,7 @@ bool AndroidDreamPicoPortGamepad::gamepad_btn_input(u32 code, bool pressed)
 	return DreamLinkAndroidGamepad::gamepad_btn_input(code, pressed);
 }
 
-void AndroidDreamPicoPortGamepad::setCustomMapping(const std::shared_ptr<InputMapping>& mapping)
+void DreamPicoPortAndroidGamepad::setCustomMapping(const std::shared_ptr<InputMapping>& mapping)
 {
 	// Since this is a real DC controller, no deadzone adjustment is needed
 	mapping->dead_zone = 0.0f;
