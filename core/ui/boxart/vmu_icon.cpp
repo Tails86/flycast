@@ -23,11 +23,13 @@
 #include "oslib/storage.h"
 #include "stdclass.h"
 
+#include <stb_image.h>
 #include <stb_image_write.h>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <mutex>
@@ -54,6 +56,32 @@ constexpr u16 VMU_MAX_FILE_BLOCK_COUNT = 200;
 constexpr u16 VMU_FAT_END = 0xfffa;
 constexpr u16 VMU_FAT_FREE = 0xfffc;
 constexpr int ICON_CACHE_VERSION = 1;
+constexpr size_t MAX_RESOLVED_ICON_LOOKUPS = 8192;
+constexpr size_t MAX_CACHED_ICON_PNG_SIZE = 1024 * 1024;
+// External VMU files have no portable change notification, especially through Android SAF.
+// Recheck them at a bounded rate so a large Library never turns one render into thousands of stats.
+constexpr auto EXTERNAL_VMU_REVALIDATION_INTERVAL = std::chrono::seconds(30);
+constexpr auto EXTERNAL_VMU_REVALIDATION_SPACING = std::chrono::milliseconds(100);
+
+enum class ResolvedIconSource
+{
+	Unavailable,
+	LiveVmu,
+	FileVmu,
+};
+
+struct ResolvedIconLookup
+{
+	ResolvedIconSource source = ResolvedIconSource::Unavailable;
+	std::string iconPath;
+	std::array<std::string, 3> framePaths;
+	std::array<bool, 3> frameAvailable {};
+	u32 frameCount = 0;
+	u16 animationSpeed = 0;
+	bool revalidateExternalSource = false;
+	std::chrono::steady_clock::time_point nextValidation {};
+};
+
 std::mutex cacheMutex;
 std::unordered_map<std::string, time_t> lastBootedByKey;
 std::unordered_map<std::string, time_t> lastBootedByPath;
@@ -61,6 +89,9 @@ bool lastBootedIndexLoaded = false;
 json sharedIconCache;
 std::string sharedIconCachePath;
 bool sharedIconCacheLoaded = false;
+std::unordered_map<std::string, ResolvedIconLookup> resolvedIconLookups;
+std::string resolvedLookupVmuPath;
+std::chrono::steady_clock::time_point nextExternalVmuValidation;
 
 u16 readLe16(const u8 *p)
 {
@@ -407,26 +438,70 @@ std::string framePath(const std::string& cacheDir, u32 frameIndex)
 	return appendPath(cacheDir, "frame-" + std::to_string(frameIndex) + ".png");
 }
 
-std::string selectCachedIconPath(const std::string& cacheDir, u32 frameCount, u16 animationSpeed, bool animate, double animationClock)
+std::string selectResolvedIconPath(const ResolvedIconLookup& lookup, bool animate, double animationClock)
 {
-	const std::string iconPath = appendPath(cacheDir, "icon.png");
-	if (!animate || frameCount <= 1)
-		return file_exists(iconPath) ? iconPath : std::string();
+	if (lookup.iconPath.empty())
+		return {};
+	if (!animate || lookup.frameCount <= 1)
+		return lookup.iconPath;
 
 	constexpr double LibraryIconFrameSeconds = 0.45;
-	const u32 frame = static_cast<u32>(animationClock / LibraryIconFrameSeconds) % frameCount;
-	const std::string path = framePath(cacheDir, frame);
-	if (file_exists(path))
-		return path;
-	return file_exists(iconPath) ? iconPath : std::string();
+	const u32 frame = static_cast<u32>(animationClock / LibraryIconFrameSeconds) % lookup.frameCount;
+	if (frame < lookup.frameAvailable.size() && lookup.frameAvailable[frame])
+		return lookup.framePaths[frame];
+	return lookup.iconPath;
 }
 
-bool hasCachedAnimationFrames(const std::string& cacheDir, u32 frameCount)
+bool isUsableCachedIconPng(const std::string& path)
 {
-	for (u32 i = 0; i < frameCount; i++)
-		if (!file_exists(framePath(cacheDir, i)))
-			return false;
-	return true;
+	const hostfs::FileInfo info = getFileInfo(path);
+	if (info.size == 0 || info.size > MAX_CACHED_ICON_PNG_SIZE)
+		return false;
+
+	std::vector<u8> data;
+	if (!readFile(path, data))
+		return false;
+	int width = 0;
+	int height = 0;
+	int channels = 0;
+	u8 *pixels = stbi_load_from_memory(data.data(), static_cast<int>(data.size()), &width, &height, &channels, STBI_rgb_alpha);
+	if (pixels == nullptr)
+		return false;
+	stbi_image_free(pixels);
+	return width == 32 && height == 32;
+}
+
+ResolvedIconLookup makeResolvedIconLookup(const std::string& cacheDir, ResolvedIconSource source,
+		u32 frameCount, u16 animationSpeed, bool revalidateExternalSource)
+{
+	ResolvedIconLookup lookup;
+	lookup.source = source;
+	lookup.frameCount = std::min<u32>(frameCount, lookup.framePaths.size());
+	lookup.animationSpeed = animationSpeed;
+	lookup.revalidateExternalSource = revalidateExternalSource;
+	lookup.nextValidation = std::chrono::steady_clock::now() + EXTERNAL_VMU_REVALIDATION_INTERVAL;
+	lookup.iconPath = appendPath(cacheDir, "icon.png");
+	if (!isUsableCachedIconPng(lookup.iconPath))
+	{
+		lookup.iconPath.clear();
+		lookup.frameCount = 0;
+		return lookup;
+	}
+
+	for (u32 i = 0; i < lookup.frameCount; ++i)
+	{
+		lookup.framePaths[i] = framePath(cacheDir, i);
+		lookup.frameAvailable[i] = isUsableCachedIconPng(lookup.framePaths[i]);
+	}
+	return lookup;
+}
+
+ResolvedIconLookup makeUnavailableIconLookup(bool revalidateExternalSource)
+{
+	ResolvedIconLookup lookup;
+	lookup.revalidateExternalSource = revalidateExternalSource;
+	lookup.nextValidation = std::chrono::steady_clock::now() + EXTERNAL_VMU_REVALIDATION_INTERVAL;
+	return lookup;
 }
 
 std::string readVmuText(const u8 *data, size_t size)
@@ -670,6 +745,73 @@ bool extractBestIconFromFlash(const std::vector<u8>& flash, const std::string& c
 	return extractIconFromVmsHeader(best->fileData, best->headerOffset, cacheDir, frameCount, animationSpeed);
 }
 
+ResolvedIconLookup resolveVmuIconLookup(const GameMedia& media, const std::string& gameId, const std::string& key)
+{
+	const std::string libraryDir = getVmuIconLibraryDir();
+	if (libraryDir.empty())
+		return makeUnavailableIconLookup(true);
+
+	const std::string cacheDir = getVmuIconCacheDir(libraryDir, key);
+	if (cacheDir.empty())
+		return makeUnavailableIconLookup(true);
+
+	const std::string cachePath = appendPath(libraryDir, "cache.json");
+	json& cache = getSharedIconCache(cachePath);
+	u32 cachedFrameCount = 0;
+	u16 cachedAnimationSpeed = 0;
+	if (cachedLiveIconEntry(cache, key, cachedFrameCount, cachedAnimationSpeed))
+	{
+		ResolvedIconLookup lookup = makeResolvedIconLookup(cacheDir, ResolvedIconSource::LiveVmu,
+				cachedFrameCount, cachedAnimationSpeed, false);
+		return lookup.iconPath.empty() ? makeUnavailableIconLookup(false) : lookup;
+	}
+
+	const std::string vmuPath = findPerGameVmuPath(media, gameId);
+	if (vmuPath.empty())
+	{
+		u32 frameCount = 0;
+		u16 animationSpeed = 0;
+		if (!cachedAnyIconEntry(cache, key, frameCount, animationSpeed))
+			return makeUnavailableIconLookup(true);
+		ResolvedIconLookup lookup = makeResolvedIconLookup(cacheDir, ResolvedIconSource::FileVmu,
+				frameCount, animationSpeed, true);
+		return lookup.iconPath.empty() ? makeUnavailableIconLookup(true) : lookup;
+	}
+
+	const hostfs::FileInfo vmuInfo = getFileInfo(vmuPath);
+	bool iconWasExtracted = false;
+	if (cachedEntryMatches(cache, key, vmuInfo, iconWasExtracted))
+	{
+		if (!iconWasExtracted)
+			return makeUnavailableIconLookup(true);
+		const json& entry = cache["games"][key];
+		ResolvedIconLookup lookup = makeResolvedIconLookup(cacheDir, ResolvedIconSource::FileVmu,
+				entry.value("frames", 1), entry.value("speed", 0), true);
+		if (!lookup.iconPath.empty())
+			return lookup;
+	}
+	if (vmuInfo.size != VMU_FLASH_SIZE)
+	{
+		updateIconCacheEntry(cache, key, vmuInfo, false, 0, 0);
+		saveSharedIconCache();
+		return makeUnavailableIconLookup(true);
+	}
+
+	std::vector<u8> flash;
+	u32 frameCount = 0;
+	u16 animationSpeed = 0;
+	const bool extracted = readFile(vmuPath, flash)
+			&& extractBestIconFromFlash(flash, cacheDir, gameId, media.name, frameCount, animationSpeed);
+	updateIconCacheEntry(cache, key, vmuInfo, extracted, frameCount, animationSpeed);
+	saveSharedIconCache();
+	if (!extracted)
+		return makeUnavailableIconLookup(true);
+
+	ResolvedIconLookup lookup = makeResolvedIconLookup(cacheDir, ResolvedIconSource::FileVmu,
+			frameCount, animationSpeed, true);
+	return lookup.iconPath.empty() ? makeUnavailableIconLookup(true) : lookup;
+}
+
 } // namespace
 
 bool cacheVmuIconFromFlash(const std::string& gameId, const std::string& gameTitle, const void *data, size_t size)
@@ -698,6 +840,7 @@ bool cacheVmuIconFromFlash(const std::string& gameId, const std::string& gameTit
 	json& cache = getSharedIconCache(cachePath);
 	updateLiveIconCacheEntry(cache, key, extracted, frameCount, animationSpeed);
 	saveSharedIconCache();
+	resolvedIconLookups.erase(key);
 	return extracted;
 }
 
@@ -740,60 +883,45 @@ std::string getCachedVmuIconPath(const GameMedia& media, const std::string& game
 	std::lock_guard<std::mutex> lock(cacheMutex);
 
 	if (!config::PerGameVmu)
+	{
+		resolvedIconLookups.clear();
 		return {};
+	}
 
 	const std::string key = makeCacheKey(media, gameId);
 	if (key.empty())
 		return {};
 
-	const std::string libraryDir = getVmuIconLibraryDir();
-	if (libraryDir.empty())
-		return {};
-
-	const std::string cacheDir = getVmuIconCacheDir(libraryDir, key);
-	if (cacheDir.empty())
-		return {};
-
-	const std::string cachePath = appendPath(libraryDir, "cache.json");
-	json& cache = getSharedIconCache(cachePath);
-	u32 cachedFrameCount = 0;
-	u16 cachedAnimationSpeed = 0;
-	if (cachedLiveIconEntry(cache, key, cachedFrameCount, cachedAnimationSpeed))
-		return selectCachedIconPath(cacheDir, cachedFrameCount, cachedAnimationSpeed, animate, animationClock);
-
-	const std::string vmuPath = findPerGameVmuPath(media, gameId);
-	if (vmuPath.empty())
+	const std::string currentVmuPath = config::VMUPath.get();
+	if (resolvedLookupVmuPath != currentVmuPath)
 	{
-		u32 frameCount = 0;
-		u16 animationSpeed = 0;
-		if (!cachedAnyIconEntry(cache, key, frameCount, animationSpeed))
-			return {};
-		return selectCachedIconPath(cacheDir, frameCount, animationSpeed, animate, animationClock);
+		resolvedIconLookups.clear();
+		resolvedLookupVmuPath = currentVmuPath;
 	}
 
-	const hostfs::FileInfo vmuInfo = getFileInfo(vmuPath);
-
-	bool iconWasExtracted = false;
-	if (cachedEntryMatches(cache, key, vmuInfo, iconWasExtracted))
+	const auto now = std::chrono::steady_clock::now();
+	auto it = resolvedIconLookups.find(key);
+	if (it != resolvedIconLookups.end())
 	{
-		if (!iconWasExtracted)
-			return {};
-		const json& entry = cache["games"][key];
-		const u32 frameCount = entry.value("frames", 1);
-		const u16 animationSpeed = entry.value("speed", 0);
-		if (!animate || frameCount <= 1 || hasCachedAnimationFrames(cacheDir, frameCount))
-		{
-			const std::string cachedPath = selectCachedIconPath(cacheDir, frameCount, animationSpeed, animate, animationClock);
-			if (!cachedPath.empty())
-				return cachedPath;
-		}
+		const bool mayRevalidate = it->second.revalidateExternalSource
+				&& now >= it->second.nextValidation
+				&& now >= nextExternalVmuValidation;
+		if (!mayRevalidate)
+			return selectResolvedIconPath(it->second, animate, animationClock);
+		nextExternalVmuValidation = now + EXTERNAL_VMU_REVALIDATION_SPACING;
+		resolvedIconLookups.erase(it);
 	}
 
-	std::vector<u8> flash;
-	u32 frameCount = 0;
-	u16 animationSpeed = 0;
-	const bool extracted = readFile(vmuPath, flash) && extractBestIconFromFlash(flash, cacheDir, gameId, media.name, frameCount, animationSpeed);
-	updateIconCacheEntry(cache, key, vmuInfo, extracted, frameCount, animationSpeed);
-	saveSharedIconCache();
-	return extracted ? selectCachedIconPath(cacheDir, frameCount, animationSpeed, animate, animationClock) : std::string();
+	if (resolvedIconLookups.size() >= MAX_RESOLVED_ICON_LOOKUPS)
+		resolvedIconLookups.erase(resolvedIconLookups.begin());
+	ResolvedIconLookup lookup = resolveVmuIconLookup(media, gameId, key);
+	const auto inserted = resolvedIconLookups.emplace(key, std::move(lookup));
+	return selectResolvedIconPath(inserted.first->second, animate, animationClock);
+}
+
+void clearVmuIconLookups()
+{
+	std::lock_guard<std::mutex> lock(cacheMutex);
+	resolvedIconLookups.clear();
+	nextExternalVmuValidation = {};
 }

@@ -366,6 +366,8 @@ static const char* GetTabHelpText(SettingsTab tab)
 	{
 	case SettingsTab::General:
 		return T("System, content, interface, and storage behavior. Highlight or select a setting to see a fuller explanation here.");
+	case SettingsTab::Library:
+		return T("Library layout, artwork, scraped media, game metadata, and VMU save icons. Highlight or select a setting to see a fuller explanation here.");
 	case SettingsTab::Video:
 		return T("Graphics quality, renderer behavior, scaling, and performance tuning. Highlight or select a setting to see what it changes and why it matters.");
 	case SettingsTab::Audio:
@@ -2057,7 +2059,7 @@ void openTab(SettingsTab tab)
 
 void focusBoxArtSection()
 {
-	openTab(SettingsTab::General);
+	openTab(SettingsTab::Library);
 	g_scrollToBoxArtSection = true;
 }
 
@@ -2068,6 +2070,8 @@ const char* getTabName(SettingsTab tab)
 	{
 	case SettingsTab::General:
 		return T("General");
+	case SettingsTab::Library:
+		return T("Library");
 	case SettingsTab::Video:
 		return T("Video");
 	case SettingsTab::Audio:
@@ -2237,6 +2241,9 @@ static void renderContentArea()
 	case SettingsTab::General:
 		renderGeneralTab();
 		break;
+	case SettingsTab::Library:
+		renderLibraryTab();
+		break;
 	case SettingsTab::Video:
 		renderVideoTab();
 		break;
@@ -2336,10 +2343,12 @@ static bool RenderCollapsingHeader(
 }
 
 // Render General tab with all settings from settings_general.cpp
-void renderGeneralTab()
+static void renderSettingsContentTab(SettingsTab tab)
 {
 	using namespace SettingsUI;
 	ScopedTwoLineRowStyle generalRowStyle(12.0f, true, 0.5f);
+	if (tab == SettingsTab::General)
+	{
 
 	ImGui::TextDisabled("%s", T("General Configuration"));
 	ImGui::Separator();
@@ -2831,7 +2840,6 @@ void renderGeneralTab()
 			)
 		);
 	}
-
 #ifdef __ANDROID__
 	RenderGeneralToggleSettingRow(
 		"UseSafFilePicker",
@@ -2848,8 +2856,12 @@ void renderGeneralTab()
 	);
 #endif
 
+	}
+
+	if (tab == SettingsTab::Library)
+	{
 	// ========================================
-	// Box Art Section
+	// Library Section
 	// ========================================
 	if (RenderCollapsingHeader("BoxArtSection", ICON_FA_IMAGE, T("Box Art"), ImGuiTreeNodeFlags_DefaultOpen))
 	{
@@ -3014,98 +3026,98 @@ void renderGeneralTab()
 		if (refreshCacheRowActivated)
 			gui_refresh_boxart_cache();
 
-		static const char* libraryDisplayStyles[] = { "Classic", "List" };
+		const char* libraryDisplayStyles[] = { T("Classic"), T("List") };
 		SettingsUI::PopupConfig libraryDisplayStyleCfg {};
 		libraryDisplayStyleCfg.type = SettingsUI::PopupType::Options;
-		libraryDisplayStyleCfg.options.label = "Library Display Style";
+		libraryDisplayStyleCfg.options.label = T("Library Display Style");
 		libraryDisplayStyleCfg.options.icon = ICON_FA_LIST;
-		libraryDisplayStyleCfg.options.popupID = "LibraryDisplayStylePopup";
+		libraryDisplayStyleCfg.options.popupID = Tnop("LibraryDisplayStylePopup");
 		libraryDisplayStyleCfg.options.options = libraryDisplayStyles;
 		libraryDisplayStyleCfg.options.optionCount = IM_ARRAYSIZE(libraryDisplayStyles);
 		libraryDisplayStyleCfg.options.currentValue = &config::LibraryDisplayStyle.get();
 		libraryDisplayStyleCfg.options.valueWidth = 220.0f;
 		libraryDisplayStyleCfg.options.onChange = [](int) { return true; };
 		RenderGeneralPopupSettingRow(
-			"LibraryDisplayStyle",
-			"Choose how the game library is displayed.",
+			Tnop("LibraryDisplayStyle"),
+			T("Choose how the game library is displayed."),
 			libraryDisplayStyleCfg,
-			"Library Display Style\n"
+			T("Library Display Style\n"
 			"Selects the visual layout for the game library.\n"
 			"Classic keeps the existing gallery/list behavior.\n"
-			"List uses a compact row/table layout with title and metadata columns.");
+			"List uses a compact row/table layout with title and metadata columns."));
 
-		static const char* libraryImageSources[] = {
-			"Current Artwork",
-			"VMU Save Icon",
-			"VMU Save Icon, then Current Artwork",
-			"Current Artwork, then VMU Save Icon",
+		const char* libraryImageSources[] = {
+			T("Current Artwork"),
+			T("VMU Save Icon"),
+			T("VMU Save Icon, then Current Artwork"),
+			T("Current Artwork, then VMU Save Icon"),
 		};
 		SettingsUI::PopupConfig libraryImageSourceCfg {};
 		libraryImageSourceCfg.type = SettingsUI::PopupType::Options;
-		libraryImageSourceCfg.options.label = "Library Image Source";
+		libraryImageSourceCfg.options.label = T("Library Image Source");
 		libraryImageSourceCfg.options.icon = ICON_FA_IMAGE;
-		libraryImageSourceCfg.options.popupID = "LibraryImageSourcePopup";
+		libraryImageSourceCfg.options.popupID = Tnop("LibraryImageSourcePopup");
 		libraryImageSourceCfg.options.options = libraryImageSources;
 		libraryImageSourceCfg.options.optionCount = IM_ARRAYSIZE(libraryImageSources);
 		libraryImageSourceCfg.options.currentValue = &config::LibraryImageSource.get();
 		libraryImageSourceCfg.options.valueWidth = 240.0f;
 		libraryImageSourceCfg.options.onChange = [](int) { return true; };
 		RenderGeneralPopupSettingRow(
-			"LibraryImageSource",
-			"Select the image source for library icons.",
+			Tnop("LibraryImageSource"),
+			T("Select the image source for library icons."),
 			libraryImageSourceCfg,
-			"Library Image Source\n"
+			T("Library Image Source\n"
 			"Controls which icon source the table/list view uses for each row.\n"
-			"VMU icon options use the selected normal artwork fallback until a game has cached VMU icons.");
+			"VMU icon options use the selected normal artwork fallback until a game has cached VMU icons."));
 
-		static const char* libraryCoverMediaSources[] = {
-			"Current Artwork",
-			"Mix Image",
-			"Cover",
-			"Case / 3D Box",
-			"Screenshot",
-			"Marquee",
-			"Physical Media",
-			"Fan Art",
-			"Title Screen",
+		const char* libraryCoverMediaSources[] = {
+			T("Current Artwork"),
+			T("Mix Image"),
+			T("Cover"),
+			T("Case / 3D Box"),
+			T("Screenshot"),
+			T("Marquee"),
+			T("Physical Media"),
+			T("Fan Art"),
+			T("Title Screen"),
 		};
 		SettingsUI::PopupConfig libraryCoverMediaCfg {};
 		libraryCoverMediaCfg.type = SettingsUI::PopupType::Options;
-		libraryCoverMediaCfg.options.label = "What Media To Use For Library Covers";
+		libraryCoverMediaCfg.options.label = T("What Media To Use For Library Covers");
 		libraryCoverMediaCfg.options.icon = ICON_FA_IMAGE;
-		libraryCoverMediaCfg.options.popupID = "LibraryCoverMediaPopup";
+		libraryCoverMediaCfg.options.popupID = Tnop("LibraryCoverMediaPopup");
 		libraryCoverMediaCfg.options.options = libraryCoverMediaSources;
 		libraryCoverMediaCfg.options.optionCount = IM_ARRAYSIZE(libraryCoverMediaSources);
 		libraryCoverMediaCfg.options.currentValue = &config::LibraryCoverMedia.get();
 		libraryCoverMediaCfg.options.valueWidth = 240.0f;
 		libraryCoverMediaCfg.options.onChange = [](int) { return true; };
 		RenderGeneralPopupSettingRow(
-			"LibraryCoverMedia",
-			"Choose which custom media type is used as the main library image.",
+			Tnop("LibraryCoverMedia"),
+			T("Choose which custom media type is used as the main library image."),
 			libraryCoverMediaCfg,
-			"What Media To Use For Library Covers\n"
+			T("What Media To Use For Library Covers\n"
 			"This only changes the main image shown in the library grid/list.\n\n"
 			"Use Mix Image for ES-DE/Skraper miximages, Cover for front covers, Marquee for transparent logo/title art, Title Screen for title-screen images, Screenshot for gameplay shots, Fan Art for background art, Physical Media for disc images, or Case / 3D Box for 3D/back-cover style art.\n\n"
-			"Other media can still appear in the game info hover/profile when the matching folders and files are present.");
+			"Other media can still appear in the game info hover/profile when the matching folders and files are present."));
 
-		static const char* vmuIconModes[] = { "Static", "Active / Animated" };
+		const char* vmuIconModes[] = { T("Static"), T("Active / Animated") };
 		SettingsUI::PopupConfig vmuIconModeCfg {};
 		vmuIconModeCfg.type = SettingsUI::PopupType::Options;
-		vmuIconModeCfg.options.label = "VMU Icon Mode";
+		vmuIconModeCfg.options.label = T("VMU Icon Mode");
 		vmuIconModeCfg.options.icon = ICON_FA_BATTERY_FULL;
-		vmuIconModeCfg.options.popupID = "VMUIconModePopup";
+		vmuIconModeCfg.options.popupID = Tnop("VMUIconModePopup");
 		vmuIconModeCfg.options.options = vmuIconModes;
 		vmuIconModeCfg.options.optionCount = IM_ARRAYSIZE(vmuIconModes);
 		vmuIconModeCfg.options.currentValue = &config::VmuIconMode.get();
 		vmuIconModeCfg.options.valueWidth = 220.0f;
 		vmuIconModeCfg.options.onChange = [](int) { return true; };
 		RenderGeneralPopupSettingRow(
-			"VMUIconMode",
-			"Set VMU icon playback behavior.",
+			Tnop("VMUIconMode"),
+			T("Set VMU icon playback behavior."),
 			vmuIconModeCfg,
-			"VMU Icon Mode\n"
+			T("VMU Icon Mode\n"
 			"Controls how cached VMU icons play after they have been captured from saves.\n"
-			"Static shows one frame; Active / Animated plays the BIOS-style icon frames.");
+			"Static shows one frame; Active / Animated plays the BIOS-style icon frames."));
 
 		RenderGeneralToggleSettingRow(
 			"BoxartDisplayMode",
@@ -3136,8 +3148,26 @@ void renderGeneralTab()
 			),
 			physicalOnly
 		);
+
+#if !defined(TARGET_IPHONE)
+		manageSinglePath(T("Gamelist XML"), config::GameListPath,
+			T(
+				"Gamelist XML\n"
+				"Choose the exact `gamelist.xml` file that belongs to your Dreamcast ROM set.\n\n"
+				"This file provides the game info used by the library hover/profile screen: description, developer, genre, players, release date, and manual path.\n\n"
+				"For ES-DE, this is usually in a separate folder from the images, for example `gamelists/dreamcast/gamelist.xml`.\n"
+				"Hollycast will not guess this path. Set it here if you want game descriptions and details."
+			),
+			true,
+			"xml"
+		);
+		ImGui::Spacing();
+#endif
+	}
 	}
 
+	if (tab == SettingsTab::General)
+	{
 	// ========================================
 	// Automatic Save States Section
 	// ========================================
@@ -3396,19 +3426,6 @@ void renderGeneralTab()
 		ImGui::Spacing();
 #endif
 
-		manageSinglePath(T("Gamelist XML"), config::GameListPath,
-			T(
-				"Gamelist XML\n"
-				"Choose the exact `gamelist.xml` file that belongs to your Dreamcast ROM set.\n\n"
-				"This file provides the game info used by the library hover/profile screen: description, developer, genre, players, release date, and manual path.\n\n"
-				"For ES-DE, this is usually in a separate folder from the images, for example `gamelists/dreamcast/gamelist.xml`.\n"
-				"Hollycast will not guess this path. Set it here if you want game descriptions and details."
-			),
-			true,
-			"xml"
-		);
-		ImGui::Spacing();
-
 		managePathList(T("Texture Pack Folders"), T("Texture Pack Folder"), config::TexturePath.get(),
 			T(
 				"Texture Pack Folders\n"
@@ -3450,8 +3467,18 @@ void renderGeneralTab()
 #endif  // !ANDROID
 	}
 #endif  // !IPHONE
+	}
 }
 
+void renderGeneralTab()
+{
+	renderSettingsContentTab(SettingsTab::General);
+}
+
+void renderLibraryTab()
+{
+	renderSettingsContentTab(SettingsTab::Library);
+}
 
 void renderVideoTab()
 {

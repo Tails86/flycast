@@ -28,3 +28,4 @@ bool cacheVmuIconFromFlash(const std::string& gameId, const std::string& gameTit
 void markLibraryGameBooted(const std::string& gameId, const std::string& gamePath);
 time_t getLibraryGameLastBooted(const GameMedia& media, const std::string& gameId);
 std::string getCachedVmuIconPath(const GameMedia& media, const std::string& gameId, bool animate = false, double animationClock = 0.0);
+void clearVmuIconLookups();

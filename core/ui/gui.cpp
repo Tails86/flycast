@@ -2189,6 +2189,7 @@ static void gui_display_content()
 	ImGui::PopFont();
     ImGui::PopStyleVar();
 
+    boxart.refreshCustomBoxartIndex(false);
     scanner.fetch_game_list();
 
 	// Only if Filter and Settings aren't focused... ImGui::SetNextWindowFocus();
@@ -3016,6 +3017,7 @@ void gui_term()
 	    EventManager::unlisten(Event::Resume, emuEventCallback);
 	    EventManager::unlisten(Event::Start, emuEventCallback);
 	    EventManager::unlisten(Event::Terminate, emuEventCallback);
+	    clearVmuIconLookups();
 	    boxart.term();
 	}
 }
@@ -3167,6 +3169,8 @@ void gui_setState(GuiState newState)
 {
 	if (gui_state != newState)
 	{
+		if (newState == GuiState::Main && gui_state == GuiState::Closed)
+			clearVmuIconLookups();
 		resetLibraryLongPress();
 		resetLibraryGameInfoHover();
 	}
@@ -3198,6 +3202,7 @@ void gui_refresh_custom_boxart(bool force)
 
 void gui_refresh_boxart_cache()
 {
+	clearVmuIconLookups();
 	boxart.refreshCache();
 	scanner.fetch_game_list_sync();
 	std::vector<GameMedia> games;

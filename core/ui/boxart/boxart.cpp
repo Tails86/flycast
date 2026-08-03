@@ -21,23 +21,123 @@
 #include "gamesdb.h"
 #include "../game_scanner.h"
 #include "oslib/oslib.h"
+#include "oslib/directory.h"
 #include "oslib/storage.h"
 #include "cfg/option.h"
 #include "arcade_scraper.h"
+#include <nowide/convert.hpp>
+#include <nowide/stackstring.hpp>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cctype>
 #include <cstring>
+#include <cstdio>
 #include <memory>
 #include <string_view>
 #include <unordered_set>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace {
 
 static constexpr size_t kOnlineBoxartBatchSize = 10;
 static constexpr size_t kPhysicalBoxartBatchSize = 40;
 static constexpr size_t kPhysicalBoxartWorkerCount = 4;
+
+bool isContentUri(const std::string& path)
+{
+	return path.rfind("content://", 0) == 0;
+}
+
+std::string appendFilesystemPath(const std::string& directory, const std::string& name)
+{
+	if (directory.empty() || directory.back() == '/' || directory.back() == '\\')
+		return directory + name;
+#ifdef _WIN32
+	return directory + "\\\\" + name;
+#else
+	return directory + "/" + name;
+#endif
+}
+
+bool ensureFilesystemDirectory(const std::string& path)
+{
+	return !path.empty() && !isContentUri(path) && (file_exists(path) || make_directory(path));
+}
+
+bool isWritableFilesystemDirectory(const std::string& path)
+{
+	if (!ensureFilesystemDirectory(path))
+		return false;
+	try {
+		const hostfs::FileInfo info = hostfs::storage().getFileInfo(path);
+		return info.isDirectory && info.isWritable;
+	} catch (const hostfs::StorageException&) {
+		return false;
+	}
+}
+
+std::string stableDatabaseKey(const std::string& path)
+{
+	u64 hash = 14695981039346656037ULL;
+	for (unsigned char c : path)
+	{
+		hash ^= c;
+		hash *= 1099511628211ULL;
+	}
+	char key[17];
+	std::snprintf(key, sizeof(key), "%016llx", static_cast<unsigned long long>(hash));
+	return key;
+}
+
+bool readStorageFile(const std::string& path, std::string& output)
+{
+	std::unique_ptr<hostfs::File> file(hostfs::storage().openFile(path, "rb"));
+	if (file == nullptr)
+		return false;
+	const s64 size = file->size();
+	if (size < 0)
+		return false;
+	output.resize(static_cast<size_t>(size));
+	return output.empty() || file->read(output.data(), 1, output.size()) == output.size();
+}
+
+bool replaceFileAtomically(const std::string& temporaryPath, const std::string& path)
+{
+#ifdef _WIN32
+	nowide::wstackstring temporary, destination;
+	return temporary.convert(temporaryPath.c_str())
+		&& destination.convert(path.c_str())
+		&& MoveFileExW(temporary.get(), destination.get(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+	return flycast::rename(temporaryPath.c_str(), path.c_str()) == 0;
+#endif
+}
+
+bool writeFileAtomically(const std::string& path, const std::string& contents)
+{
+	const std::string temporaryPath = path + ".tmp";
+	FILE *file = nowide::fopen(temporaryPath.c_str(), "wb");
+	if (file == nullptr)
+		return false;
+	bool written = std::fwrite(contents.data(), 1, contents.size(), file) == contents.size();
+	if (std::fflush(file) != 0)
+		written = false;
+	if (std::fclose(file) != 0)
+		written = false;
+	if (!written)
+	{
+		nowide::remove(temporaryPath.c_str());
+		return false;
+	}
+	if (replaceFileAtomically(temporaryPath, path))
+		return true;
+	nowide::remove(temporaryPath.c_str());
+	return false;
+}
 
 bool isSupportedBoxartExtension(const std::string& ext)
 {
@@ -420,6 +520,12 @@ GameBoxart Boxart::getBoxartAndQueue(const GameMedia& media, bool startFetch)
 	const int sourceMode = config::BoxartSourceMode.get();
 	if (sourceMode == static_cast<int>(BoxartSourceMode::PhysicalMediaOnly))
 		return getPhysicalBoxart(media);
+	const bool useCustomBoxart = sourceMode == static_cast<int>(BoxartSourceMode::CustomThenScraped);
+	bool customIndexReady = true;
+	std::string customPath;
+	if (useCustomBoxart)
+		customPath = getCustomBoxartPathForMediaMode(media, config::LibraryCoverMediaMode::CurrentArtwork, &customIndexReady);
+	const bool queueScrape = !useCustomBoxart || (customIndexReady && customPath.empty());
 
 	GameBoxart boxart;
 	{
@@ -439,12 +545,12 @@ GameBoxart Boxart::getBoxartAndQueue(const GameMedia& media, bool startFetch)
 				if (missingScrapedBoxartFile)
 					boxart.scraped = false;
 				it->second = boxart;
-				databaseDirty = true;
+				markDatabaseDirty();
 			}
 			const bool wantOnline = shouldFetchOnline();
 			const bool needsOffline = !boxart.parsed;
 			const bool needsOnline = wantOnline && !boxart.scraped;
-			if (!boxart.busy && (needsOffline || needsOnline))
+			if (queueScrape && !boxart.busy && (needsOffline || needsOnline))
 			{
 				boxart.busy = it->second.busy = true;
 				boxart.gamePath = media.path;
@@ -455,15 +561,15 @@ GameBoxart Boxart::getBoxartAndQueue(const GameMedia& media, bool startFetch)
 		else
 		{
 			boxart = makeMediaBoxart(media);
-			boxart.busy = true;
+			boxart.busy = queueScrape;
 			games[boxart.fileName] = boxart;
-			toFetch.push_back(boxart);
+			if (queueScrape)
+				toFetch.push_back(boxart);
 		}
 	}
 
-	if (sourceMode == static_cast<int>(BoxartSourceMode::CustomThenScraped))
+	if (useCustomBoxart)
 	{
-		std::string customPath = getCustomBoxartPath(media);
 		if (!customPath.empty())
 		{
 			boxart.boxartPath = customPath;
@@ -529,19 +635,23 @@ std::string Boxart::getCustomMediaPath(const GameMedia& media, config::LibraryCo
 	return getCustomBoxartPathForMediaMode(media, mediaMode);
 }
 
-std::string Boxart::getCustomBoxartPathForMediaMode(const GameMedia& media, config::LibraryCoverMediaMode mediaMode)
+std::string Boxart::getCustomBoxartPathForMediaMode(const GameMedia& media, config::LibraryCoverMediaMode mediaMode,
+		bool *indexReady)
 {
 	const size_t modeIndex = static_cast<size_t>(mediaMode);
 	if (modeIndex >= customBoxartByName.size())
 		return {};
 
 	refreshCustomBoxartIndex(false);
+	const std::string root = getSaveDirectory();
 
 	const std::string fileKey = makeBoxartKey(media.fileName);
 	const std::string nameKey = makeBoxartKey(media.name);
 	const std::string gameNameKey = makeBoxartKey(media.gameName);
 
 	std::lock_guard<std::mutex> guard(mutex);
+	if (indexReady != nullptr)
+		*indexReady = customIndexLoaded && customBoxartRoot == root;
 	const auto& mediaIndex = customBoxartByName[modeIndex];
 	if (!fileKey.empty())
 	{
@@ -651,7 +761,7 @@ void Boxart::fetchBoxart()
 								else
 									b.busy = false;
 								games[b.fileName] = b;
-								databaseDirty = true;
+								markDatabaseDirty();
 							}
 					}
 					saveDatabase();
@@ -708,8 +818,8 @@ void Boxart::fetchBoxart()
 						b.busy = false;
 						games[b.fileName] = b;
 					}
+					markDatabaseDirty();
 				}
-				databaseDirty = true;
 			} catch (const std::runtime_error& e) {
 				if (*e.what() != '\0')
 					INFO_LOG(COMMON, "thegamesdb error: %s", e.what());
@@ -721,7 +831,7 @@ void Boxart::fetchBoxart()
 						{
 							b.busy = false;
 							games[b.fileName] = b;
-							databaseDirty = true;
+							markDatabaseDirty();
 						}
 						else
 						{
@@ -743,50 +853,91 @@ void Boxart::fetchBoxart()
 	});
 }
 
-void Boxart::saveDatabase()
+std::string Boxart::getDatabaseDirectory() const
 {
-	if (!databaseDirty)
-		return;
-	std::string basePath = getSaveDirectory();
-	std::string db_name = basePath + DB_NAME;
-	DEBUG_LOG(COMMON, "Saving boxart database to %s", db_name.c_str());
+	const std::string artworkDir = getSaveDirectory();
+	if (!isContentUri(artworkDir) && isWritableFilesystemDirectory(artworkDir))
+		return artworkDir;
 
-	json array;
-	{
-		std::lock_guard<std::mutex> guard(mutex);
-		for (const auto& game : games)
-			if (game.second.scraped || game.second.parsed || !game.second.fileName.empty())
-				array.push_back(game.second.to_json(basePath));
-	}
-	std::string serialized = array.dump(4, ' ', false, json::error_handler_t::replace);
-
-	FILE *file = nowide::fopen(db_name.c_str(), "wt");
-	if (file == nullptr) {
-		WARN_LOG(COMMON, "Can't save boxart database to %s: error %d", db_name.c_str(), errno);
-		return;
-	}
-	fwrite(serialized.c_str(), 1, serialized.size(), file);
-	fclose(file);
-	databaseDirty = false;
+	// SAF and read-only artwork folders cannot provide atomic metadata writes. Keep
+	// metadata in Hollycast's writable data area, keyed by the selected media root.
+	const std::string boxartDir = get_writable_data_path("boxart/");
+	if (!ensureFilesystemDirectory(boxartDir))
+		return {};
+	const std::string databaseRoot = appendFilesystemPath(boxartDir, "databases");
+	if (!ensureFilesystemDirectory(databaseRoot))
+		return {};
+	const std::string databaseDir = appendFilesystemPath(databaseRoot, stableDatabaseKey(artworkDir));
+	return ensureFilesystemDirectory(databaseDir) ? databaseDir : std::string{};
 }
 
-void Boxart::recoverDatabases(const std::string& saveDir)
+void Boxart::markDatabaseDirty()
+{
+	// All callers hold mutex. The generation protects changes made while a save is writing.
+	databaseDirty = true;
+	++databaseGeneration;
+}
+
+void Boxart::saveDatabase()
+{
+	std::vector<GameBoxart> snapshot;
+	u64 savedGeneration = 0;
+	const std::string artworkDir = getSaveDirectory();
+	{
+		std::lock_guard<std::mutex> guard(mutex);
+		if (!databaseDirty)
+			return;
+		savedGeneration = databaseGeneration;
+		snapshot.reserve(games.size());
+		for (const auto& game : games)
+			if (game.second.scraped || game.second.parsed || !game.second.fileName.empty())
+				snapshot.push_back(game.second);
+	}
+
+	const std::string databaseDir = getDatabaseDirectory();
+	if (databaseDir.empty())
+	{
+		WARN_LOG(COMMON, "Can't save boxart database: no writable metadata directory for %s", artworkDir.c_str());
+		return;
+	}
+	const std::string databasePath = appendFilesystemPath(databaseDir, DB_NAME);
+	json array;
+	for (const GameBoxart& game : snapshot)
+		array.push_back(game.to_json(artworkDir));
+	const std::string serialized = array.dump(4, ' ', false, json::error_handler_t::replace);
+
+	if (!writeFileAtomically(databasePath, serialized))
+	{
+		WARN_LOG(COMMON, "Can't save boxart database to %s: error %d", databasePath.c_str(), errno);
+		return;
+	}
+
+	std::lock_guard<std::mutex> guard(mutex);
+	if (databaseGeneration == savedGeneration)
+		databaseDirty = false;
+}
+
+void Boxart::recoverDatabases(const std::string& databaseDir, const std::string& artworkDir)
 {
 	std::vector<std::string> databasePaths;
 	std::unordered_map<std::string, std::string> imagePathsByName;
 	try {
-		hostfs::DirectoryTree tree(saveDir);
+		hostfs::DirectoryTree tree(databaseDir);
 		for (auto it = tree.begin(); it != tree.end(); ++it)
 		{
 			const hostfs::FileInfo& entry = *it;
 			if (entry.isDirectory)
 				continue;
-			if (get_file_extension(entry.name) == "json")
+			if (entry.name == DB_NAME)
 			{
 				databasePaths.push_back(entry.path);
-				continue;
 			}
-			if (isSupportedBoxartExtension(get_file_extension(entry.name)))
+		}
+		hostfs::DirectoryTree artworkTree(artworkDir);
+		for (auto it = artworkTree.begin(); it != artworkTree.end(); ++it)
+		{
+			const hostfs::FileInfo& entry = *it;
+			if (!entry.isDirectory && isSupportedBoxartExtension(get_file_extension(entry.name)))
 			{
 				imagePathsByName.emplace(normalizePath(entry.name), entry.path);
 				imagePathsByName.emplace(normalizePath(removeCopySuffix(entry.name)), entry.path);
@@ -800,21 +951,18 @@ void Boxart::recoverDatabases(const std::string& saveDir)
 	if (databasePaths.size() <= 1)
 		return;
 
-	const std::string mainDbPath = saveDir + DB_NAME;
+	const std::string mainDbPath = appendFilesystemPath(databaseDir, DB_NAME);
 	std::unordered_map<std::string, GameBoxart> mergedGames;
-	std::unordered_map<std::string, std::string> candidateImagePaths;
-	std::unordered_set<std::string> processedDatabasePaths;
 	for (const std::string& dbPath : databasePaths)
 	{
-		std::unique_ptr<FILE, decltype(&fclose)> f(nowide::fopen(dbPath.c_str(), "rt"), &fclose);
-		if (f == nullptr)
+		std::string contents;
+		if (!readStorageFile(dbPath, contents))
 			continue;
 
 		try {
-			json v = json::parse(f.get());
+			json v = json::parse(contents);
 			if (!v.is_array())
 				continue;
-			bool recoveredAnyGame = false;
 			const std::string dbDir = parentPath(dbPath);
 			for (const auto& o : v)
 			{
@@ -829,8 +977,6 @@ void Boxart::recoverDatabases(const std::string& saveDir)
 					if (imageIt != imagePathsByName.end())
 						candidate.boxartPath = imageIt->second;
 				}
-				if (!candidate.boxartPath.empty() && file_exists(candidate.boxartPath) && isPathInDirectory(candidate.boxartPath, saveDir))
-					candidateImagePaths[normalizePath(candidate.boxartPath)] = candidate.boxartPath;
 				if (candidate.boxartPath.empty() && !candidate.scraped)
 					candidate.parsed = false;
 
@@ -838,10 +984,7 @@ void Boxart::recoverDatabases(const std::string& saveDir)
 				auto existing = mergedGames.find(key);
 				if (existing == mergedGames.end() || boxartMergeScore(candidate) > boxartMergeScore(existing->second))
 					mergedGames[key] = candidate;
-				recoveredAnyGame = true;
 			}
-			if (recoveredAnyGame)
-				processedDatabasePaths.insert(normalizePath(dbPath));
 		} catch (const json::exception& e) {
 			WARN_LOG(COMMON, "Skipping corrupt boxart database %s: %s", dbPath.c_str(), e.what());
 		}
@@ -851,62 +994,70 @@ void Boxart::recoverDatabases(const std::string& saveDir)
 		return;
 
 	json array;
-	std::unordered_set<std::string> selectedImagePaths;
 	for (const auto& game : mergedGames)
-	{
-		if (!game.second.boxartPath.empty() && file_exists(game.second.boxartPath) && isPathInDirectory(game.second.boxartPath, saveDir))
-			selectedImagePaths.insert(normalizePath(game.second.boxartPath));
-		array.push_back(game.second.to_json(saveDir));
-	}
+		array.push_back(game.second.to_json(artworkDir));
 
-	FILE *file = nowide::fopen(mainDbPath.c_str(), "wt");
-	if (file == nullptr)
+	if (!writeFileAtomically(mainDbPath, array.dump(4, ' ', false, json::error_handler_t::replace)))
 	{
 		WARN_LOG(COMMON, "Can't write recovered boxart database to %s: error %d", mainDbPath.c_str(), errno);
 		return;
 	}
-	std::string serialized = array.dump(4, ' ', false, json::error_handler_t::replace);
-	fwrite(serialized.c_str(), 1, serialized.size(), file);
-	fclose(file);
 
-	for (const std::string& dbPath : databasePaths)
-		if (normalizePath(dbPath) != normalizePath(mainDbPath) && processedDatabasePaths.find(normalizePath(dbPath)) != processedDatabasePaths.end())
-			nowide::remove(dbPath.c_str());
-	for (const auto& imagePath : candidateImagePaths)
-		if (selectedImagePaths.find(imagePath.first) == selectedImagePaths.end())
-			nowide::remove(imagePath.second.c_str());
-
-	INFO_LOG(COMMON, "Recovered %d games from %d boxart databases", (int)mergedGames.size(), (int)databasePaths.size());
+	INFO_LOG(COMMON, "Recovered %d games from %d boxart databases without deleting source files", (int)mergedGames.size(), (int)databasePaths.size());
 }
 
 void Boxart::loadDatabase()
 {
-	if (databaseLoaded)
+	{
+		std::lock_guard<std::mutex> guard(mutex);
+		if (databaseLoaded)
+			return;
+		databaseLoaded = true;
+		databaseDirty = false;
+		++databaseGeneration;
+	}
+
+	const std::string artworkDir = getSaveDirectory();
+	const std::string databaseDir = getDatabaseDirectory();
+	if (databaseDir.empty())
+	{
+		WARN_LOG(COMMON, "Can't load boxart database: no writable metadata directory for %s", artworkDir.c_str());
+		refreshCustomBoxartIndex(false);
 		return;
-	databaseLoaded = true;
-	databaseDirty = false;
-	std::string save_dir = getSaveDirectory();
-	if (!file_exists(save_dir))
-		make_directory(save_dir);
-	recoverDatabases(save_dir);
-	std::string db_name = save_dir + DB_NAME;
-	std::unique_ptr<FILE, decltype(&fclose)> f(nowide::fopen(db_name.c_str(), "rt"), &fclose);
-	if (f == nullptr)
+	}
+	if (databaseDir == artworkDir)
+		recoverDatabases(databaseDir, artworkDir);
+
+	std::string contents;
+	std::string databasePath = appendFilesystemPath(databaseDir, DB_NAME);
+	bool loadedLegacyDatabase = false;
+	if (!readStorageFile(databasePath, contents) && databaseDir != artworkDir)
+	{
+		try {
+			const std::string legacyPath = isContentUri(artworkDir)
+				? hostfs::storage().getSubPath(artworkDir, DB_NAME)
+				: appendFilesystemPath(artworkDir, DB_NAME);
+			loadedLegacyDatabase = readStorageFile(legacyPath, contents);
+		} catch (const hostfs::StorageException&) {
+		}
+	}
+	if (contents.empty())
 	{
 		refreshCustomBoxartIndex(false);
 		return;
 	}
 
-	DEBUG_LOG(COMMON, "Loading boxart database from %s", db_name.c_str());
+	DEBUG_LOG(COMMON, "Loading boxart database from %s", databasePath.c_str());
 	try {
-		std::lock_guard<std::mutex> guard(mutex);
-
-		json v = json::parse(f.get());
+		std::vector<GameBoxart> loadedGames;
+		json v = json::parse(contents);
 		for (const auto& o : v)
-		{
-			GameBoxart game(o, save_dir);
-			games[game.fileName] = game;
-		}
+			loadedGames.emplace_back(o, artworkDir);
+		std::lock_guard<std::mutex> guard(mutex);
+		for (GameBoxart& game : loadedGames)
+			games[game.fileName] = std::move(game);
+		if (loadedLegacyDatabase)
+			markDatabaseDirty();
 	} catch (const json::exception& e) {
 		WARN_LOG(COMMON, "Corrupted database file: %s", e.what());
 	}
@@ -926,26 +1077,38 @@ void Boxart::reviewDatabaseArtwork()
 			game.second.boxartPath.clear();
 			if (!game.second.boxartUrl.empty())
 				game.second.scraped = false;
-			databaseDirty = true;
+			markDatabaseDirty();
 		}
 
 		if (game.second.parsed && game.second.boxartPath.empty() && !game.second.scraped)
 		{
 			game.second.parsed = false;
 			game.second.busy = false;
-			databaseDirty = true;
+			markDatabaseDirty();
 		}
 		if (game.second.boxartPath.empty() && game.second.scraped)
 		{
 			game.second.scraped = false;
 			game.second.busy = false;
-			databaseDirty = true;
+			markDatabaseDirty();
 		}
 	}
 }
 
 void Boxart::refreshCache()
 {
+	{
+		std::lock_guard<std::mutex> guard(mutex);
+		customIndexShuttingDown = true;
+		++customIndexGeneration;
+	}
+	if (customIndexFetching.valid())
+		customIndexFetching.get();
+	{
+		std::lock_guard<std::mutex> guard(mutex);
+		customIndexShuttingDown = false;
+		customIndexState = CustomIndexState::NotRequested;
+	}
 	if (physicalFetching.valid())
 	{
 		try {
@@ -974,7 +1137,10 @@ void Boxart::refreshCache()
 		toFetch.clear();
 		databaseLoaded = false;
 		databaseDirty = false;
+		++databaseGeneration;
 		customIndexLoaded = false;
+		customIndexState = CustomIndexState::NotRequested;
+		requestedCustomBoxartRoot.clear();
 	}
 	loadDatabase();
 	reviewDatabaseArtwork();
@@ -984,6 +1150,13 @@ void Boxart::refreshCache()
 
 void Boxart::term()
 {
+	{
+		std::lock_guard<std::mutex> guard(mutex);
+		customIndexShuttingDown = true;
+		++customIndexGeneration;
+	}
+	if (customIndexFetching.valid())
+		customIndexFetching.get();
 	if (physicalFetching.valid())
 		physicalFetching.get();
 	if (onlineFetching.valid())
@@ -993,57 +1166,121 @@ void Boxart::term()
 void Boxart::refreshCustomBoxartIndex(bool force)
 {
 	const std::string root = getSaveDirectory();
-	if (!force && customIndexLoaded && root == customBoxartRoot)
-		return;
 
-	std::unordered_map<std::string, std::string> newIndex;
-	CustomBoxartIndex mediaModeIndexes;
-	if (!root.empty() && hostfs::storage().exists(root))
+	if (customIndexFetching.valid() && customIndexFetching.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+		customIndexFetching.get();
+
+	bool startWorker = false;
 	{
-		try {
-			hostfs::DirectoryTree tree(root);
-			for (auto it = tree.begin(); it != tree.end(); ++it)
-			{
-				const hostfs::FileInfo& entry = *it;
-				if (entry.isDirectory)
-					continue;
-				if (isGeneratedVmuIconPath(root, entry.path))
-					continue;
-				const std::string ext = get_file_extension(entry.name);
-				const std::string key = makeBoxartKey(entry.name);
-				if (key.empty())
-					continue;
+		std::lock_guard<std::mutex> guard(mutex);
+		if (customIndexShuttingDown)
+			return;
 
-				const std::string firstFolder = toLowerString(getParentPath(root, entry.path));
-				const MediaFolderAlias* alias = findMediaFolderAlias(firstFolder);
-				if (alias == nullptr)
+		const bool rootChanged = root != requestedCustomBoxartRoot;
+		const bool needsInitialBuild = customIndexState == CustomIndexState::NotRequested;
+		if (!rootChanged && !force && !needsInitialBuild)
+			return;
+
+		if (rootChanged)
+		{
+			requestedCustomBoxartRoot = root;
+			if (root != customBoxartRoot)
+			{
+				for (auto& mediaIndex : customBoxartByName)
+					mediaIndex.clear();
+				customBoxartRoot = root;
+				customIndexLoaded = false;
+				physicalCache.clear();
+			}
+		}
+		++customIndexGeneration;
+		customIndexState = CustomIndexState::Building;
+		startWorker = !customIndexFetching.valid();
+	}
+
+	if (startWorker)
+		customIndexFetching = std::async(std::launch::async, [this]() { buildCustomBoxartIndex(); });
+}
+
+void Boxart::buildCustomBoxartIndex()
+{
+	while (true)
+	{
+		std::string root;
+		u64 generation;
+		{
+			std::lock_guard<std::mutex> guard(mutex);
+			if (customIndexShuttingDown)
+				return;
+			root = requestedCustomBoxartRoot;
+			generation = customIndexGeneration;
+		}
+
+		std::unordered_map<std::string, std::string> newIndex;
+		CustomBoxartIndex mediaModeIndexes;
+		bool succeeded = true;
+		try {
+			if (!root.empty())
+			{
+				hostfs::storage().getFileInfo(root);
+				hostfs::DirectoryTree tree(root);
+				for (auto it = tree.begin(); it != tree.end(); ++it)
 				{
+					const hostfs::FileInfo& entry = *it;
+					if (entry.isDirectory || isGeneratedVmuIconPath(root, entry.path))
+						continue;
+					const std::string ext = get_file_extension(entry.name);
+					const std::string key = makeBoxartKey(entry.name);
+					if (key.empty())
+						continue;
+
+					const std::string firstFolder = toLowerString(getParentPath(root, entry.path));
+					const MediaFolderAlias* alias = findMediaFolderAlias(firstFolder);
+					if (alias == nullptr)
+					{
+						if (isSupportedBoxartExtension(ext))
+							newIndex[key] = entry.path;
+						continue;
+					}
+					if (!isSupportedCustomMediaExtension(alias->mode, ext))
+						continue;
 					if (isSupportedBoxartExtension(ext))
 						newIndex[key] = entry.path;
-					continue;
-				}
-				if (!isSupportedCustomMediaExtension(alias->mode, ext))
-					continue;
-				if (isSupportedBoxartExtension(ext))
-					newIndex[key] = entry.path;
 
-				const size_t modeIndex = static_cast<size_t>(alias->mode);
-				if (mediaModeIndexes[modeIndex].find(key) == mediaModeIndexes[modeIndex].end())
-					mediaModeIndexes[modeIndex][key] = entry.path;
+					const size_t modeIndex = static_cast<size_t>(alias->mode);
+					if (mediaModeIndexes[modeIndex].find(key) == mediaModeIndexes[modeIndex].end())
+						mediaModeIndexes[modeIndex][key] = entry.path;
+				}
 			}
 		} catch (const std::exception& e) {
 			WARN_LOG(COMMON, "Custom boxart scan failed: %s", e.what());
+			succeeded = false;
 		}
-	}
 
-	{
 		std::lock_guard<std::mutex> guard(mutex);
-		if (root != customBoxartRoot)
-			physicalCache.clear();
+		if (customIndexShuttingDown)
+			return;
+		if (generation != customIndexGeneration)
+			continue;
+		if (!succeeded)
+		{
+			if (!customIndexLoaded || customBoxartRoot != root)
+			{
+				for (auto& mediaIndex : customBoxartByName)
+					mediaIndex.clear();
+				customBoxartRoot = root;
+				customIndexLoaded = false;
+			}
+			customIndexState = CustomIndexState::Failed;
+			return;
+		}
+
 		customBoxartRoot = root;
 		for (size_t i = 0; i < customBoxartByName.size(); ++i)
 			customBoxartByName[i].swap(mediaModeIndexes[i]);
 		customBoxartByName[static_cast<size_t>(config::LibraryCoverMediaMode::CurrentArtwork)] = std::move(newIndex);
 		customIndexLoaded = true;
+		customIndexState = CustomIndexState::Ready;
+		return;
 	}
 }
