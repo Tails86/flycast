@@ -46,7 +46,7 @@ public:
 	virtual ~DreamLinkAndroidGamepad();
 
 	//! Overridden from GamepadDevice
-	//! @return "Awaiting Permission", "Connected", or "Disconnected"
+	//! @return "Connection Failed", "Connected", or "Disconnected"
 	const char* status() override;
 
 	//! Overridden from GamepadDevice

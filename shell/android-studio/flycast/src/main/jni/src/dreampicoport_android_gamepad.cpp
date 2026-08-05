@@ -288,24 +288,32 @@ static int get_nth_interface_id(JNIEnv *env, jobject usbDevice, int n) {
 	return interfaceIds[n];
 }
 
+static const int kPreferredHardwareBusNone = -1;
+static const int kPreferredHardwareBusErr = -2;
+
 //! Version 1.2.5 of DreamPicoPort has media keys which provide hint of what hardware bus this controller is
 //! @param[in] env The Java Native Interface environment object
 //! @param[in] inputDevice The InputDevice object
 //! @param[in] inputDeviceClass The InputDevice class
-//! @return 0-3 when descriptor-conveyed A/B/C/D key capability can be resolved, otherwise -1
+//! @return 0-3 when descriptor-conveyed A/B/C/D key capability can be resolved
+//! @return kPreferredHardwareBusNone if device doesn't contain media keys
+//! @return kPreferredHardwareBusErr on error
 static int get_preferred_hardware_bus(JNIEnv *env, jobject inputDevice, const jni::Class& inputDeviceClass) {
 	if (inputDevice == nullptr || inputDeviceClass.isNull()) {
-		return -1;
+		ERROR_LOG(INPUT, "InputDevice object or class is null");
+		return kPreferredHardwareBusErr;
 	}
 
 	jmethodID hasKeysMethodId = env->GetMethodID(inputDeviceClass, "hasKeys", "([I)[Z");
 	if (!hasKeysMethodId) {
-		return -1;
+		ERROR_LOG(INPUT, "Failed to locate InputDevice.hasKeys()");
+		return kPreferredHardwareBusErr;
 	}
 
 	jni::Class keyEventClass(env->FindClass("android/view/KeyEvent"));
 	if (keyEventClass.isNull()) {
-		return -1;
+		ERROR_LOG(INPUT, "Failed to locate KeyEvent class");
+		return kPreferredHardwareBusErr;
 	}
 
 	jfieldID keyAFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_PLAY_PAUSE", "I");
@@ -313,7 +321,8 @@ static int get_preferred_hardware_bus(JNIEnv *env, jobject inputDevice, const jn
 	jfieldID keyCFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_PREVIOUS", "I");
 	jfieldID keyDFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_STOP", "I");
 	if (!keyAFid || !keyBFid || !keyCFid || !keyDFid) {
-		return -1;
+		ERROR_LOG(INPUT, "Failed to locate key event codes");
+		return kPreferredHardwareBusErr;
 	}
 
 	const jint keyCodes[4] = {
@@ -325,7 +334,8 @@ static int get_preferred_hardware_bus(JNIEnv *env, jobject inputDevice, const jn
 
 	jni::IntArray keyCodeArray(env->NewIntArray(4));
 	if (keyCodeArray.isNull()) {
-		return -1;
+		ERROR_LOG(INPUT, "Failed to create int array");
+		return kPreferredHardwareBusErr;
 	}
     jobject keyCodeArrayObj = keyCodeArray;
 
@@ -333,22 +343,25 @@ static int get_preferred_hardware_bus(JNIEnv *env, jobject inputDevice, const jn
 	jni::BooleanArray hasKeysArray(env->CallObjectMethod(inputDevice, hasKeysMethodId, keyCodeArrayObj));
 
 	if (env->ExceptionCheck()) {
+		ERROR_LOG(INPUT, "Exception occurred when calling InputDevice.hasKeys()");
 		env->ExceptionClear();
-		return -1;
+		return kPreferredHardwareBusErr;
 	}
 
 	if (hasKeysArray.isNull() || env->GetArrayLength(hasKeysArray) < 4) {
-		return -1;
+		ERROR_LOG(INPUT, "Failed to get data from InputDevice.hasKeys()");
+		return kPreferredHardwareBusErr;
 	}
 
 	jboolean hasKeys[4] = { JNI_FALSE, JNI_FALSE, JNI_FALSE, JNI_FALSE };
 	env->GetBooleanArrayRegion(hasKeysArray, 0, 4, hasKeys);
 
-	int foundIndex = -1;
+	int foundIndex = kPreferredHardwareBusNone;
 	for (int i = 0; i < 4; i++) {
 		if (hasKeys[i] == JNI_TRUE) {
 			if (foundIndex >= 0) {
-				return -1;
+				ERROR_LOG(INPUT, "DreamPicoPort has multiple media keys");
+				return kPreferredHardwareBusErr;
 			}
 			foundIndex = i;
 		}
@@ -376,7 +389,7 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 
 	if (hwInfo.base_info.serial_number.empty())
 	{
-		NOTICE_LOG(INPUT, "Failed to retrieve serial from DreamPicoPort name: %s", name.c_str());
+		ERROR_LOG(INPUT, "Failed to retrieve serial from DreamPicoPort name: %s", name.c_str());
 		return std::nullopt;
 	}
 
@@ -392,28 +405,28 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 	if (usbDev.isNull())
 	{
 		// Probably don't have permission yet
-		NOTICE_LOG(INPUT, "Failed to retrieve DreamPicoPort UsbDevice for %s", hwInfo.base_info.serial_number.c_str());
+		ERROR_LOG(INPUT, "Failed to retrieve DreamPicoPort UsbDevice for %s", hwInfo.base_info.serial_number.c_str());
 		return std::nullopt;
 	}
 
 	jni::Class inputDeviceClass(env->FindClass("android/view/InputDevice"));
 	if (inputDeviceClass.isNull())
 	{
-		NOTICE_LOG(INPUT, "Failed to locate android/view/InputDevice");
+		ERROR_LOG(INPUT, "Failed to locate android/view/InputDevice");
 		return std::nullopt;
 	}
 
 	jmethodID getDeviceMethodId = env->GetStaticMethodID(inputDeviceClass, "getDevice", "(I)Landroid/view/InputDevice;");
 	if (!getDeviceMethodId)
 	{
-		NOTICE_LOG(INPUT, "Failed to locate InputDevice.getDevice()");
+		ERROR_LOG(INPUT, "Failed to locate InputDevice.getDevice()");
 		return std::nullopt;
 	}
 
 	jmethodID getNameMethodId = env->GetMethodID(inputDeviceClass, "getName", "()Ljava/lang/String;");
 	if (!getNameMethodId)
 	{
-		NOTICE_LOG(INPUT, "Failed to locate InputDevice.getName()");
+		ERROR_LOG(INPUT, "Failed to locate InputDevice.getName()");
 		return std::nullopt;
 	}
 
@@ -450,7 +463,7 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 			hwInfo.base_info.is_single_device = false;
 		}
 	}
-	else
+	else if (preferredHardwareBus == kPreferredHardwareBusNone)
 	{
 		hwInfo.base_info.hardware_bus = get_serial_count(
 			env,
@@ -497,13 +510,17 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 			hwInfo.base_info.hardware_bus
 		);
 	}
+	else
+	{
+		return std::nullopt;
+	}
 
 	hwInfo.usb_device_connection =
 		AndroidDreamPicoPort::openUsbDeviceAndGetFd(env, usbManager, usbDev, hwInfo.base_info.serial_number);
 
 	if (!hwInfo.usb_device_connection)
 	{
-		NOTICE_LOG(INPUT, "Failed to open file descriptor to DreamPicoPort device");
+		ERROR_LOG(INPUT, "Failed to open file descriptor to DreamPicoPort device");
 		return std::nullopt;
 	}
 
@@ -539,6 +556,8 @@ static std::shared_ptr<AndroidDreamPicoPort> make_dpp(
 	{
 		return std::make_shared<AndroidDreamPicoPort>(maple_port, hwInfo.value());
 	}
+
+	ERROR_LOG(INPUT, "DreamPicoPort hardware info is invalid");
 
 	return nullptr;
 }

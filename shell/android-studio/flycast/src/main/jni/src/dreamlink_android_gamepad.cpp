@@ -74,7 +74,7 @@ const char* DreamLinkAndroidGamepad::status()
 {
 	if (!dreamlink)
 	{
-		return i18n::T("Awaiting Permission");
+		return i18n::T("Connection Failed");
 	}
 
 	if (dreamlink->isConnected())
