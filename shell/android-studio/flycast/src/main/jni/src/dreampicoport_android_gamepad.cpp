@@ -288,6 +288,75 @@ static int get_nth_interface_id(JNIEnv *env, jobject usbDevice, int n) {
 	return interfaceIds[n];
 }
 
+//! Version 1.2.5 of DreamPicoPort has media keys which provide hint of what hardware bus this controller is
+//! @param[in] env The Java Native Interface environment object
+//! @param[in] inputDevice The InputDevice object
+//! @param[in] inputDeviceClass The InputDevice class
+//! @return 0-3 when descriptor-conveyed A/B/C/D key capability can be resolved, otherwise -1
+static int get_preferred_hardware_bus(JNIEnv *env, jobject inputDevice, const jni::Class& inputDeviceClass) {
+	if (inputDevice == nullptr || inputDeviceClass.isNull()) {
+		return -1;
+	}
+
+	jmethodID hasKeysMethodId = env->GetMethodID(inputDeviceClass, "hasKeys", "([I)[Z");
+	if (!hasKeysMethodId) {
+		return -1;
+	}
+
+	jni::Class keyEventClass(env->FindClass("android/view/KeyEvent"));
+	if (keyEventClass.isNull()) {
+		return -1;
+	}
+
+	jfieldID keyAFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_PLAY_PAUSE", "I");
+	jfieldID keyBFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_NEXT", "I");
+	jfieldID keyCFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_PREVIOUS", "I");
+	jfieldID keyDFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_STOP", "I");
+	if (!keyAFid || !keyBFid || !keyCFid || !keyDFid) {
+		return -1;
+	}
+
+	const jint keyCodes[4] = {
+		env->GetStaticIntField(keyEventClass, keyAFid),
+		env->GetStaticIntField(keyEventClass, keyBFid),
+		env->GetStaticIntField(keyEventClass, keyCFid),
+		env->GetStaticIntField(keyEventClass, keyDFid)
+	};
+
+	jni::IntArray keyCodeArray(env->NewIntArray(4));
+	if (keyCodeArray.isNull()) {
+		return -1;
+	}
+    jobject keyCodeArrayObj = keyCodeArray;
+
+	env->SetIntArrayRegion(keyCodeArray, 0, 4, keyCodes);
+	jni::BooleanArray hasKeysArray(env->CallObjectMethod(inputDevice, hasKeysMethodId, keyCodeArrayObj));
+
+	if (env->ExceptionCheck()) {
+		env->ExceptionClear();
+		return -1;
+	}
+
+	if (hasKeysArray.isNull() || env->GetArrayLength(hasKeysArray) < 4) {
+		return -1;
+	}
+
+	jboolean hasKeys[4] = { JNI_FALSE, JNI_FALSE, JNI_FALSE, JNI_FALSE };
+	env->GetBooleanArrayRegion(hasKeysArray, 0, 4, hasKeys);
+
+	int foundIndex = -1;
+	for (int i = 0; i < 4; i++) {
+		if (hasKeys[i] == JNI_TRUE) {
+			if (foundIndex >= 0) {
+				return -1;
+			}
+			foundIndex = i;
+		}
+	}
+
+	return foundIndex;
+}
+
 //! Only to be called during instantiation to determine hardware information
 //! @param[in] env The Java Native Interface environment object
 //! @param[in] usbManager A UsbManager object created from the current app context
@@ -348,18 +417,15 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 		return std::nullopt;
 	}
 
-	hwInfo.base_info.hardware_bus = get_serial_count(
-		env,
-		id,
-		hwInfo.base_info.serial_number,
-		-1,
-		inputDeviceClass,
-		getDeviceMethodId,
-		getNameMethodId
-	);
+	jni::Object inputDevice(env->CallStaticObjectMethod(inputDeviceClass, getDeviceMethodId, id));
+	const int preferredHardwareBus = get_preferred_hardware_bus(env, inputDevice, inputDeviceClass);
 
-	if (hwInfo.base_info.hardware_bus == 0)
+	if (preferredHardwareBus >= 0)
 	{
+		// Input descriptor has identified A/B/C/D directly from key capability bits.
+		hwInfo.base_info.hardware_bus = preferredHardwareBus;
+
+		// Determine if there are any other devices with this serial
 		if (
 			get_serial_count(
 				env,
@@ -370,21 +436,67 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 				getDeviceMethodId,
 				getNameMethodId,
 				1
+			) > 0 || get_serial_count(
+				env,
+				id,
+				hwInfo.base_info.serial_number,
+				-1,
+				inputDeviceClass,
+				getDeviceMethodId,
+				getNameMethodId,
+				1
 			) > 0
-		)
-		{
+		) {
 			hwInfo.base_info.is_single_device = false;
 		}
 	}
 	else
 	{
-		hwInfo.base_info.is_single_device = false;
-	}
+		hwInfo.base_info.hardware_bus = get_serial_count(
+			env,
+			id,
+			hwInfo.base_info.serial_number,
+			-1,
+			inputDeviceClass,
+			getDeviceMethodId,
+			getNameMethodId
+		);
 
-	// Interfaces 0-3 correspond to the four gamepad ports. If only ports B and D are connected,
-	// their interface IDs would otherwise be seen as 0 and 1; remapping them to their true
-	// slot indices (1 and 3) keeps hardware_bus consistent with the physical port layout.
-	hwInfo.base_info.hardware_bus = get_nth_interface_id(env, usbDev, hwInfo.base_info.hardware_bus);
+		if (hwInfo.base_info.hardware_bus == 0)
+		{
+			if (
+				get_serial_count(
+					env,
+					id,
+					hwInfo.base_info.serial_number,
+					1,
+					inputDeviceClass,
+					getDeviceMethodId,
+					getNameMethodId,
+					1
+				) > 0
+			)
+			{
+				hwInfo.base_info.is_single_device = false;
+			}
+		}
+		else
+		{
+			hwInfo.base_info.is_single_device = false;
+		}
+
+		// Interfaces 0-3 correspond to the four gamepad ports. If only ports B and D are connected,
+		// their interface IDs would otherwise be seen as 0 and 1; remapping them to their true
+		// slot indices (1 and 3) keeps hardware_bus consistent with the physical port layout.
+		hwInfo.base_info.hardware_bus = get_nth_interface_id(env, usbDev, hwInfo.base_info.hardware_bus);
+
+		WARN_LOG(
+			INPUT,
+			"DreamPicoPort guessed hardware bus %i for controller - "
+			"please update firmware to 1.2.5 or later for more robust Android support",
+			hwInfo.base_info.hardware_bus
+		);
+	}
 
 	hwInfo.usb_device_connection =
 		AndroidDreamPicoPort::openUsbDeviceAndGetFd(env, usbManager, usbDev, hwInfo.base_info.serial_number);

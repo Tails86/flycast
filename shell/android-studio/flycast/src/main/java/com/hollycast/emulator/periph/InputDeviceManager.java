@@ -19,6 +19,7 @@ import android.os.Looper;
 import android.view.InputDevice;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
+
 import androidx.core.content.ContextCompat;
 
 import com.hollycast.emulator.Emulator;
