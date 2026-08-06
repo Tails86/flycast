@@ -34,6 +34,7 @@
 #include <cstring>
 #include <cstdio>
 #include <future>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string_view>
@@ -48,6 +49,9 @@ namespace {
 static constexpr size_t kOnlineBoxartBatchSize = 10;
 static constexpr size_t kPhysicalBoxartBatchSize = 40;
 static constexpr size_t kPhysicalBoxartWorkerCount = 4;
+static constexpr size_t kLibraryPlaytimeDatabaseMaxSize = 4 * 1024 * 1024;
+static constexpr size_t kLibraryPlaytimeDatabaseMaxEntries = 100000;
+static constexpr const char *LIBRARY_PLAYTIME_DB_NAME = "library-playtime.json";
 
 bool isContentUri(const std::string& path)
 {
@@ -95,16 +99,36 @@ std::string stableDatabaseKey(const std::string& path)
 	return key;
 }
 
-bool readStorageFile(const std::string& path, std::string& output)
+bool readStorageFile(const std::string& path, std::string& output, size_t maximumSize = std::numeric_limits<size_t>::max())
 {
 	std::unique_ptr<hostfs::File> file(hostfs::storage().openFile(path, "rb"));
 	if (file == nullptr)
 		return false;
 	const s64 size = file->size();
-	if (size < 0)
+	if (size < 0 || static_cast<u64>(size) > maximumSize)
 		return false;
 	output.resize(static_cast<size_t>(size));
 	return output.empty() || file->read(output.data(), 1, output.size()) == output.size();
+}
+
+std::string normalizeLibraryGameId(std::string value)
+{
+	value = trim_ws(value);
+	std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+		return static_cast<char>(std::toupper(c));
+	});
+	return value;
+}
+
+std::string getLibraryPlaytimeDatabasePath(const std::string& root)
+{
+	try {
+		return isContentUri(root)
+			? hostfs::storage().getSubPath(root, LIBRARY_PLAYTIME_DB_NAME)
+			: appendFilesystemPath(root, LIBRARY_PLAYTIME_DB_NAME);
+	} catch (const hostfs::StorageException&) {
+		return {};
+	}
 }
 
 bool replaceFileAtomically(const std::string& temporaryPath, const std::string& path)
@@ -328,6 +352,7 @@ void scrapePhysicalBoxart(std::vector<GameBoxart>& boxart, const std::string& sa
 		worker.get();
 }
 
+#ifdef __ANDROID__
 int hexValue(char c)
 {
 	if (c >= '0' && c <= '9')
@@ -373,9 +398,12 @@ std::string getAndroidDocumentId(const std::string& uri, const char* marker)
 	const size_t idEnd = std::strcmp(marker, "/tree/") == 0 ? decoded.find("/document/", idStart) : std::string::npos;
 	return decoded.substr(idStart, idEnd == std::string::npos ? std::string::npos : idEnd - idStart);
 }
+#endif
 
 std::string getParentPath(const std::string& root, const std::string& path)
 {
+	// SAF content URIs only exist on Android. Other platforms use filesystem paths.
+	#ifdef __ANDROID__
 	if (root.find("content://") == 0 || path.find("content://") == 0)
 	{
 		const std::string rootId = getAndroidDocumentId(root, "/tree/");
@@ -388,6 +416,7 @@ std::string getParentPath(const std::string& root, const std::string& path)
 		const size_t slash = relative.find('/');
 		return slash == std::string::npos ? std::string{} : relative.substr(0, slash);
 	}
+	#endif
 
 	if (path.size() <= root.size() || path.compare(0, root.size(), root) != 0)
 		return {};
@@ -480,6 +509,7 @@ GameBoxart Boxart::getBoxart(const GameMedia& media)
 		auto it = games.find(media.fileName);
 		if (it != games.end())
 			boxart = it->second;
+		applyLibraryPlaytimeUnlocked(boxart);
 	}
 	if (boxart.fileName.empty())
 		boxart = makeMediaBoxart(media);
@@ -565,6 +595,7 @@ GameBoxart Boxart::getBoxartAndQueue(const GameMedia& media, bool startFetch)
 			if (queueScrape)
 				toFetch.push_back(boxart);
 		}
+		applyLibraryPlaytimeUnlocked(boxart);
 	}
 
 	if (useCustomBoxart)
@@ -594,7 +625,11 @@ GameBoxart Boxart::getPhysicalBoxart(const GameMedia& media)
 		std::lock_guard<std::mutex> guard(mutex);
 		auto it = physicalCache.find(media.fileName);
 		if (it != physicalCache.end())
-			return it->second;
+		{
+			GameBoxart boxart = it->second;
+			applyLibraryPlaytimeUnlocked(boxart);
+			return boxart;
+		}
 	}
 
 	GameBoxart boxart = makeMediaBoxart(media);
@@ -606,6 +641,7 @@ GameBoxart Boxart::getPhysicalBoxart(const GameMedia& media)
 	{
 		std::lock_guard<std::mutex> guard(mutex);
 		physicalCache[boxart.fileName] = boxart;
+		applyLibraryPlaytimeUnlocked(boxart);
 	}
 
 	return boxart;
@@ -1014,6 +1050,7 @@ void Boxart::loadDatabase()
 	}
 
 	const std::string artworkDir = getSaveDirectory();
+	loadLibraryPlaytimeDatabase();
 	const std::string databaseDir = getDatabaseDirectory();
 	if (databaseDir.empty())
 	{
@@ -1058,6 +1095,91 @@ void Boxart::loadDatabase()
 		WARN_LOG(COMMON, "Corrupted database file: %s", e.what());
 	}
 	refreshCustomBoxartIndex(false);
+}
+
+void Boxart::applyLibraryPlaytimeUnlocked(GameBoxart& boxart) const
+{
+	boxart.playTimeSeconds.reset();
+	const std::string gameId = normalizeLibraryGameId(boxart.uniqueId);
+	if (gameId.empty())
+		return;
+	const auto it = libraryPlaytimeByGameId.find(gameId);
+	if (it != libraryPlaytimeByGameId.end())
+		boxart.playTimeSeconds = it->second;
+}
+
+void Boxart::loadLibraryPlaytimeDatabase()
+{
+	std::unordered_map<std::string, u64> loadedPlaytimes;
+	const std::string databasePath = getLibraryPlaytimeDatabasePath(getSaveDirectory());
+	if (databasePath.empty())
+	{
+		std::lock_guard<std::mutex> guard(mutex);
+		libraryPlaytimeByGameId.clear();
+		return;
+	}
+
+	try {
+		const hostfs::FileInfo info = hostfs::storage().getFileInfo(databasePath);
+		if (info.isDirectory || info.size > kLibraryPlaytimeDatabaseMaxSize)
+		{
+			WARN_LOG(COMMON, "Ignoring Library play-time database %s: invalid file type or size", databasePath.c_str());
+			std::lock_guard<std::mutex> guard(mutex);
+			libraryPlaytimeByGameId.clear();
+			return;
+		}
+	} catch (const hostfs::StorageException&) {
+		std::lock_guard<std::mutex> guard(mutex);
+		libraryPlaytimeByGameId.clear();
+		return;
+	}
+
+	std::string contents;
+	if (!readStorageFile(databasePath, contents, kLibraryPlaytimeDatabaseMaxSize))
+	{
+		WARN_LOG(COMMON, "Can't read Library play-time database %s", databasePath.c_str());
+		std::lock_guard<std::mutex> guard(mutex);
+		libraryPlaytimeByGameId.clear();
+		return;
+	}
+
+	try {
+		const json root = json::parse(contents);
+		if (!root.is_object() || root.value("version", 0) != 1 || !root.contains("games") || !root["games"].is_object())
+			throw json::type_error::create(302, "expected a version 1 Library play-time database", &root);
+		const json& games = root["games"];
+		if (games.size() > kLibraryPlaytimeDatabaseMaxEntries)
+			throw json::out_of_range::create(408, "too many Library play-time entries", &games);
+
+		size_t invalidEntries = 0;
+		for (auto it = games.begin(); it != games.end(); ++it)
+		{
+			const std::string gameId = normalizeLibraryGameId(it.key());
+			const json& entry = it.value();
+			auto seconds = entry.is_object() ? entry.find("seconds") : entry.end();
+			if (gameId.empty() || gameId.size() > 64 || seconds == entry.end()
+					|| (!seconds->is_number_unsigned() && !seconds->is_number_integer())
+					|| (seconds->is_number_integer() && seconds->get<s64>() < 0))
+			{
+				++invalidEntries;
+				continue;
+			}
+			loadedPlaytimes.emplace(gameId, seconds->get<u64>());
+		}
+		if (invalidEntries != 0)
+			WARN_LOG(COMMON, "Ignored %d invalid Library play-time entries in %s", (int)invalidEntries, databasePath.c_str());
+	} catch (const json::exception& e) {
+		WARN_LOG(COMMON, "Ignoring invalid Library play-time database %s: %s", databasePath.c_str(), e.what());
+		loadedPlaytimes.clear();
+	}
+
+	std::lock_guard<std::mutex> guard(mutex);
+	libraryPlaytimeByGameId = std::move(loadedPlaytimes);
+}
+
+void Boxart::refreshLibraryPlaytimeDatabase()
+{
+	loadLibraryPlaytimeDatabase();
 }
 
 void Boxart::reviewDatabaseArtwork()
@@ -1130,6 +1252,7 @@ void Boxart::refreshCache()
 		std::lock_guard<std::mutex> guard(mutex);
 		games.clear();
 		physicalCache.clear();
+		libraryPlaytimeByGameId.clear();
 		toFetch.clear();
 		databaseLoaded = false;
 		databaseDirty = false;

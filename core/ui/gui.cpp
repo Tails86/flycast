@@ -2033,6 +2033,21 @@ static std::string formatLibrarySize(size_t size)
 	return std::to_string((size + MiB - 1) / MiB) + " MB";
 }
 
+static std::string formatLibraryPlaytime(u64 seconds)
+{
+	constexpr u64 secondsPerMinute = 60;
+	constexpr u64 secondsPerHour = secondsPerMinute * 60;
+	constexpr u64 secondsPerDay = secondsPerHour * 24;
+	const auto value = static_cast<unsigned long long>(seconds);
+	if (seconds >= secondsPerDay)
+		return strprintf(T("%llud %lluh"), value / secondsPerDay, (seconds % secondsPerDay) / secondsPerHour);
+	if (seconds >= secondsPerHour)
+		return strprintf(T("%lluh %llum"), value / secondsPerHour, (seconds % secondsPerHour) / secondsPerMinute);
+	if (seconds >= secondsPerMinute)
+		return strprintf(T("%llum"), value / secondsPerMinute);
+	return strprintf(T("%llus"), value);
+}
+
 static void centerTableCellCursor(const ImVec2& contentSize, float rowContentHeight, bool centerX)
 {
 	ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -2221,6 +2236,8 @@ static void gui_display_content()
 				+ ImGui::GetStyle().CellPadding.x * 2.0f;
 		const float lastBootedColumnWidth = calcLibraryTextWidth("12/31/2026 12:59:59 PM")
 				+ ImGui::GetStyle().CellPadding.x * 2.0f;
+		const float timePlayedColumnWidth = std::max(calcLibraryTextWidth(T("Time Played")), calcLibraryTextWidth("999h 59m"))
+				+ ImGui::GetStyle().CellPadding.x * 2.0f;
 
 		int counter = 0;
 		bool gameListEmpty = false;
@@ -2239,7 +2256,7 @@ static void gui_display_content()
 					ImGui::TableSetupColumn("Title", ImGuiTableColumnFlags_WidthStretch);
 					ImGui::TableSetupColumn("Region", ImGuiTableColumnFlags_WidthFixed, 78.0f);
 					ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 72.0f);
-					ImGui::TableSetupColumn("Time Played", ImGuiTableColumnFlags_WidthFixed, 94.0f);
+					ImGui::TableSetupColumn(T("Time Played"), ImGuiTableColumnFlags_WidthFixed, timePlayedColumnWidth);
 					ImGui::TableSetupColumn("Last Booted", ImGuiTableColumnFlags_WidthFixed, lastBootedColumnWidth);
 					ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 78.0f);
 					ImGui::TableSetColumnWidth(0, iconColumnWidth);
@@ -2314,6 +2331,10 @@ static void gui_display_content()
 						textTableCellCentered(region, tableRowContentHeight);
 						ImGui::TableSetColumnIndex(4);
 						textTableCellCentered(format, tableRowContentHeight);
+						ImGui::TableSetColumnIndex(5);
+						const std::string timePlayed = art.playTimeSeconds.has_value()
+								? formatLibraryPlaytime(*art.playTimeSeconds) : std::string();
+						textTableCellCentered(timePlayed, tableRowContentHeight);
 						ImGui::TableSetColumnIndex(6);
 						const time_t lastBootedTime = getLibraryGameLastBooted(game, art.uniqueId);
 						const std::string lastBooted = lastBootedTime == 0 ? std::string() : formatShortDateTime(lastBootedTime);
@@ -3199,6 +3220,7 @@ std::string gui_getCurGameBoxartUrl()
 
 void gui_refresh_custom_boxart(bool force)
 {
+	boxart.refreshLibraryPlaytimeDatabase();
 	boxart.refreshCustomBoxartIndex(force);
 }
 

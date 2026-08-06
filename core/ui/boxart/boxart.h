@@ -48,6 +48,7 @@ public:
 	std::string getCustomMediaPath(const GameMedia& media, config::LibraryCoverMediaMode mediaMode);
 	void term();
 	void refreshCache();
+	void refreshLibraryPlaytimeDatabase();
 	void refreshCustomBoxartIndex(bool force = false);
 	void queueBoxart(const GameMedia& media);
 	void startFetch();
@@ -68,6 +69,8 @@ private:
 	GameBoxart getBoxartAndQueue(const GameMedia& media, bool startFetch);
 	bool shouldFetchOnline() const;
 	void loadDatabase();
+	void loadLibraryPlaytimeDatabase();
+	void applyLibraryPlaytimeUnlocked(GameBoxart& boxart) const;
 	void recoverDatabases(const std::string& databaseDir, const std::string& artworkDir);
 	void reviewDatabaseArtwork();
 	void saveDatabase();
@@ -90,6 +93,7 @@ private:
 			static_cast<size_t>(config::LibraryCoverMediaMode::Count)>;
 	std::unordered_map<std::string, GameBoxart> games;
 	std::unordered_map<std::string, GameBoxart> physicalCache;
+	std::unordered_map<std::string, u64> libraryPlaytimeByGameId;
 	CustomBoxartIndex customBoxartByName;
 	std::string customBoxartRoot;
 	std::string requestedCustomBoxartRoot;

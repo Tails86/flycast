@@ -1914,6 +1914,7 @@ static void manageSinglePath(const char* label, config::Option<std::string, fals
 #ifdef __ANDROID__
 	if (openPopup)
 	{
+		const char *mimeType = extension == ".xml" ? "application/xml" : "*/*";
 		const StoragePopupResult storageResult = select_storage_popup(!selectFile, false, popupName, [&pathOption](bool cancelled, const std::string& selection) {
 			if (!cancelled)
 			{
@@ -1921,7 +1922,7 @@ static void manageSinglePath(const char* label, config::Option<std::string, fals
 				SaveSettings();
 			}
 			return true;
-		}, selectFile ? "*/*" : "");
+		}, selectFile ? mimeType : "");
 		if (storageResult == StoragePopupResult::Unsupported)
 			ImGui::OpenPopup(popupName.c_str());
 	}

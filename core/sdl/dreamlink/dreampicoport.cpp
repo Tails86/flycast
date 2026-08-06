@@ -73,7 +73,6 @@ constexpr size_t DPP_VMU_FLASH_SIZE = DPP_VMU_BLOCK_SIZE * DPP_VMU_BLOCK_COUNT;
 bool vmuIconCachingEnabled(const std::string& gameId)
 {
 	return config::LibraryImageSource.get() != static_cast<int>(config::LibraryImageSourceMode::CurrentArtwork)
-		&& config::PerGameVmu
 		&& !gameId.empty();
 }
 
@@ -591,6 +590,8 @@ public:
 	}
 
 	void cacheLoadedVmuIcons() {
+		// DreamPicoPort reads a physical VMU, independently of Flycast's virtual
+		// per-game VMU setting, so physical icon capture must not use that gate.
 		if (!vmuIconCachingEnabled(activeGameId) || hw_info.hardware_bus < 0 || !storageEnabled()) {
 			return;
 		}
