@@ -3705,22 +3705,22 @@ void renderVideoTab()
 				"x3", "x3.5", "x4", "x4.5", "x5", "x5.5", "x6", "x7", "x8", "x9"
 			};
 
-			std::array<int, scalings.size()> horizontalRes {};
+			std::array<int, scalings.size()> verticalRes {};
 			std::array<std::string, scalings.size()> resolutionLabels {};
 			std::array<const char*, scalings.size()> resolutionLabelPtrs {};
 			int internalResSelection = 0;
 
 			for (size_t i = 0; i < scalings.size(); i++)
 			{
-				const int verticalRes = static_cast<int>(scalings[i] * 480.0f);
-				horizontalRes[i] = !config::Widescreen
+				verticalRes[i] = static_cast<int>(scalings[i] * 480.0f);
+				const int horizontalRes = !config::Widescreen
 					? static_cast<int>(scalings[i] * 640.0f)
 					: static_cast<int>(scalings[i] * 480.0f * 16.0f / 9.0f);
 
-				if (horizontalRes[i] == config::RenderResolution.get())
+				if (verticalRes[i] == config::RenderResolution.get())
 					internalResSelection = static_cast<int>(i);
 
-				resolutionLabels[i] = std::to_string(horizontalRes[i]) + "x" + std::to_string(verticalRes) + " (" + scalingNames[i] + ")";
+				resolutionLabels[i] = std::to_string(horizontalRes) + "x" + std::to_string(verticalRes[i]) + " (" + scalingNames[i] + ")";
 				resolutionLabelPtrs[i] = resolutionLabels[i].c_str();
 			}
 
@@ -3734,9 +3734,9 @@ void renderVideoTab()
 			internalResCfg.options.currentValue = &internalResSelection;
 			internalResCfg.options.valueWidth = 220.0f;
 			internalResCfg.options.onChange = [&](int selectedIndex) {
-				if (selectedIndex < 0 || selectedIndex >= static_cast<int>(horizontalRes.size()))
+				if (selectedIndex < 0 || selectedIndex >= static_cast<int>(verticalRes.size()))
 					return false;
-				config::RenderResolution.set(horizontalRes[selectedIndex]);
+				config::RenderResolution.set(verticalRes[selectedIndex]);
 				return true;
 			};
 
