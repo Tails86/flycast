@@ -6992,10 +6992,9 @@ void renderAdvancedTab()
 	}
 
 	// Debugging Section
-#if defined(GDB_SERVER) || !defined(__ANDROID__)
 	if (RenderCollapsingHeader("DebuggingSection", ICON_FA_BUG, T("Debugging"), ImGuiTreeNodeFlags_DefaultOpen))
 	{
-#if !defined(__ANDROID) && !defined(GDB_SERVER)
+#if !defined(__ANDROID__) && !defined(GDB_SERVER)
 		// Serial Console - 2x Row Pattern
 		RenderGeneralToggleSettingRow(
 			"SerialConsole",
@@ -7084,6 +7083,7 @@ void renderAdvancedTab()
 	#endif
 
 		// Log to File - 2x Row Pattern
+		// Android writes this log to its app-writable data directory.
 		const bool logToFileValue = cfgLoadBool("log", "LogToFile", false);
 		RenderGeneralToggleSettingRow(
 			"LogToFile",
@@ -7099,7 +7099,6 @@ void renderAdvancedTab()
 				"If you enable this, try to reproduce the issue, then disable it again to avoid unnecessary disk usage."
 			));
 	}
-#endif
 
 	// Logging Section (Debug builds only)
 #if !defined(NDEBUG) || defined(DEBUGFAST) || FC_PROFILER
