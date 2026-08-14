@@ -304,6 +304,12 @@ void gui_set_mouse_position(int x, int y, bool touchscreen)
 	mouseTouchscreen = touchscreen;
 }
 
+bool gui_is_menu_touch_target(float x, float y)
+{
+	return GuiMenu::isTouchTarget(std::round(x * settings.display.pointScale),
+			std::round(y * settings.display.pointScale));
+}
+
 void gui_set_mouse_button(int button, bool pressed, bool touchscreen)
 {
 	if (pressed)

@@ -28,6 +28,9 @@
 #include "types.h"
 #include "settings.h"
 #include "oslib/i18n.h"
+#if defined(__ANDROID__)
+#include <mutex>
+#endif
 #if defined(USE_SDL)
 #include "sdl/sdl.h"
 #endif
@@ -45,6 +48,36 @@ bool menuVisible = true;
 static bool menuBarVisibleThisFrame = true;
 static float menuBarHeightThisFrame = 0.0f;
 static double touchMenuVisibleUntil = 0.0;
+
+#if defined(__ANDROID__)
+struct MenuTouchState
+{
+	bool captureAllTouches = false;
+	bool hasTouchArea = false;
+	ImVec2 touchAreaMin;
+	ImVec2 touchAreaMax;
+};
+
+// Android touch dispatch runs on the Java UI thread while ImGui renders on the
+// emulation thread. Keep a small, frame-published snapshot instead of reading
+// ImGui state from the Java thread.
+static std::mutex menuTouchStateMutex;
+static MenuTouchState menuTouchState;
+
+static void publishMenuTouchState(bool captureAllTouches, bool hasTouchArea,
+		const ImVec2& touchAreaMin = ImVec2(), const ImVec2& touchAreaMax = ImVec2())
+{
+	const std::lock_guard<std::mutex> lock(menuTouchStateMutex);
+	menuTouchState.captureAllTouches = captureAllTouches;
+	menuTouchState.hasTouchArea = hasTouchArea;
+	menuTouchState.touchAreaMin = touchAreaMin;
+	menuTouchState.touchAreaMax = touchAreaMax;
+}
+#else
+static void publishMenuTouchState(bool, bool, const ImVec2& = ImVec2(), const ImVec2& = ImVec2())
+{
+}
+#endif
 
 static bool isFullscreenMenuMode()
 {
@@ -248,13 +281,23 @@ void renderMainMenuBar()
 #if defined(TARGET_MAC)
 	menuBarVisibleThisFrame = false;
 	menuBarHeightThisFrame = 0.0f;
+	publishMenuTouchState(false, false);
 	return;
 #endif
 
 	menuBarVisibleThisFrame = shouldShowMenuBar();
 	menuBarHeightThisFrame = 0.0f;
 	if (!menuBarVisibleThisFrame)
+	{
+		ImFont* menuFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+		ImGui::PushFont(menuFont);
+		const float revealHeight = ImGui::GetFrameHeight() * 1.75f;
+		ImGui::PopFont();
+		const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+		publishMenuTouchState(false, menuVisible && isFullscreenMenuMode(),
+				ImVec2(0.0f, 0.0f), ImVec2(displaySize.x, revealHeight));
 		return;
+	}
 
 	// Use ImGui's native main menu bar - it handles everything automatically:
 	// - Background styling from current theme (ImGuiCol_MenuBarBg)
@@ -267,13 +310,22 @@ void renderMainMenuBar()
 	if (ImGui::BeginMainMenuBar())
 	{
 		menuBarHeightThisFrame = ImGui::GetWindowHeight();
+		const ImVec2 menuBarMin = ImGui::GetWindowPos();
+		const ImVec2 menuBarSize = ImGui::GetWindowSize();
+		const ImVec2 menuBarMax(menuBarMin.x + menuBarSize.x, menuBarMin.y + menuBarSize.y);
 		renderFileMenu();
 		renderSystemMenu();
 		renderToolsMenu();
 		renderSettingsMenu();
 		renderHelpMenu();
+		const bool menuPopupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
 		ImGui::EndMainMenuBar();
+		// An open menu consumes outside taps to dismiss itself, never passing them
+		// through to a virtual control behind the popup.
+		publishMenuTouchState(menuPopupOpen, true, menuBarMin, menuBarMax);
 	}
+	else
+		publishMenuTouchState(false, false);
 	ImGui::PopFont();
 }
 
@@ -552,6 +604,21 @@ float mainMenuBarHeight()
 	return menuBarHeightThisFrame;
 }
 
+bool isTouchTarget(float x, float y)
+{
+#if defined(__ANDROID__)
+	const std::lock_guard<std::mutex> lock(menuTouchStateMutex);
+	if (menuTouchState.captureAllTouches)
+		return true;
+	if (!menuTouchState.hasTouchArea)
+		return false;
+	return x >= menuTouchState.touchAreaMin.x && x < menuTouchState.touchAreaMax.x
+			&& y >= menuTouchState.touchAreaMin.y && y < menuTouchState.touchAreaMax.y;
+#else
+	return false;
+#endif
+}
+
 // Initialize menu system
 // Called during GUI initialization to set up menu state
 void initialize()
@@ -559,12 +626,14 @@ void initialize()
 	menuVisible = true;
 	menuBarVisibleThisFrame = true;
 	touchMenuVisibleUntil = 0.0;
+	publishMenuTouchState(false, false);
 }
 
 // Cleanup menu system
 // Called during GUI shutdown to release resources
 void shutdown()
 {
+	publishMenuTouchState(false, false);
 }
 
 } // namespace GuiMenu

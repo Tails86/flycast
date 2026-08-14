@@ -1,3 +1,4 @@
+// Portions Copyright 2026 The Hollycast Authors
 #include "types.h"
 #include "hw/naomi/naomi_cart.h"
 #include "audio/audiostream.h"
@@ -361,6 +362,12 @@ extern "C" JNIEXPORT void JNICALL Java_com_hollycast_emulator_emu_JNIdc_guiOpenS
 extern "C" JNIEXPORT jboolean JNICALL Java_com_hollycast_emulator_emu_JNIdc_guiIsOpen(JNIEnv *env, jobject obj)
 {
     return gui_is_open();
+}
+
+extern "C" JNIEXPORT jboolean JNICALL Java_com_hollycast_emulator_emu_JNIdc_guiShouldCaptureMenuTouch(JNIEnv *env, jobject obj,
+		jfloat x, jfloat y)
+{
+	return gui_is_menu_touch_target(x, y);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL Java_com_hollycast_emulator_emu_JNIdc_guiIsContentBrowser(JNIEnv *env,jobject obj)
