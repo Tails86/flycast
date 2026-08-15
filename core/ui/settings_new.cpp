@@ -7691,7 +7691,7 @@ void renderSettingsNew()
 				gui_setState(GuiState::Main);
 		};
 
-		const char* backLabel = game_started ? T("Back to Game") : T("Back to Library");
+		const char* backLabel = game_started ? T("Back to Game") : T("Library");
 
 		// Split into left navigation rail and right content area
 		renderNavigationRail(exitSettings, backLabel);
