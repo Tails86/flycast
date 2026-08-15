@@ -172,6 +172,9 @@ void SaveSettings()
 void flycast_term()
 {
 	gui_cancel_load();
+	// Closing the window can bypass the settings exit callback, so persist the
+	// current VMU/DreamLink slot choices before controllers are torn down.
+	SaveSettings();
 	lua::term();
 	emu.term();
 	os_DestroyWindow();

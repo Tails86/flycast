@@ -368,6 +368,8 @@ static const char* GetTabHelpText(SettingsTab tab)
 	{
 	case SettingsTab::General:
 		return T("System, content, interface, and storage behavior. Highlight or select a setting to see a fuller explanation here.");
+	case SettingsTab::Library:
+		return T("Library layout, artwork, scraped media, game metadata, and VMU save icons. Highlight or select a setting to see a fuller explanation here.");
 	case SettingsTab::Video:
 		return T("Graphics quality, renderer behavior, scaling, and performance tuning. Highlight or select a setting to see what it changes and why it matters.");
 	case SettingsTab::Audio:
@@ -1859,7 +1861,8 @@ static void RenderGeneralInfoRow(const char* id, const char* icon, const char* l
 	ImGui::PopID();
 }
 
-static void manageSinglePath(const char* label, config::Option<std::string, false>& pathOption, const char* helpText)
+static void manageSinglePath(const char* label, config::Option<std::string, false>& pathOption, const char* helpText,
+		bool selectFile = false, const std::string& extension = "")
 {
 	ImGui::PushID(label);
 	const bool rowActivated = BeginTwoLineSettingRow("##row", helpText);
@@ -1907,9 +1910,26 @@ static void manageSinglePath(const char* label, config::Option<std::string, fals
 		if (!cancelled)
 			pathOption.get() = selection;
 		return true;
-	});
+	}, selectFile, extension);
+#ifdef __ANDROID__
+	if (openPopup)
+	{
+		const char *mimeType = extension == ".xml" ? "application/xml" : "*/*";
+		const StoragePopupResult storageResult = select_storage_popup(!selectFile, false, popupName, [&pathOption](bool cancelled, const std::string& selection) {
+			if (!cancelled)
+			{
+				pathOption.get() = selection;
+				SaveSettings();
+			}
+			return true;
+		}, selectFile ? mimeType : "");
+		if (storageResult == StoragePopupResult::Unsupported)
+			ImGui::OpenPopup(popupName.c_str());
+	}
+#else
 	if (openPopup)
 		ImGui::OpenPopup(popupName.c_str());
+#endif
 }
 
 static void managePathList(const char* label, const std::string& singularLabel, std::vector<std::string>& paths, const char* helpText)
@@ -2042,7 +2062,7 @@ void openTab(SettingsTab tab)
 
 void focusBoxArtSection()
 {
-	openTab(SettingsTab::General);
+	openTab(SettingsTab::Library);
 	g_scrollToBoxArtSection = true;
 }
 
@@ -2053,6 +2073,8 @@ const char* getTabName(SettingsTab tab)
 	{
 	case SettingsTab::General:
 		return T("General");
+	case SettingsTab::Library:
+		return T("Library");
 	case SettingsTab::Video:
 		return T("Video");
 	case SettingsTab::Audio:
@@ -2222,6 +2244,9 @@ static void renderContentArea()
 	case SettingsTab::General:
 		renderGeneralTab();
 		break;
+	case SettingsTab::Library:
+		renderLibraryTab();
+		break;
 	case SettingsTab::Video:
 		renderVideoTab();
 		break;
@@ -2321,10 +2346,12 @@ static bool RenderCollapsingHeader(
 }
 
 // Render General tab with all settings from settings_general.cpp
-void renderGeneralTab()
+static void renderSettingsContentTab(SettingsTab tab)
 {
 	using namespace SettingsUI;
 	ScopedTwoLineRowStyle generalRowStyle(12.0f, true, 0.5f);
+	if (tab == SettingsTab::General)
+	{
 
 	ImGui::TextDisabled("%s", T("General Configuration"));
 	ImGui::Separator();
@@ -2816,7 +2843,6 @@ void renderGeneralTab()
 			)
 		);
 	}
-
 #ifdef __ANDROID__
 	RenderGeneralToggleSettingRow(
 		"UseSafFilePicker",
@@ -2833,8 +2859,12 @@ void renderGeneralTab()
 	);
 #endif
 
+	}
+
+	if (tab == SettingsTab::Library)
+	{
 	// ========================================
-	// Box Art Section
+	// Library Section
 	// ========================================
 	if (RenderCollapsingHeader("BoxArtSection", ICON_FA_IMAGE, T("Box Art"), ImGuiTreeNodeFlags_DefaultOpen))
 	{
@@ -2861,91 +2891,181 @@ void renderGeneralTab()
 
 		RenderGeneralPopupSettingRow(
 			Tnop("BoxartSourceSetting"),
-			T("Choose which box art source to display."),
+			T("Choose the base artwork source for each game."),
 			boxartSourceCfg,
 			T(
 				"Box Art Source\n"
-				"Selects which artwork source is shown in the game list.\n"
-				"Use Custom Boxart if you maintain your own images, or Original/Physical depending on your preference."
+				"Choose whether to use the default scraped artwork, physical-disc artwork pulled from the current ROM, or custom box art files you provide.\n\n"
+				"If you have a custom Scraper folder for ES-DE, you can use its `media` folder and subfolders for the full custom-artwork experience."
 			)
 		);
 
-		ImGui::PushID("CustomBoxartFolderRow");
+		const bool usingCustomBoxart = config::BoxartSourceMode.get() == static_cast<int>(BoxartSourceMode::CustomThenScraped);
+		ImGui::Indent();
+
+		const char* libraryImageSources[] = {
+			T("Current Artwork"),
+			T("VMU Save Icon"),
+			T("VMU Save Icon, then Current Artwork"),
+			T("Current Artwork, then VMU Save Icon"),
+		};
+		SettingsUI::PopupConfig libraryImageSourceCfg {};
+		libraryImageSourceCfg.type = SettingsUI::PopupType::Options;
+		libraryImageSourceCfg.options.label = T("VMU Icon Options");
+		libraryImageSourceCfg.options.icon = ICON_FA_IMAGE;
+		libraryImageSourceCfg.options.popupID = Tnop("LibraryImageSourcePopup");
+		libraryImageSourceCfg.options.options = libraryImageSources;
+		libraryImageSourceCfg.options.optionCount = IM_ARRAYSIZE(libraryImageSources);
+		libraryImageSourceCfg.options.currentValue = &config::LibraryImageSource.get();
+		libraryImageSourceCfg.options.valueWidth = 240.0f;
+		libraryImageSourceCfg.options.onChange = [](int) { return true; };
+		RenderGeneralPopupSettingRow(
+			Tnop("LibraryImageSource"),
+			T("Choose whether cached VMU icons appear in the library."),
+			libraryImageSourceCfg,
+			T("VMU Icon Options\n"
+			"Choose whether to exclude or use VMU save icons as cover art. When enabled, Hollycast captures the icon after you create a VMU save for a game, then makes it available for the library.\n"
+			"Choose how those icons are prioritized alongside your other artwork options."));
+
+		if (usingCustomBoxart)
+		{
+			ImGui::PushID("CustomBoxartFolderRow");
 			const bool rowActivated = BeginTwoLineSettingRow(
 				"##row",
 				T(
 					"Custom Boxart Folder\n"
-					"Folder containing custom box art images (png/jpg).\n"
-					"File names should match game names.\n"
-					"Use Refresh to rescan artwork sources."
+					"Choose the folder that contains your already-scraped game media.\n\n"
+					"For regular custom media, add an image to the custom folder using the same name as the ROM. For example, if the ROM is `Sonic Adventure.chd`, the image file should be `Sonic Adventure.png` or `Sonic Adventure.jpg`.\n\n"
+					"For existing ES-DE media folders, or for the full custom-artwork experience, choose the system media folder, such as `downloaded_media/dreamcast`. Hollycast reads supported subfolders within it, including `covers`, `miximages`, `physicalmedia`, `marquees`, `titlescreens`, `screenshots`, `fanart`, and `manuals`. This lets you reuse ES-DE scraped media without copying or renaming files.\n\n"
+					"Image/manual file names should match your ROM names. Use Refresh after adding or changing media files."
 				)
 			);
-		const ImVec2 line1Start = BeginTwoLineSettingRowContent();
+			const ImVec2 line1Start = BeginTwoLineSettingRowContent();
 
-		SettingIcon(ICON_FA_FOLDER_OPEN, SettingsLayoutSize(20.0f, 20.0f));
-		ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
-		ImGui::PushFont(largeFont);
-		ImGui::TextUnformatted(T("Custom Boxart Folder"));
-		ImGui::PopFont();
+			SettingIcon(ICON_FA_FOLDER_OPEN, SettingsLayoutSize(20.0f, 20.0f));
+			ImGui::SameLine(0, SettingsLayoutScaled(8.0f));
+			ImGui::PushFont(largeFont);
+			ImGui::TextUnformatted(T("Custom Boxart Folder"));
+			ImGui::PopFont();
 
-		bool openPopup = rowActivated;
-		bool refreshPressed = false;
-		const bool hasPath = !config::BoxartPath.get().empty();
-		if (hasPath)
-		{
-			const float buttonWidthPx = 26.0f;
-			const float buttonHeightPx = 22.0f;
-			const float buttonSpacingPx = 8.0f;
-			const float extraOffsetPx = buttonWidthPx * 2.0f + buttonSpacingPx;
-			RenderGeneralRightValue(config::BoxartPath.get(), 280.0f, extraOffsetPx);
-
-			const float buttonWidth = uiScaled(buttonWidthPx);
-			const float buttonHeight = uiScaled(buttonHeightPx);
-			const float buttonSpacing = uiScaled(buttonSpacingPx);
-			const float verticalOffset = (TwoLineSettingContentHeight() - buttonHeight) * 0.5f;
-
-			ImGui::SameLine(RightColumnX(buttonWidth * 2.0f + buttonSpacing));
-			ImVec2 buttonPos = ImGui::GetCursorPos();
-			ImGui::SetCursorPos(ImVec2(buttonPos.x, buttonPos.y + verticalOffset));
-			refreshPressed = SettingsIconButton("##BoxartRefreshBtn", ICON_FA_ARROWS_ROTATE, ImVec2(buttonWidth, buttonHeight));
-			if (ImGui::IsItemHovered() || ImGui::IsItemFocused())
-				SetSettingsFooterText(T("Refresh downloaded box art and rescan artwork sources."));
-
-			ImGui::SameLine(0, buttonSpacing);
-			ImVec2 deletePos = ImGui::GetCursorPos();
-			ImGui::SetCursorPos(ImVec2(deletePos.x, buttonPos.y + verticalOffset));
-			if (SettingsIconButton("##ClearBoxartPath", ICON_FA_TRASH_CAN, ImVec2(buttonWidth, buttonHeight)))
+			bool openPopup = rowActivated;
+			bool refreshPressed = false;
+			const bool hasPath = !config::BoxartPath.get().empty();
+			if (hasPath)
 			{
-				config::BoxartPath.get().clear();
-				openPopup = false;
+				const float buttonWidthPx = 26.0f;
+				const float buttonHeightPx = 22.0f;
+				const float buttonSpacingPx = 8.0f;
+				const float extraOffsetPx = buttonWidthPx * 2.0f + buttonSpacingPx;
+				RenderGeneralRightValue(config::BoxartPath.get(), 280.0f, extraOffsetPx);
+
+				const float buttonWidth = uiScaled(buttonWidthPx);
+				const float buttonHeight = uiScaled(buttonHeightPx);
+				const float buttonSpacing = uiScaled(buttonSpacingPx);
+				const float verticalOffset = (TwoLineSettingContentHeight() - buttonHeight) * 0.5f;
+
+				ImGui::SameLine(RightColumnX(buttonWidth * 2.0f + buttonSpacing));
+				ImVec2 buttonPos = ImGui::GetCursorPos();
+				ImGui::SetCursorPos(ImVec2(buttonPos.x, buttonPos.y + verticalOffset));
+				refreshPressed = SettingsIconButton("##BoxartRefreshBtn", ICON_FA_ARROWS_ROTATE, ImVec2(buttonWidth, buttonHeight));
+				if (ImGui::IsItemHovered() || ImGui::IsItemFocused())
+					SetSettingsFooterText(T("Refresh custom media after adding, removing, or renaming files in the selected Custom Boxart Folder."));
+
+				ImGui::SameLine(0, buttonSpacing);
+				ImVec2 deletePos = ImGui::GetCursorPos();
+				ImGui::SetCursorPos(ImVec2(deletePos.x, buttonPos.y + verticalOffset));
+				if (SettingsIconButton("##ClearBoxartPath", ICON_FA_TRASH_CAN, ImVec2(buttonWidth, buttonHeight)))
+				{
+					config::BoxartPath.get().clear();
+					openPopup = false;
+				}
 			}
-		}
-		else
-		{
-			RenderGeneralRightValue(T("Set Path"), 280.0f, 0.0f, true);
+			else
+			{
+				RenderGeneralRightValue(T("Set Path"), 280.0f, 0.0f, true);
+			}
+
+			RenderTwoLineSettingDescription(line1Start, T("Folder containing custom box art images (png/jpg). File names should match game names"));
+			EndTwoLineSettingRow();
+			ImGui::PopID();
+
+			const std::string popupName = T("Select Custom Boxart Folder");
+#ifdef __ANDROID__
+			const auto isRawAndroidStoragePath = [](const std::string& path) {
+				return path.find("/storage/") == 0 || path.find("/sdcard/") == 0;
+			};
+			if (refreshPressed && isRawAndroidStoragePath(config::BoxartPath.get()))
+			{
+				openPopup = true;
+				refreshPressed = false;
+			}
+#else
+			select_file_popup(popupName.c_str(), [](bool cancelled, const std::string& selection) {
+				if (!cancelled)
+					config::BoxartPath.get() = selection;
+				return true;
+			}, false, "");
+#endif
+#ifdef __ANDROID__
+			if (openPopup)
+			{
+				const StoragePopupResult storageResult = select_storage_popup(true, false, popupName, [](bool cancelled, const std::string& selection) {
+					if (!cancelled)
+					{
+						config::BoxartPath.get() = selection;
+						SaveSettings();
+					}
+					return true;
+				});
+				if (storageResult == StoragePopupResult::Unsupported)
+					ImGui::OpenPopup(popupName.c_str());
+			}
+#else
+			if (openPopup)
+				ImGui::OpenPopup(popupName.c_str());
+#endif
+
+			static std::string lastBoxartPath;
+			if (lastBoxartPath != config::BoxartPath.get())
+			{
+				gui_refresh_custom_boxart(true);
+				lastBoxartPath = config::BoxartPath.get();
+			}
+			if (refreshPressed)
+				gui_refresh_custom_boxart(true);
+
+			const char* libraryCoverMediaSources[] = {
+				T("Current Artwork"),
+				T("Mix Image"),
+				T("Cover"),
+				T("Case / 3D Box"),
+				T("Screenshot"),
+				T("Marquee"),
+				T("Physical Media"),
+				T("Fan Art"),
+				T("Title Screen"),
+			};
+			SettingsUI::PopupConfig libraryCoverMediaCfg {};
+			libraryCoverMediaCfg.type = SettingsUI::PopupType::Options;
+			libraryCoverMediaCfg.options.label = T("Custom Boxart Source");
+			libraryCoverMediaCfg.options.icon = ICON_FA_IMAGE;
+			libraryCoverMediaCfg.options.popupID = Tnop("LibraryCoverMediaPopup");
+			libraryCoverMediaCfg.options.options = libraryCoverMediaSources;
+			libraryCoverMediaCfg.options.optionCount = IM_ARRAYSIZE(libraryCoverMediaSources);
+			libraryCoverMediaCfg.options.currentValue = &config::LibraryCoverMedia.get();
+			libraryCoverMediaCfg.options.valueWidth = 240.0f;
+			libraryCoverMediaCfg.options.onChange = [](int) { return true; };
+			RenderGeneralPopupSettingRow(
+				Tnop("LibraryCoverMedia"),
+				T("Choose which custom media category becomes the main library image."),
+				libraryCoverMediaCfg,
+				T("Custom Boxart Source\n"
+				"Choose Current Artwork when your Custom Boxart Folder contains one properly named image for each game.\n\n"
+				"The other options are for the full media-folder setup. They let you choose which of the multiple images available for each title becomes its visible library cover art.\n\n"
+				"Other media can still appear in the game hover-information panel when the matching folders and files are present."));
 		}
 
-		RenderTwoLineSettingDescription(line1Start, T("Folder containing custom box art images (png/jpg). File names should match game names"));
-		EndTwoLineSettingRow();
-		ImGui::PopID();
-
-		const std::string popupName = T("Select Custom Boxart Folder");
-		select_file_popup(popupName.c_str(), [](bool cancelled, const std::string& selection) {
-			if (!cancelled)
-				config::BoxartPath.get() = selection;
-			return true;
-		}, false, "");
-		if (openPopup)
-			ImGui::OpenPopup(popupName.c_str());
-
-		static std::string lastBoxartPath;
-		if (lastBoxartPath != config::BoxartPath.get())
-		{
-			gui_refresh_custom_boxart(true);
-			lastBoxartPath = config::BoxartPath.get();
-		}
-		if (refreshPressed)
-			gui_refresh_custom_boxart(true);
+		ImGui::Unindent();
 
 		ImGui::PushID("BoxartDatabaseReviewRow");
 		const bool refreshCacheRowActivated = BeginTwoLineSettingRow(
@@ -2969,6 +3089,45 @@ void renderGeneralTab()
 
 		if (refreshCacheRowActivated)
 			gui_refresh_boxart_cache();
+
+		const char* libraryDisplayStyles[] = { T("Classic"), T("List") };
+		SettingsUI::PopupConfig libraryDisplayStyleCfg {};
+		libraryDisplayStyleCfg.type = SettingsUI::PopupType::Options;
+		libraryDisplayStyleCfg.options.label = T("Library Display Style");
+		libraryDisplayStyleCfg.options.icon = ICON_FA_LIST;
+		libraryDisplayStyleCfg.options.popupID = Tnop("LibraryDisplayStylePopup");
+		libraryDisplayStyleCfg.options.options = libraryDisplayStyles;
+		libraryDisplayStyleCfg.options.optionCount = IM_ARRAYSIZE(libraryDisplayStyles);
+		libraryDisplayStyleCfg.options.currentValue = &config::LibraryDisplayStyle.get();
+		libraryDisplayStyleCfg.options.valueWidth = 220.0f;
+		libraryDisplayStyleCfg.options.onChange = [](int) { return true; };
+		RenderGeneralPopupSettingRow(
+			Tnop("LibraryDisplayStyle"),
+			T("Choose how the game library is displayed."),
+			libraryDisplayStyleCfg,
+			T("Library Display Style\n"
+			"Selects the visual layout for the game library.\n"
+			"Classic keeps the existing gallery/list behavior.\n"
+			"List uses a compact row/table layout with title and metadata columns."));
+
+		const char* vmuIconModes[] = { T("Static"), T("Active / Animated") };
+		SettingsUI::PopupConfig vmuIconModeCfg {};
+		vmuIconModeCfg.type = SettingsUI::PopupType::Options;
+		vmuIconModeCfg.options.label = T("VMU Icon Mode");
+		vmuIconModeCfg.options.icon = ICON_FA_BATTERY_FULL;
+		vmuIconModeCfg.options.popupID = Tnop("VMUIconModePopup");
+		vmuIconModeCfg.options.options = vmuIconModes;
+		vmuIconModeCfg.options.optionCount = IM_ARRAYSIZE(vmuIconModes);
+		vmuIconModeCfg.options.currentValue = &config::VmuIconMode.get();
+		vmuIconModeCfg.options.valueWidth = 220.0f;
+		vmuIconModeCfg.options.onChange = [](int) { return true; };
+		RenderGeneralPopupSettingRow(
+			Tnop("VMUIconMode"),
+			T("Set VMU icon playback behavior."),
+			vmuIconModeCfg,
+			T("VMU Icon Mode\n"
+			"Controls how cached VMU icons play after they have been captured from saves.\n"
+			"Static shows one frame; Active / Animated plays the BIOS-style icon frames."));
 
 		RenderGeneralToggleSettingRow(
 			"BoxartDisplayMode",
@@ -2999,8 +3158,26 @@ void renderGeneralTab()
 			),
 			physicalOnly
 		);
+
+#if !defined(TARGET_IPHONE)
+		manageSinglePath(T("Gamelist XML"), config::GameListPath,
+			T(
+				"Gamelist XML\n"
+				"Choose the exact `gamelist.xml` file that belongs to your Dreamcast ROM set.\n\n"
+				"This file provides the game info used by the library hover/profile screen: description, developer, genre, players, release date, and manual path.\n\n"
+				"For ES-DE, this is usually in a separate folder from the images, for example `gamelists/dreamcast/gamelist.xml`.\n"
+				"Hollycast will not guess this path. Set it here if you want game descriptions and details."
+			),
+			true,
+			"xml"
+		);
+		ImGui::Spacing();
+#endif
+	}
 	}
 
+	if (tab == SettingsTab::General)
+	{
 	// ========================================
 	// Automatic Save States Section
 	// ========================================
@@ -3300,8 +3477,18 @@ void renderGeneralTab()
 #endif  // !ANDROID
 	}
 #endif  // !IPHONE
+	}
 }
 
+void renderGeneralTab()
+{
+	renderSettingsContentTab(SettingsTab::General);
+}
+
+void renderLibraryTab()
+{
+	renderSettingsContentTab(SettingsTab::Library);
+}
 
 void renderVideoTab()
 {
