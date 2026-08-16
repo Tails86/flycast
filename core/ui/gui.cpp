@@ -2440,7 +2440,6 @@ static void gui_display_content()
 						bool pressed = false;
 						if (config::BoxartDisplayMode)
 						{
-<<<<<<< HEAD
 							if (counter % itemsPerLine != 0)
 								ImGui::SameLine();
 							counter++;
@@ -2451,13 +2450,6 @@ static void gui_display_content()
 								pressed = gameImageButton(tex, game.name, responsiveBoxVec2, gameName, gridTextSize);
 								updateLibraryLongPress(game, game.path.empty() ? "bios" : game.path, ImGui::IsItemActive());
 								draw_library_game_info_hover(game, !game.device ? &art : nullptr);
-=======
-							try {
-								emu.insertGdrom(game.path);
-								gui_setState(GuiState::Loading);
-							} catch (const FlycastException& e) {
-								gui_error(e.what());
->>>>>>> flycast/dev
 							}
 							ImGui::EndChild();
 						}
@@ -2783,13 +2775,8 @@ static void gui_display_loadscreen()
 				ImGui::Text("%s", label);
 				float progress = 0;
 				char overlay[64] = "";
-<<<<<<< HEAD
-
-				if (!gameLoader.ready())
-=======
 				
 				if (!gameReady)
->>>>>>> flycast/dev
 				{
 					progress = gameLoader.getProgress().progress;
 				}
