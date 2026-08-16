@@ -20,6 +20,7 @@
 #include "option.h"
 #include "network/net_handshake.h"
 #include "debug/gdb_server.h"
+#include "hw/pvr/Renderer_if.h"
 
 namespace config {
 
@@ -139,8 +140,14 @@ CustomTexturePreloadMode customTexturePreloadMode()
 	{
 	case CustomTexturePreloadMode::Off:
 	case CustomTexturePreloadMode::SystemMemory:
-	case CustomTexturePreloadMode::VideoMemory:
 		return mode;
+	case CustomTexturePreloadMode::VideoMemory:
+		if (rend_supports_gpu_texture_preload()) {
+			return mode;
+		} else {
+			// Not supported
+			return CustomTexturePreloadMode::Off;
+		}
 	default:
 		return CustomTexturePreloadMode::Off;
 	}
