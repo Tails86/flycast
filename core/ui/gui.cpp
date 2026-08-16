@@ -447,6 +447,17 @@ void gui_plot_render_time(int width, int height)
 }
 #endif
 
+static bool gui_resume_game()
+{
+	if (custom_texture.needsRefresh())
+	{
+		gui_setState(GuiState::Loading);
+		return false;
+	}
+	gui_setState(GuiState::Closed);
+	return true;
+}
+
 void gui_open_settings()
 {
 	const LockGuard lock(guiMutex);
@@ -483,9 +494,10 @@ void gui_open_settings()
 	}
 	else if (gui_state == GuiState::Commands)
 	{
-		gui_setState(GuiState::Closed);
+		const bool resumeNow = gui_resume_game();
 		GamepadDevice::load_system_mappings();
-		emu.start();
+		if (resumeNow)
+			emu.start();
 	}
 	else if (gui_state == GuiState::Pause)
 	{
@@ -905,7 +917,7 @@ static void gui_display_commands()
 		if (IconButton(ICON_FA_PLAY, T("Resume"), ScaledVec2(buttonWidth, 50)).realize())
 		{
 			GamepadDevice::load_system_mappings();
-			gui_setState(GuiState::Closed);
+			gui_resume_game();
 		}
 		// Cheats
 		{
@@ -943,7 +955,7 @@ static void gui_display_commands()
 			}
 			else {
 				emu.openGdrom();
-				gui_setState(GuiState::Closed);
+				gui_setState(GuiState::Loading);
 			}
 		}
 			// Settings
@@ -967,7 +979,7 @@ static void gui_display_commands()
 				DisabledScope _{settings.raHardcoreMode || savestateDate == 0};
 				if (IconButton(ICON_FA_CLOCK_ROTATE_LEFT, T("Load State"), ScaledVec2(buttonWidth, 50)).realize() && dc_savestateAllowed())
 				{
-					gui_setState(GuiState::Closed);
+					gui_resume_game();
 					dc_loadstate(config::SavestateSlot);
 				}
 			}
@@ -975,7 +987,7 @@ static void gui_display_commands()
 			// Save State
 			if (IconButton(ICON_FA_DOWNLOAD, T("Save State"), ScaledVec2(buttonWidth, 50)).realize() && dc_savestateAllowed())
 			{
-				gui_setState(GuiState::Closed);
+				gui_resume_game();
 				savestate();
 			}
 
@@ -2428,6 +2440,7 @@ static void gui_display_content()
 						bool pressed = false;
 						if (config::BoxartDisplayMode)
 						{
+<<<<<<< HEAD
 							if (counter % itemsPerLine != 0)
 								ImGui::SameLine();
 							counter++;
@@ -2438,6 +2451,13 @@ static void gui_display_content()
 								pressed = gameImageButton(tex, game.name, responsiveBoxVec2, gameName, gridTextSize);
 								updateLibraryLongPress(game, game.path.empty() ? "bios" : game.path, ImGui::IsItemActive());
 								draw_library_game_info_hover(game, !game.device ? &art : nullptr);
+=======
+							try {
+								emu.insertGdrom(game.path);
+								gui_setState(GuiState::Loading);
+							} catch (const FlycastException& e) {
+								gui_error(e.what());
+>>>>>>> flycast/dev
 							}
 							ImGui::EndChild();
 						}
@@ -2606,7 +2626,7 @@ static void gui_network_start()
 			ImGui::Text("%s", T("Starting..."));
 			try {
 				if (networkStatus.get())
-					gui_setState(GuiState::Closed);
+					gui_resume_game();
 				else
 					gui_stop_game();
 			} catch (const FlycastException& e) {
@@ -2720,20 +2740,29 @@ static void gui_display_loadscreen()
 		ImGui::AlignTextToFramePadding();
 		ImGui::SetCursorPosX(uiScaled(20.f));
 		try {
+			const bool gameReady = gameLoader.ready();
+			if (gameReady)
+			{
+				if (custom_texture.needsRefresh())
+				{
+					custom_texture.refresh();
+				}
+				else
+					custom_texture.init();
+			}
 			const char *label = gameLoader.getProgress().label;
 			if (label == nullptr)
 			{
-				if (gameLoader.ready())
+				if (gameReady)
 					label = T("Starting...");
 				else
 					label = T("Loading...");
 			}
 
 			const bool customTexPreloading = custom_texture.isPreloading();
-
-			if (gameLoader.ready() && !customTexPreloading)
+			if (gameReady && !customTexPreloading)
 			{
-				if (NetworkHandshake::instance != nullptr)
+				if (!game_started && NetworkHandshake::instance != nullptr)
 				{
 					networkStatus = NetworkHandshake::instance->start();
 					gui_setState(GuiState::NetworkStart);
@@ -2754,8 +2783,13 @@ static void gui_display_loadscreen()
 				ImGui::Text("%s", label);
 				float progress = 0;
 				char overlay[64] = "";
+<<<<<<< HEAD
 
 				if (!gameLoader.ready())
+=======
+				
+				if (!gameReady)
+>>>>>>> flycast/dev
 				{
 					progress = gameLoader.getProgress().progress;
 				}
@@ -2882,6 +2916,7 @@ void gui_display_ui()
 		break;
 	case GuiState::Loading:
 		gui_display_loadscreen();
+		rend_process_custom_texture_preloads();
 		break;
 	case GuiState::NetworkStart:
 		gui_network_start();
@@ -3180,8 +3215,8 @@ void gui_togglePause()
 		else if (gui_state == GuiState::Pause)
 		{
 			GamepadDevice::load_system_mappings();
-			gui_setState(GuiState::Closed);
-			emu.start();
+			if (gui_resume_game())
+				emu.start();
 		}
 	} catch (const FlycastException& e) {
 		gui_stop_game(e.what());
