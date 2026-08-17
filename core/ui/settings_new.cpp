@@ -2143,7 +2143,8 @@ static void renderNavigationRail(const std::function<void()>& exitSettings, cons
 	// Left navigation rail: 225px wide child window
 	// Match the main content column height so the shared footer sits flush below both panels.
 	ImGui::BeginChild("NavigationRail", ImVec2(navWidth, -(footerHeight + footerGap)),
-	                  ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+	                  ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened,
+	                  ImGuiWindowFlags_DragScrolling);
 	ImGui::SetWindowFontScale(SettingsTextPreviewScale());
 	g_focusSettingsNavigation = false;
 
@@ -2189,6 +2190,12 @@ static void renderNavigationRail(const std::function<void()>& exitSettings, cons
 			ResetSettingsFooter();
 		}
 	}
+
+	// Keep touch swipes that begin over a tab row as scrolling. This is the
+	// same path used by the content pane, so taps and controller activation
+	// retain their existing Selectable behavior.
+	scrollWhenDraggingOnVoid();
+	windowDragScroll();
 	ImGui::PopFont();
 
 	ImGui::EndChild();

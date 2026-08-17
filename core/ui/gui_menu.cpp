@@ -114,9 +114,13 @@ static bool shouldShowMenuBar()
 		// Settings window position between OpenPopup() and BeginPopup(), which can
 		// make row value popups flicker and fail unless the menu was already shown.
 		const bool settingsOwnsTouch = gui_state == GuiState::Settings;
+		// The temporary reveal timer is only for an idle gameplay menu. Once a
+		// gameplay popup is open, keep the menu bar in place until it closes so a
+		// nested menu can be selected without racing the timeout.
+		const bool gameplayPopupOpen = !settingsOwnsTouch && popupOpen;
 		if (!settingsOwnsTouch && !popupOpen && pointerAtTop && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
 			touchMenuVisibleUntil = ImGui::GetTime() + 5.0;
-		return ImGui::GetTime() < touchMenuVisibleUntil;
+		return gameplayPopupOpen || ImGui::GetTime() < touchMenuVisibleUntil;
 #else
 		if (!popupOpen && pointerAtTop && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
 			touchMenuVisibleUntil = ImGui::GetTime() + 5.0;
