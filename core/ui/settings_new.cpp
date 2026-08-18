@@ -2165,7 +2165,8 @@ static void renderNavigationRail(const std::function<void()>& exitSettings, cons
 	// Left navigation rail: 225px wide child window
 	// Match the main content column height so the shared footer sits flush below both panels.
 	ImGui::BeginChild("NavigationRail", ImVec2(navWidth, -(footerHeight + footerGap)),
-	                  ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+	                  ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened,
+	                  ImGuiWindowFlags_DragScrolling);
 	ImGui::SetWindowFontScale(SettingsTextPreviewScale());
 	g_focusSettingsNavigation = false;
 
@@ -2211,6 +2212,12 @@ static void renderNavigationRail(const std::function<void()>& exitSettings, cons
 			ResetSettingsFooter();
 		}
 	}
+
+	// Keep touch swipes that begin over a tab row as scrolling. This is the
+	// same path used by the content pane, so taps and controller activation
+	// retain their existing Selectable behavior.
+	scrollWhenDraggingOnVoid();
+	windowDragScroll();
 	ImGui::PopFont();
 
 	ImGui::EndChild();
@@ -7179,10 +7186,9 @@ void renderAdvancedTab()
 	}
 
 	// Debugging Section
-#if defined(GDB_SERVER) || !defined(__ANDROID__)
 	if (RenderCollapsingHeader("DebuggingSection", ICON_FA_BUG, T("Debugging"), ImGuiTreeNodeFlags_DefaultOpen))
 	{
-#if !defined(__ANDROID) && !defined(GDB_SERVER)
+#if !defined(__ANDROID__) && !defined(GDB_SERVER)
 		// Serial Console - 2x Row Pattern
 		RenderGeneralToggleSettingRow(
 			"SerialConsole",
@@ -7271,6 +7277,7 @@ void renderAdvancedTab()
 	#endif
 
 		// Log to File - 2x Row Pattern
+		// Android writes this log to its app-writable data directory.
 		const bool logToFileValue = cfgLoadBool("log", "LogToFile", false);
 		RenderGeneralToggleSettingRow(
 			"LogToFile",
@@ -7286,7 +7293,6 @@ void renderAdvancedTab()
 				"If you enable this, try to reproduce the issue, then disable it again to avoid unnecessary disk usage."
 			));
 	}
-#endif
 
 	// Logging Section (Debug builds only)
 #if !defined(NDEBUG) || defined(DEBUGFAST) || FC_PROFILER
@@ -7879,7 +7885,7 @@ void renderSettingsNew()
 				gui_setState(GuiState::Main);
 		};
 
-		const char* backLabel = game_started ? T("Back to Game") : T("Back to Library");
+		const char* backLabel = game_started ? T("Back to Game") : T("Library");
 
 		// Split into left navigation rail and right content area
 		renderNavigationRail(exitSettings, backLabel);
