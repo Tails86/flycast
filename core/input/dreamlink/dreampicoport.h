@@ -223,4 +223,12 @@ private:
     const HardwareInfo hw_info = {};
     //! The name to return on getName
     const std::string device_name;
+
+	//! Game metadata captured when this device is created or a game starts; settings.content is cleared before termination events.
+	std::string activeGameId;
+	//! Game title paired with activeGameId for VMU icon caching.
+	std::string activeGameTitle;
+	//! Last A1 VMU mirror captured before its Maple device was destroyed.
+	std::array<u8, DPP_VMU_FLASH_SIZE> vmuMirrorSnapshot {};
+	bool vmuMirrorSnapshotAvailable = false;
 };

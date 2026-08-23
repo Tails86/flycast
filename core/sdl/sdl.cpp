@@ -423,6 +423,7 @@ void input_sdl_handle()
 							return (sdl_keyboard->get_input_mapping()->get_button_id(0, inputSet) != EMU_BTN_NONE);
 						}
 					};
+
 					if (event.type == SDL_KEYDOWN)
 					{
 						// Alt-Return and F11 toggle full screen
