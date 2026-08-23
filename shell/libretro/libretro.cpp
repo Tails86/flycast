@@ -1262,6 +1262,26 @@ void retro_run()
 	if (devices_need_refresh)
 		refresh_devices(false);
 
+	if (custom_texture.needsRefresh())
+	{
+		custom_texture.refresh();
+	}
+	else if (!custom_texture.isInitialized())
+		custom_texture.init();
+	const bool customTexturePreloading = custom_texture.isPreloading();
+	if (customTexturePreloading)
+	{
+#if defined(HAVE_OPENGL) || defined(HAVE_OPENGLES)
+		if (isOpenGL(config::RendererType))
+			glsm_ctl(GLSM_CTL_STATE_BIND, nullptr);
+#endif
+		rend_process_custom_texture_preloads();
+#if defined(HAVE_OPENGL) || defined(HAVE_OPENGLES)
+		if (isOpenGL(config::RendererType))
+			glsm_ctl(GLSM_CTL_STATE_UNBIND, nullptr);
+#endif
+	}
+
 	if (custom_texture.isPreloading())
 	{
 		int texLoaded, texTotal;
@@ -1379,7 +1399,7 @@ void retro_reset()
 	retro_audio_flush_buffer();
 	coin_inserted = 0;
 
-	emu.start();
+	first_run = true;
 }
 
 #if defined(HAVE_OIT) || defined(HAVE_VULKAN) || defined(HAVE_D3D11)
@@ -3702,12 +3722,14 @@ static bool retro_set_eject_state(bool ejected)
 	if (ejected)
 	{
 		emu.openGdrom();
+		custom_texture.init();
 		return true;
 	}
 	else
 	{
 		try {
 			emu.insertGdrom(disk_paths[disk_index]);
+			custom_texture.init();
 			return true;
 		} catch (const FlycastException& e) {
 			ERROR_LOG(GDROM, "%s", e.what());
@@ -3734,6 +3756,7 @@ static bool retro_set_image_index(unsigned index)
 		{
 			// No disk in drive
 			emu.insertGdrom("");
+			custom_texture.init();
 			return true;
 		}
 
@@ -3741,6 +3764,7 @@ static bool retro_set_image_index(unsigned index)
 			return true;
 
 		emu.insertGdrom(disk_paths[index]);
+		custom_texture.init();
 		return true;
 	} catch (const FlycastException& e) {
 		ERROR_LOG(GDROM, "%s", e.what());
