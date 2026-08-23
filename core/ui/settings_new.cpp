@@ -38,6 +38,7 @@
 #include "hw/maple/maple_devs.h"
 #include "hw/maple/maple_cfg.h"
 #include "hw/maple/maple_if.h"
+#include "hw/pvr/Renderer_if.h"
 #ifdef USE_DREAMLINK_DEVICES
 #include "sdl/dreamlink/dreamlinkgamepad.h"
 #endif
@@ -4062,25 +4063,51 @@ void renderVideoTab()
 			T(
 				"Load Custom Textures\n"
 				"Loads custom/high-res textures from `data/textures/<game id>`.\n"
-				"Great for community texture packs, but can increase load time and memory usage.\n\n"
+				"Great for community texture packs, but can increase load time and memory usage.\n"
+				"Supports KTX2/XUBC7, KTX2/XUASTC, KTX2/ETC1S, DDS/BC7, PNG, and JPEG.\n\n"
 				"If you see stutter from texture streaming, consider enabling Preload Custom Textures."
 			),
 			game_started);
 
+		const bool gpuPreloadSupported = rend_supports_gpu_texture_preload();
+		int configuredMode = static_cast<int>(config::customTexturePreloadMode());
+
+		std::vector<const char*> texturePreloadingOptions{T("Off"), T("System Memory")};
+
+		if (gpuPreloadSupported) {
+			// Assumption: (config::CustomTexturePreloadMode::VideoMemory) is 2 - not available when !gpuPreloadSupported
+			assert(texturePreloadingOptions.size() == static_cast<size_t>(config::CustomTexturePreloadMode::VideoMemory));
+			texturePreloadingOptions.push_back(T("Video Memory"));
+		}
+
+		SettingsUI::PopupConfig texturePreloadCfg {};
+		texturePreloadCfg.type = SettingsUI::PopupType::Options;
+		texturePreloadCfg.options.label = T("Preload Custom Textures");
+		texturePreloadCfg.options.icon = ICON_FA_DOWNLOAD;
+		texturePreloadCfg.options.popupID = Tnop("PreloadTexturesPopup");
+		texturePreloadCfg.options.options = texturePreloadingOptions.data();
+		texturePreloadCfg.options.optionCount = static_cast<int>(texturePreloadingOptions.size());
+		texturePreloadCfg.options.currentValue = &configuredMode;
+		texturePreloadCfg.options.valueWidth = 220.0f;
+		texturePreloadCfg.options.onChange = [&](int selectedType) { 
+			if (selectedType < 0 || selectedType >= texturePreloadingOptions.size())
+				return false;
+			config::PreloadCustomTextures = selectedType; 
+			return true;
+		};
+
 		ImGui::Indent();
-		RenderGeneralToggleSettingRow(
-			"PreloadTextures",
-			ICON_FA_DOWNLOAD,
-			T("Preload Custom Textures"),
+		RenderGeneralPopupSettingRow(
+			Tnop("PreloadTextures"),
 			T("Trade memory for fewer texture hitches."),
-			static_cast<bool>(config::PreloadCustomTextures),
-			[](bool enabled) { config::PreloadCustomTextures.set(enabled); },
+			texturePreloadCfg,
 			T(
 				"Preload Custom Textures\n"
 				"Preloads custom textures at game start.\n"
 				"Can reduce runtime stutter at the cost of increased memory usage and longer initial load times."
 			),
-			!config::CustomTextures);
+			!config::CustomTextures
+		);
 		ImGui::Unindent();
 	}
 
