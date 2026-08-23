@@ -61,10 +61,6 @@
 #include <setupapi.h>
 #endif
 
-constexpr size_t DPP_VMU_BLOCK_SIZE = 512;
-constexpr size_t DPP_VMU_BLOCK_COUNT = 256;
-constexpr size_t DPP_VMU_FLASH_SIZE = DPP_VMU_BLOCK_SIZE * DPP_VMU_BLOCK_COUNT;
-
 bool vmuIconCachingEnabled(const std::string& gameId)
 {
 	return config::LibraryImageSource.get() != static_cast<int>(config::LibraryImageSourceMode::CurrentArtwork)
@@ -951,46 +947,16 @@ void DreamPicoPort::onGameStarted()  {
 
 void DreamPicoPort::onGameTermination()  {
     GamepadDreamLink::onGameTermination();
-    if (!cacheVmuIconFromMirror())
+    if (!cacheVmuIconFromMirror()) {
         cacheLoadedVmuIconFromHardware();
+    }
     // Need a short delay to wait for last screen draw to complete
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
     // Reset screen to selected port
     sendPort();
 }
 
-void snapshotVmuMirror(const DppVirtualVmu& vmu) {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
-
-    if (!EventManager::isGameRunning() || vmu.fileBacked) {
-        return;
-    }
-
-    memcpy(vmuMirrorSnapshot.data(), vmu.flash_data, vmuMirrorSnapshot.size());
-    vmuMirrorSnapshotAvailable = true;
-}
-
-bool cacheVmuIconFromMirror() {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
-
-    if (
-        !vmuMirrorSnapshotAvailable || 
-        !vmuIconCachingEnabled(activeGameId) || 
-        hw_info.hardware_bus < 0 || 
-        !storageEnabled()
-    ) {
-        return false;
-    }
-
-    return cacheVmuIconFromFlash(
-        activeGameId,
-        activeGameTitle,
-        vmuMirrorSnapshot.data(),
-        vmuMirrorSnapshot.size()
-    );
-}
-
-void cacheLoadedVmuIconFromHardware() {
+void DreamPicoPort::cacheLoadedVmuIconFromHardware() {
     // DreamPicoPort reads a physical VMU, independently of Flycast's virtual
     // per-game VMU setting, so physical icon capture must not use that gate.
     if (!vmuIconCachingEnabled(activeGameId) || hw_info.hardware_bus < 0 || !storageEnabled()) {
@@ -1002,9 +968,9 @@ void cacheLoadedVmuIconFromHardware() {
         return;
     }
 
-    std::vector<u8> flash(DPP_VMU_FLASH_SIZE);
+    std::vector<u8> flash(vmu_icon::VMU_FLASH_SIZE);
     bool readOk = true;
-    for (u32 block = 0; block < DPP_VMU_BLOCK_COUNT; ++block) {
+    for (u32 block = 0; block < vmu_icon::VMU_BLOCK_COUNT; ++block) {
         MapleMsg msg{};
         msg.command = MDCF_BlockRead;
         msg.destAP = (hw_info.hardware_bus << 6) | (1u << perGameVmuPort);
@@ -1017,11 +983,11 @@ void cacheLoadedVmuIconFromHardware() {
             readOk = false;
             break;
         }
-        memcpy(&flash[block * DPP_VMU_BLOCK_SIZE], &rxMsg.data[8], DPP_VMU_BLOCK_SIZE);
+        memcpy(&flash[block * vmu_icon::VMU_BLOCK_SIZE], &rxMsg.data[8], vmu_icon::VMU_BLOCK_SIZE);
     }
 
     if (readOk) {
-        cacheVmuIconFromFlash(activeGameId, activeGameTitle, flash.data(), flash.size());
+        vmu_icon::cacheVmuIconFromFlash(activeGameId, activeGameTitle, flash.data(), flash.size());
     }
 }
 
@@ -1411,6 +1377,37 @@ void DreamPicoPort::connectionCallback() {
             scheduleConnectRetry();
         }
     }
+}
+
+void DreamPicoPort::snapshotVmuMirror(const DppVirtualVmu& vmu) {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+
+    if (!EventManager::isGameRunning() || vmu.fileBacked) {
+        return;
+    }
+
+    memcpy(vmuMirrorSnapshot.data(), vmu.flash_data, vmuMirrorSnapshot.size());
+    vmuMirrorSnapshotAvailable = true;
+}
+
+bool DreamPicoPort::cacheVmuIconFromMirror() {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+
+    if (
+        !vmuMirrorSnapshotAvailable || 
+        !vmuIconCachingEnabled(activeGameId) || 
+        hw_info.hardware_bus < 0 || 
+        !storageEnabled()
+    ) {
+        return false;
+    }
+
+    return vmu_icon::cacheVmuIconFromFlash(
+        activeGameId,
+        activeGameTitle,
+        vmuMirrorSnapshot.data(),
+        vmuMirrorSnapshot.size()
+    );
 }
 
 const char* DreamPicoPort::fnToName(u32 fnCode) {

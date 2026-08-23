@@ -37,12 +37,10 @@
 #include <vector>
 
 using namespace nlohmann;
+using namespace vmu_icon;
 
 namespace {
 
-constexpr size_t VMU_BLOCK_SIZE = 512;
-constexpr size_t VMU_BLOCK_COUNT = 256;
-constexpr size_t VMU_FLASH_SIZE = VMU_BLOCK_SIZE * VMU_BLOCK_COUNT;
 constexpr size_t VMU_ROOT_BLOCK_INDEX = VMU_BLOCK_COUNT - 1;
 constexpr u16 VMU_DEFAULT_FAT_BLOCK_INDEX = VMU_ROOT_BLOCK_INDEX - 1;
 constexpr u16 VMU_DEFAULT_DIRECTORY_BLOCK_INDEX = VMU_ROOT_BLOCK_INDEX - 2;
@@ -814,6 +812,8 @@ ResolvedIconLookup resolveVmuIconLookup(const GameMedia& media, const std::strin
 
 } // namespace
 
+namespace vmu_icon {
+
 bool cacheVmuIconFromFlash(const std::string& gameId, const std::string& gameTitle, const void *data, size_t size)
 {
 	std::lock_guard<std::mutex> lock(cacheMutex);
@@ -925,3 +925,5 @@ void clearVmuIconLookups()
 	resolvedIconLookups.clear();
 	nextExternalVmuValidation = {};
 }
+
+} // namespace vmu_icon

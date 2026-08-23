@@ -24,8 +24,16 @@
 
 struct GameMedia;
 
+namespace vmu_icon {
+
+constexpr size_t VMU_BLOCK_SIZE = 512;
+constexpr size_t VMU_BLOCK_COUNT = 256;
+constexpr size_t VMU_FLASH_SIZE = VMU_BLOCK_SIZE * VMU_BLOCK_COUNT;
+
 bool cacheVmuIconFromFlash(const std::string& gameId, const std::string& gameTitle, const void *data, size_t size);
 void markLibraryGameBooted(const std::string& gameId, const std::string& gamePath);
 time_t getLibraryGameLastBooted(const GameMedia& media, const std::string& gameId);
 std::string getCachedVmuIconPath(const GameMedia& media, const std::string& gameId, bool animate = false, double animationClock = 0.0);
 void clearVmuIconLookups();
+
+}

@@ -131,7 +131,7 @@ static void emuEventCallback(Event event, void *)
 		vgamepad::startGame();
 		break;
 	case Event::Start:
-		markLibraryGameBooted(settings.content.gameId, settings.content.path);
+		vmu_icon::markLibraryGameBooted(settings.content.gameId, settings.content.path);
 		GamepadDevice::load_system_mappings();
 		break;
 	case Event::Terminate:
@@ -1984,7 +1984,7 @@ static GameBoxart getLibraryDisplayArtwork(const GameMedia& game, double animati
 	case config::LibraryImageSourceMode::VmuSaveIcon:
 	case config::LibraryImageSourceMode::VmuThenCurrentArtwork: {
 		const bool animate = config::VmuIconMode.get() == static_cast<int>(config::VmuIconPlaybackMode::Active);
-		const std::string vmuIconPath = getCachedVmuIconPath(game, art.uniqueId, animate, animationClock);
+		const std::string vmuIconPath = vmu_icon::getCachedVmuIconPath(game, art.uniqueId, animate, animationClock);
 		if (!vmuIconPath.empty())
 			art.boxartPath = vmuIconPath;
 		return art;
@@ -1994,7 +1994,7 @@ static GameBoxart getLibraryDisplayArtwork(const GameMedia& game, double animati
 		if (art.boxartPath.empty())
 		{
 			const bool animate = config::VmuIconMode.get() == static_cast<int>(config::VmuIconPlaybackMode::Active);
-			const std::string vmuIconPath = getCachedVmuIconPath(game, art.uniqueId, animate, animationClock);
+			const std::string vmuIconPath = vmu_icon::getCachedVmuIconPath(game, art.uniqueId, animate, animationClock);
 			if (!vmuIconPath.empty())
 				art.boxartPath = vmuIconPath;
 		}
@@ -2342,7 +2342,7 @@ static void gui_display_content()
 								? formatLibraryPlaytime(*art.playTimeSeconds) : std::string();
 						textTableCellCentered(timePlayed, tableRowContentHeight);
 						ImGui::TableSetColumnIndex(6);
-						const time_t lastBootedTime = getLibraryGameLastBooted(game, art.uniqueId);
+						const time_t lastBootedTime = vmu_icon::getLibraryGameLastBooted(game, art.uniqueId);
 						const std::string lastBooted = lastBootedTime == 0 ? std::string() : formatShortDateTime(lastBootedTime);
 						textTableCellCentered(lastBooted, tableRowContentHeight);
 						ImGui::TableSetColumnIndex(7);
@@ -3046,7 +3046,7 @@ void gui_term()
 	    EventManager::unlisten(Event::Resume, emuEventCallback);
 	    EventManager::unlisten(Event::Start, emuEventCallback);
 	    EventManager::unlisten(Event::Terminate, emuEventCallback);
-	    clearVmuIconLookups();
+	    vmu_icon::clearVmuIconLookups();
 	    boxart.term();
 	}
 }
@@ -3199,7 +3199,7 @@ void gui_setState(GuiState newState)
 	if (gui_state != newState)
 	{
 		if (newState == GuiState::Main && gui_state == GuiState::Closed)
-			clearVmuIconLookups();
+			vmu_icon::clearVmuIconLookups();
 		resetLibraryLongPress();
 		resetLibraryGameInfoHover();
 	}
@@ -3232,7 +3232,7 @@ void gui_refresh_custom_boxart(bool force)
 
 void gui_refresh_boxart_cache()
 {
-	clearVmuIconLookups();
+	vmu_icon::clearVmuIconLookups();
 	boxart.refreshCache();
 	scanner.fetch_game_list_sync();
 	std::vector<GameMedia> games;

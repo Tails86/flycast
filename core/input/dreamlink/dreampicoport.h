@@ -22,6 +22,8 @@
 #include "gamepad_dreamlink.h"
 #include "../mapping.h"
 
+#include "ui/boxart/vmu_icon.h"
+
 #include <cstdint>
 #include <chrono>
 #include <memory>
@@ -32,6 +34,8 @@
 //! This class allows for communication to DreamPicoPort peripherals through libusb/WebUSB
 class DreamPicoPort : public GamepadDreamLink
 {
+    friend struct DppMapleLinkDevice;
+
 public:
     //! Static hardware information
     struct HardwareInfo
@@ -89,6 +93,9 @@ public:
 
     //! Called when game has terminated
     void onGameTermination() override;
+
+    //! Reads VMU A1 hardware for VMU icons
+    void cacheLoadedVmuIconFromHardware();
 
     //! Transform flycast port index into DreamPicoPort port index
     static int fcPortToDppPort(int forPort);
@@ -185,6 +192,14 @@ private:
     //! The connection callback executed from the UI thread
     void connectionCallback();
 
+    //! Caches the virtual VMU state internally for later use with VMU icon parsing
+    //! @param[in] vmu Reference to virtual VMU to cache
+    void snapshotVmuMirror(const struct DppVirtualVmu& vmu);
+
+    //! Uses the internal virtual VMU mirror cache for VMU icon parsing
+    //! @return true iff parsing was successful
+    bool cacheVmuIconFromMirror();
+
     //! Converts a function code mask to function name
     //! @param[in] fnCode The function code mask
     //! @return an associated function name
@@ -229,6 +244,6 @@ private:
 	//! Game title paired with activeGameId for VMU icon caching.
 	std::string activeGameTitle;
 	//! Last A1 VMU mirror captured before its Maple device was destroyed.
-	std::array<u8, DPP_VMU_FLASH_SIZE> vmuMirrorSnapshot {};
+	std::array<u8, vmu_icon::VMU_FLASH_SIZE> vmuMirrorSnapshot {};
 	bool vmuMirrorSnapshotAvailable = false;
 };
