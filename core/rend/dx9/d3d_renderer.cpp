@@ -181,6 +181,8 @@ void D3DRenderer::preReset()
 	vertexBufferSize = 0;
 	framebufferSurface.reset();
 	framebufferTexture.reset();
+	secAccumSurface.reset();
+	secAccumTexture.reset();
 	frameRendered = false;
 	frameRenderedOnce = false;
 }
@@ -380,8 +382,9 @@ void D3DRenderer::setGPState(const PolyParam *gp)
 			// Trilinear pass A
 			trilinear_alpha = 1.f - trilinear_alpha;
 	}
-	else
+	else {
 		trilinear_alpha = 1.f;
+	}
 
 	bool color_clamp = gp->tsp.ColorClamp && (rendContext->fog_clamp_min.full != 0 || rendContext->fog_clamp_max.full != 0xffffffff);
 	int fog_ctrl = config::Fog ? gp->tsp.FogCtrl : 2;
@@ -398,6 +401,32 @@ void D3DRenderer::setGPState(const PolyParam *gp)
 		else if (config::TextureFiltering == 2)
 			gpuPalette = 2; // force linear
 	}
+	if (gp->tsp.DstSelect == 1)
+	{
+		if (!primAccumSurface)
+		{
+			device->EndScene();
+			device->SetTexture(3, nullptr);
+			makeSecAccumSurface();
+			device->GetRenderTarget(0, &primAccumSurface.get());
+			if (secAccumSurface)
+				device->SetRenderTarget(0, secAccumSurface);
+			device->BeginScene();
+		}
+	}
+	else if (primAccumSurface)
+	{
+		device->EndScene();
+		device->SetRenderTarget(0, primAccumSurface);
+		primAccumSurface.reset();
+		if (secAccumTexture)
+			device->SetTexture(3, secAccumTexture);
+		device->SetSamplerState(3, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+		device->SetSamplerState(3, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+		float textureSize[4] { (float)secAccumWidth, (float)secAccumHeight };
+		device->SetPixelShaderConstantF(10, textureSize, 1);
+		device->BeginScene();
+	}
 
 	devCache.SetPixelShader(shaders.getShader(
 			gp->pcw.Texture,
@@ -412,7 +441,8 @@ void D3DRenderer::setGPState(const PolyParam *gp)
 			gpuPalette,
 			gp->pcw.Gouraud,
 			clipmode == TileClipping::Inside,
-			dithering));
+			dithering,
+			gp->tsp.SrcSelect == 1));
 
 	if (trilinear_alpha != 1.f)
 	{
@@ -778,6 +808,7 @@ void D3DRenderer::drawModVols(int first, int count)
 
 void D3DRenderer::drawStrips()
 {
+	primAccumSurface.reset();
 	RenderPass previous_pass {};
     for (int render_pass = 0; render_pass < (int)rendContext->render_passes.size(); render_pass++)
     {
@@ -1483,6 +1514,41 @@ bool D3DRenderer::GetLastFrame(std::vector<u8>& data, int& width, int& height)
 	device->SetRenderTarget(0, backbuffer);
 
 	return true;
+}
+
+void D3DRenderer::makeSecAccumSurface()
+{
+	u32 width, height;
+	if (rendContext->isRTT) {
+		width = rendContext->framebufferWidth;
+		height = rendContext->framebufferHeight;
+	}
+	else {
+		width = this->width;
+		height = this->height;
+	}
+	if (secAccumSurface != nullptr
+			&& (secAccumWidth != width || secAccumHeight != height)) {
+		secAccumSurface.reset();
+		secAccumTexture.reset();
+	}
+	if (secAccumSurface == nullptr)
+	{
+		HRESULT hr = device->CreateTexture(width, height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &secAccumTexture.get(), nullptr);
+		if (FAILED(hr)) {
+			ERROR_LOG(RENDERER, "Secondary accumulator texture creation failed: %x", hr);
+			return;
+		}
+		bool rc = SUCCEEDED(secAccumTexture->GetSurfaceLevel(0, &secAccumSurface.get()));
+		if (!rc)
+		{
+			ERROR_LOG(RENDERER, "Secondary accumulator GetSurfaceLevel failed: %x", hr);
+			secAccumTexture.reset();
+			return;
+		}
+		secAccumWidth = width;
+		secAccumHeight = height;
+	}
 }
 
 Renderer* rend_DirectX9()
