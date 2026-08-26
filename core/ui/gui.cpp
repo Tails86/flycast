@@ -2174,6 +2174,21 @@ static void gui_display_content()
 		lastBoxartDisplayMode = currentBoxartDisplayMode;
 	}
     IconButton settingsBtn(ICON_FA_GEAR, T("Settings"));
+#if defined(__ANDROID__)
+	IconButton iconSizeBtn(ICON_FA_EXPAND, T("Icon Size"));
+	ImGui::SameLine(ImGui::GetContentRegionMax().x - settingsBtn.width()
+			- ImGui::GetStyle().ItemSpacing.x - iconSizeBtn.width());
+	if (iconSizeBtn.realize())
+		ImGui::OpenPopup("Library Icon Size");
+	if (ImGui::BeginPopup("Library Icon Size"))
+	{
+		ImGui::TextUnformatted(T("Icon Size"));
+		ImGui::SetNextItemWidth(uiScaled(220.0f));
+		if (ImGui::SliderInt("##LibraryIconSize", &libraryIconScale, 100, 1000, "%d%%"))
+			config::LibraryIconScale.set(libraryIconScale);
+		ImGui::EndPopup();
+	}
+#endif
 #if !defined(__ANDROID__) && !defined(TARGET_IPHONE) && !defined(TARGET_UWP) && !defined(__SWITCH__)
 	const float iconScaleSliderWidth = 135.0f;
 	const float iconScaleControlWidth = iconScaleSliderWidth + ImGui::GetStyle().ItemInnerSpacing.x
