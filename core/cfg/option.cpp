@@ -49,9 +49,22 @@ Option<int, false> BoxartSourceMode("BoxartSourceMode", 0);
 Option<int, false> LibraryDisplayStyle("Dreamcast.LibraryDisplayStyle", 0);
 Option<int, false> LibraryImageSource("Dreamcast.LibraryImageSource", 0);
 Option<int, false> LibraryCoverMedia("Dreamcast.LibraryCoverMedia", 0);
-Option<int, false> LibraryIconScale("Dreamcast.LibraryIconScale", 100);
+// Keep Android's first-run library readable on touch displays without altering saved preferences.
+Option<int, false> LibraryIconScale("Dreamcast.LibraryIconScale",
+#ifdef __ANDROID__
+		300
+#else
+		100
+#endif
+		);
 Option<int, false> VmuIconMode("Dreamcast.VmuIconMode", 0);
-Option<int, false> UIScaling("UIScaling", 100);
+Option<int, false> UIScaling("UIScaling",
+#ifdef __ANDROID__
+		65
+#else
+		100
+#endif
+		);
 Option<int, false> UITheme("UITheme", 0);
 
 // Sound
