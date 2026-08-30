@@ -19,8 +19,8 @@
 #include "x11_keyboard.h"
 
 #define DEFAULT_FULLSCREEN    false
-#define DEFAULT_WINDOW_WIDTH  640
-#define DEFAULT_WINDOW_HEIGHT   480
+#define DEFAULT_WINDOW_WIDTH  800
+#define DEFAULT_WINDOW_HEIGHT 600
 
 static void x11_window_set_text(const char *text);
 
