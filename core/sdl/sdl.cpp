@@ -46,8 +46,9 @@
 static SDL_Window* window = NULL;
 static u32 windowFlags;
 
-#define WINDOW_WIDTH  640
-#define WINDOW_HEIGHT  480
+// Used only when no saved desktop window size exists.
+#define WINDOW_WIDTH  800
+#define WINDOW_HEIGHT  600
 
 static std::unordered_map<u32, std::shared_ptr<SDLMouse>> sdl_mice;
 static std::shared_ptr<SDLKeyboardDevice> sdl_keyboard;
