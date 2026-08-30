@@ -2130,14 +2130,24 @@ static void gui_display_content()
 
     ImGui::Begin("##main", nullptr, ImGuiWindowFlags_NoDecoration);
 
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(20, 8));
-	ImGui::PushFont(largeFont, 18.5f);
+    // Keep the library toolbar cohesive at a larger size without coupling it to
+    // the user-configured global UI Scaling value.
+    constexpr float libraryToolbarScale = 4.0f / 3.0f;
+    const ImVec2 itemSpacing = ImGui::GetStyle().ItemSpacing;
+    const ImVec2 itemInnerSpacing = ImGui::GetStyle().ItemInnerSpacing;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+            ImVec2(20.0f * libraryToolbarScale, 8.0f * libraryToolbarScale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+            ImVec2(itemSpacing.x * libraryToolbarScale, itemSpacing.y * libraryToolbarScale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing,
+            ImVec2(itemInnerSpacing.x * libraryToolbarScale, itemInnerSpacing.y * libraryToolbarScale));
+	ImGui::PushFont(largeFont, 18.5f * libraryToolbarScale);
     ImGui::AlignTextToFramePadding();
     // Position "GAMES" text and search bar below the menu bar (window is already positioned below menu bar)
     ImGui::SetCursorPosY(ImGui::GetStyle().FramePadding.y);
-    ImGui::Indent(10);
+    ImGui::Indent(10.0f * libraryToolbarScale);
     ImGui::Text("%s", T("GAMES"));
-    ImGui::Unindent(10);
+    ImGui::Unindent(10.0f * libraryToolbarScale);
 
     static ImGuiTextFilter filter;
 	int libraryIconScale = std::clamp(config::LibraryIconScale.get(), 100, 1000);
@@ -2175,18 +2185,20 @@ static void gui_display_content()
 	}
     IconButton settingsBtn(ICON_FA_GEAR, T("Settings"));
 #if !defined(TARGET_IPHONE) && !defined(TARGET_UWP) && !defined(__SWITCH__)
-	const float iconScaleSliderWidth = 135.0f;
+	const float iconScaleSliderWidth = 135.0f * libraryToolbarScale;
 	const float iconScaleControlWidth = iconScaleSliderWidth + ImGui::GetStyle().ItemInnerSpacing.x
 			+ ImGui::CalcTextSize("Icon Size").x;
 	const float settingsLeft = ImGui::GetContentRegionMax().x - settingsBtn.width();
-	const float sliderLeft = settingsLeft - 24.0f - iconScaleControlWidth;
-	ImGui::SameLine(0, 32);
+	const float sliderLeft = settingsLeft - 24.0f * libraryToolbarScale - iconScaleControlWidth;
+	ImGui::SameLine(0, 32.0f * libraryToolbarScale);
 	const float availableFilterWidth = sliderLeft - ImGui::GetCursorPosX()
 			- ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize(T("Filter")).x;
-	const float maxFilterWidth = std::max(80.0f, std::min(availableFilterWidth, 520.0f));
-	const float filterWidth = std::clamp(availableFilterWidth * 0.5f, 80.0f, maxFilterWidth);
+	const float maxFilterWidth = std::max(80.0f * libraryToolbarScale,
+			std::min(availableFilterWidth, 520.0f * libraryToolbarScale));
+	const float filterWidth = std::clamp(availableFilterWidth * 0.5f,
+			80.0f * libraryToolbarScale, maxFilterWidth);
 	filter.Draw(T("Filter"), filterWidth);
-	ImGui::SameLine(0, 24.0f);
+	ImGui::SameLine(0, 24.0f * libraryToolbarScale);
 	ImGui::SetNextItemWidth(iconScaleSliderWidth);
 	if (ImGui::SliderInt("Icon Size", &libraryIconScale, 100, 1000, "%d%%"))
 		config::LibraryIconScale.set(libraryIconScale);
@@ -2222,7 +2234,7 @@ static void gui_display_content()
 			gui_setState(GuiState::Commands);
     }
 	ImGui::PopFont();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(3);
 
     boxart.refreshCustomBoxartIndex(false);
     scanner.fetch_game_list();
