@@ -680,7 +680,7 @@ std::string Boxart::getCustomBoxartPathForMediaMode(const GameMedia& media, conf
 		return {};
 
 	refreshCustomBoxartIndex(false);
-	const std::string root = getSaveDirectory();
+	const std::string root = getCustomBoxartDirectory();
 
 	const std::string fileKey = makeBoxartKey(media.fileName);
 	const std::string nameKey = makeBoxartKey(media.name);
@@ -1289,7 +1289,7 @@ void Boxart::term()
 
 void Boxart::refreshCustomBoxartIndex(bool force)
 {
-	const std::string root = getSaveDirectory();
+	const std::string root = getCustomBoxartDirectory();
 
 	if (customIndexFetching.valid() && customIndexFetching.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
 		customIndexFetching.get();

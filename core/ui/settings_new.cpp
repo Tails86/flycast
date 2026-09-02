@@ -20,6 +20,7 @@
 #include "settings_new.h"
 #include "gui_util.h"
 #include "imgui.h"
+#include "imgui_driver.h"
 #include "imgui_stdlib.h"
 #include "audio/audiostream.h"
 #include "cfg/cfg.h"
@@ -50,8 +51,10 @@
 #include "IconsFontAwesome6.h"
 #include "mainui.h"
 #include "oslib/oslib.h"
+#include "oslib/resources.h"
 #include "oslib/storage.h"
 #include "stdclass.h"
+#include "stbi.h"
 #include "achievements/achievements.h"
 #include "vgamepad.h"
 #include <cmath>
@@ -2281,7 +2284,11 @@ static void renderContentArea()
 	// selectable rows. Keep this after rendering rows so the helper can turn
 	// those finger drags into scrolling instead of row activation.
 	scrollWhenDraggingOnVoid();
+#if defined(__ANDROID__)
+	windowDragScroll(g_state.currentTab != SettingsTab::Audio);
+#else
 	windowDragScroll();
+#endif
 
 	if (!IsAnySettingsPopupOpen()
 		&& ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)
@@ -3589,16 +3596,6 @@ void renderVideoTab()
 					"Note: Fog and Shadows are enabled on all preset tiers."
 				);
 			SetSettingsFooterText(help.c_str());
-		}
-
-		// Show "Custom" indicator if settings were manually changed
-		VideoPresetLevel currentLevel = detectCurrentPreset();
-		if (currentLevel == VideoPresetLevel::Custom && !presetJustApplied)
-		{
-			ImGui::SameLine();
-			ImGui::TextDisabled("%s", T("(Modified)"));
-			if (ImGui::IsItemHovered() || ImGui::IsItemFocused())
-				SetSettingsFooterText(T("Settings have been manually modified from the last preset."));
 		}
 
 		ImGui::Separator();
@@ -5505,7 +5502,8 @@ static void renderVmuCardManager()
 	};
 
 	const float listHeight = uiScaled(220.0f);
-	ImGui::BeginChild("VmuCardManager", ImVec2(0.0f, listHeight), true);
+	ImGui::BeginChild("VmuCardManager", ImVec2(0.0f, listHeight), true,
+		ImGuiWindowFlags_DragScrolling);
 	if (ImGui::BeginTable("VmuCardTable", 2,
 			ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_NoSavedSettings))
 	{
@@ -5529,6 +5527,10 @@ static void renderVmuCardManager()
 		}
 		ImGui::EndTable();
 	}
+	// Match the Settings panels: an Android finger drag starting over a card row
+	// scrolls this vertical list instead of selecting the row beneath the finger.
+	scrollWhenDraggingOnVoid();
+	windowDragScroll(false);
 	ImGui::EndChild();
 
 	if (ImGui::BeginPopupModal(T("Create VMU Card"), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
@@ -7687,30 +7689,57 @@ void renderAdvancedTab()
 	}
 }
 
+static constexpr char kHollycastAsciiImagePath[] = "picture/hollycast_ascii.png";
+
+static ImTextureID LoadHollycastAsciiImage()
+{
+	ImTextureID textureId = imguiDriver->getTexture(kHollycastAsciiImagePath);
+	if (textureId != ImTextureID())
+		return textureId;
+
+	size_t imageSize;
+	std::unique_ptr<u8[]> imageData = resource::load(kHollycastAsciiImagePath, imageSize);
+	if (imageData == nullptr || imageSize == 0)
+		return ImTextureID();
+
+	int width, height, channels;
+	u8* pixels = stbi_load_from_memory(imageData.get(), static_cast<int>(imageSize),
+		&width, &height, &channels, STBI_rgb_alpha);
+	if (pixels == nullptr || width <= 0 || height <= 0)
+		return ImTextureID();
+
+	try {
+		textureId = imguiDriver->updateTextureAndAspectRatio(kHollycastAsciiImagePath, pixels, width, height, false);
+	} catch (...) {
+		// A renderer can be rebuilding its texture state while the About tab is open.
+	}
+	free(pixels);
+	return textureId;
+}
+
+static void RenderHollycastAsciiImage()
+{
+	const ImTextureID textureId = LoadHollycastAsciiImage();
+	const float availableWidth = ImGui::GetContentRegionAvail().x;
+	if (textureId == ImTextureID() || availableWidth <= 0.0f)
+		return;
+
+	// The wide supplied artwork intentionally fills the available About-page header space.
+	const float imageWidth = availableWidth;
+	const float imageHeight = imageWidth * 797.0f / 2797.0f;
+	ImGui::Image(textureId, ImVec2(imageWidth, imageHeight));
+}
 void renderAboutTab()
 {
 	// Use TextDisabled for the title (theme-aware)
 	ImGui::TextDisabled("%s", T("About Hollycast"));
 	ImGui::Separator();
 
-	// Center content for better appearance
+	// The supplied About artwork scales with the page width without being stretched or cropped.
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ScaledVec2(20, 20));
 
-	// Logo/Title Section
 	ImGui::Spacing();
-	ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.5f, 0.5f));
-	const char* logoText = "  ____  __  __          _   _ ";
-	const char* logoText2 = " / ___||  \\/  | ___  __| | | |";
-	const char* logoText3 = " \\___ \\| |\\/| |/ _ \\/ _` | | |";
-	const char* logoText4 = "  ___) | |  | |  __/ (_| | |_|";
-	const char* logoText5 = " |____/|_|  |_|\\___|\\__,_|\\___/";
-
-	ImGui::TextUnformatted(logoText);
-	ImGui::TextUnformatted(logoText2);
-	ImGui::TextUnformatted(logoText3);
-	ImGui::TextUnformatted(logoText4);
-	ImGui::TextUnformatted(logoText5);
-	ImGui::PopStyleVar();
+	RenderHollycastAsciiImage();
 
 	ImGui::Spacing();
 	ImGui::Spacing();

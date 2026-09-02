@@ -78,14 +78,14 @@ private:
 	void buildCustomBoxartIndex();
 	std::string getDatabaseDirectory() const;
 	std::string getSaveDirectory() const {
-		// File-system paths must end with a separator; Android SAF URIs must stay unchanged.
-		if (!config::BoxartPath.get().empty()) {
-			std::string path = config::BoxartPath.get();
-			if (!path.empty() && path.find("content://") != 0 && path.back() != '/' && path.back() != '\\')
-				path += '/';
-			return path;
-		}
 		return get_writable_data_path("/boxart/");
+	}
+	std::string getCustomBoxartDirectory() const {
+		std::string path = config::BoxartPath.get();
+		// File-system paths must end with a separator; Android SAF URIs must stay unchanged.
+		if (!path.empty() && path.find("content://") != 0 && path.back() != '/' && path.back() != '\\')
+			path += '/';
+		return path;
 	}
 	void fetchBoxart();
 

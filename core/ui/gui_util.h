@@ -81,7 +81,7 @@ static inline void centerNextWindow()
 }
 
 void fullScreenWindow(bool modal);
-void windowDragScroll();
+void windowDragScroll(bool allowHorizontal = true);
 
 class BackgroundGameLoader
 {

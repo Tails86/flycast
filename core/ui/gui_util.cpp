@@ -1074,14 +1074,23 @@ static void computeScrollSpeed(float &v)
 	}
 }
 
-void windowDragScroll()
+void windowDragScroll(bool allowHorizontal)
 {
 	ImGuiWindow *window = ImGui::GetCurrentWindow();
+	if (!allowHorizontal)
+	{
+		// Settings rows are vertically paged. Keep a tiny layout overflow from
+		// turning an Android swipe into an unintended horizontal pan.
+		window->ScrollSpeed.x = 0.0f;
+		if (window->Scroll.x != 0.0f)
+			ImGui::SetScrollX(window, 0.0f);
+	}
 	if (window->DragScrolling)
 	{
 		if (!ImGui::GetIO().MouseDown[ImGuiMouseButton_Left])
 		{
-			computeScrollSpeed(window->ScrollSpeed.x);
+			if (allowHorizontal)
+				computeScrollSpeed(window->ScrollSpeed.x);
 			computeScrollSpeed(window->ScrollSpeed.y);
 			if (window->ScrollSpeed == ImVec2())
 			{
@@ -1096,11 +1105,14 @@ void windowDragScroll()
 			ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
 			if (delta != ImVec2())
 				ImGui::ResetMouseDragDelta();
+			if (!allowHorizontal)
+				delta.x = 0.0f;
 			window->ScrollSpeed = delta;
 		}
 		if (window->DragScrolling)
 		{
-			ImGui::SetScrollX(window, window->Scroll.x - window->ScrollSpeed.x);
+			if (allowHorizontal)
+				ImGui::SetScrollX(window, window->Scroll.x - window->ScrollSpeed.x);
 			ImGui::SetScrollY(window, window->Scroll.y - window->ScrollSpeed.y);
 		}
 	}
