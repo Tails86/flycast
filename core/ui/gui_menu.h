@@ -20,6 +20,8 @@
 
 #include <string>
 
+struct ImGuiStyle;
+
 namespace GuiMenu {
 
 // Menu state management
@@ -30,6 +32,12 @@ extern bool menuVisible;
 // Called each frame when the GUI is active
 // Renders all menu items and handles user interaction
 void renderMainMenuBar();
+
+#if defined(__ANDROID__)
+// Capture the Android menu geometry at its fixed, DPI-aware reference scale.
+// The menu uses this style without changing the scale of any other UI.
+void setAndroidMenuStyle(const ImGuiStyle& unscaledStyle, float referenceScale);
+#endif
 
 // Individual menu renderers
 // Each function renders a specific menu dropdown and handles its items

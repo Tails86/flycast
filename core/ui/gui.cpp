@@ -229,6 +229,10 @@ static ImGuiKey keycodeToImGuiKey(u8 keycode)
 void gui_updateStyle()
 {
 	static float uiScale;
+#if defined(__ANDROID__)
+	constexpr float AndroidMenuUserScale = 0.90f;
+	float androidMenuScale = AndroidMenuUserScale;
+#endif
 
 	verify(inited);
 	uiThreadRunner.init();
@@ -248,6 +252,11 @@ void gui_updateStyle()
    	// Limit scaling on small low-res screens
     if (settings.display.width <= 640 || settings.display.height <= 480)
     	settings.display.uiScale = std::min(1.2f, settings.display.uiScale);
+#if defined(__ANDROID__)
+	// The hideable menu stays at the physical size produced by Android's 90%
+	// UI setting. User UI scaling continues to apply everywhere else.
+	androidMenuScale = settings.display.uiScale * AndroidMenuUserScale;
+#endif
 #endif
     settings.display.uiScale *= config::UIScaling / 100.f;
 	if (settings.display.uiScale == uiScale && ImGui::GetIO().Fonts->IsBuilt())
@@ -266,6 +275,9 @@ void gui_updateStyle()
 	ImGui::GetStyle().ItemInnerSpacing = ImVec2(4, 6);	// from 4,4
 #if defined(__ANDROID__) || defined(TARGET_IPHONE) || defined(__SWITCH__)
 	ImGui::GetStyle().TouchExtraPadding = ImVec2(1, 1);	// from 0,0
+#endif
+#if defined(__ANDROID__)
+	GuiMenu::setAndroidMenuStyle(ImGui::GetStyle(), androidMenuScale);
 #endif
 	if (settings.display.uiScale != 1.f)
 		ImGui::GetStyle().ScaleAllSizes(settings.display.uiScale);
@@ -1959,8 +1971,13 @@ static bool gameImageButton(ImguiTexture& texture, const std::string& tooltip, I
 		const std::string& gameName, float fallbackTitleSize = 0.0f)
 {
 	(void)tooltip;
+	// Library artwork keeps a two-pixel highlight border regardless of the
+	// general UI scale. ImageButton otherwise inherits scaled FramePadding,
+	// which makes the artwork shrink inside an unchanged library card.
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, 2.0f));
 	bool pressed = texture.button("##imagebutton", size, gameName, ImVec4(0, 0, 0, 0), ImVec4(1, 1, 1, 1),
 			fallbackTitleSize);
+	ImGui::PopStyleVar();
 
     return pressed;
 }
