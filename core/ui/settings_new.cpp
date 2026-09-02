@@ -159,6 +159,24 @@ static float SettingsAndroidBaseScale()
 {
 	return SettingsAndroidScaleStateCache().baseScale;
 }
+
+static float SettingsAndroidVisualUserScale(float userScale)
+{
+	constexpr float minimumUserScale = 0.50f;
+	constexpr float defaultUserScale = 0.65f;
+	constexpr float maximumUserScale = 2.00f;
+	constexpr float maximumVisualScale = 1.25f;
+
+	userScale = std::clamp(userScale, minimumUserScale, maximumUserScale);
+	if (userScale <= defaultUserScale)
+		return userScale;
+
+	// Android already converts physical display density into pixels. Preserve the
+	// useful lower range, but taper larger user values so dense phone displays do
+	// not multiply the Settings UI into an unusable layout.
+	const float progress = (userScale - defaultUserScale) / (maximumUserScale - defaultUserScale);
+	return defaultUserScale + progress * (maximumVisualScale - defaultUserScale);
+}
 #endif
 
 static float SettingsTextPreviewScale()
@@ -166,10 +184,10 @@ static float SettingsTextPreviewScale()
 #if defined(__ANDROID__)
 	const float userScale = std::max(0.01f, static_cast<float>(config::UIScaling) / 100.0f);
 	const float appliedUserScale = std::max(0.01f, SettingsAndroidScaleStateCache().appliedUserScale);
-	// Font atlas rebuilds only happen on Apply. This preview scale lets Android
-	// Settings text grow while dragging without also widening the nav rail or
-	// making the fixed footer taller.
-	return std::clamp(userScale / appliedUserScale, 0.5f, 2.0f);
+	// The font atlas contains the globally applied user scale. Compensate for it
+	// here so Settings text and geometry share the same bounded Android scale,
+	// both while previewing and after Apply rebuilds the atlas.
+	return SettingsAndroidVisualUserScale(userScale) / appliedUserScale;
 #else
 	return 1.0f;
 #endif
@@ -185,12 +203,7 @@ static float SettingsLayoutScaled(float px)
 {
 #if defined(__ANDROID__)
 	const float userScale = std::max(0.01f, static_cast<float>(config::UIScaling) / 100.0f);
-	const float compressedUserScale = 1.0f + (userScale - 1.0f) * 0.20f;
-	// Keep the Settings layout responsive while dragging the UI Scaling slider,
-	// but cache the applied base scale. The slider changes config::UIScaling
-	// before mainui_reinit(), so recalculating the base from every pending value
-	// makes lower percentages grow the panels instead of shrinking them.
-	return px * SettingsAndroidBaseScale() * compressedUserScale;
+	return px * SettingsAndroidBaseScale() * SettingsAndroidVisualUserScale(userScale);
 #else
 	return uiScaled(px);
 #endif
@@ -199,9 +212,7 @@ static float SettingsLayoutScaled(float px)
 static float SettingsFixedLayoutScaled(float px)
 {
 #if defined(__ANDROID__)
-	// Android Settings lets text scale up for readability, but fixed frame pieces
-	// like the left rail and bottom details panel must not grow into the content.
-	return px * SettingsAndroidBaseScale();
+	return SettingsLayoutScaled(px);
 #else
 	return uiScaled(px);
 #endif
@@ -219,7 +230,7 @@ static float SettingsFixedFooterScaled(float px)
 static float SettingsFixedNavigationScaled(float px)
 {
 #if defined(__ANDROID__)
-	return SettingsFixedLayoutScaled(px) * 0.90f;
+	return SettingsFixedLayoutScaled(px);
 #else
 	return uiScaled(px);
 #endif
@@ -238,9 +249,19 @@ static bool UseCompactSettingsLayout()
 
 static float SettingsFooterHeight()
 {
+#if defined(__ANDROID__)
+	const float displayHeight = ImGui::GetIO().DisplaySize.y;
+	const float maximumHeight = displayHeight * 0.24f;
+	if (!UseCompactSettingsLayout())
+		return std::min(SettingsFixedFooterScaled(kSettingsFooterHeightPx), maximumHeight);
+
+	const float minimumHeight = displayHeight * 0.14f;
+	return std::clamp(SettingsFixedFooterScaled(112.0f), minimumHeight, maximumHeight);
+#else
 	if (!UseCompactSettingsLayout())
 		return SettingsFixedFooterScaled(kSettingsFooterHeightPx);
 	return std::clamp(ImGui::GetIO().DisplaySize.y * 0.20f, SettingsFixedFooterScaled(104.0f), SettingsFixedFooterScaled(136.0f));
+#endif
 }
 
 static float SettingsFooterGap()
@@ -577,7 +598,7 @@ static void RenderSettingsFooterBar()
 	const std::string displayTitle = titleLine.empty()
 		? std::string()
 		: std::string(T("Setting Details: ")) + titleLine;
-	const float titleSpacing = compactLayout ? uiScaled(3.0f) : uiScaled(5.0f);
+	const float titleSpacing = compactLayout ? SettingsLayoutScaled(3.0f) : SettingsLayoutScaled(5.0f);
 	const float availableHeight = std::max(0.0f, clipMax.y - clipMin.y);
 	float finalTitleSize = titleFontSize;
 	float finalBodySize = bodyFontSize;
@@ -1090,7 +1111,7 @@ static void gamepadSettingsPopup(const std::shared_ptr<GamepadDevice>& gamepad)
 		{
 			header(T("Rumble"));
 			int power = gamepad->get_rumble_power();
-			ImGui::SetNextItemWidth(uiScaled(300));
+			ImGui::SetNextItemWidth(SettingsLayoutScaled(300));
 			if (ImGui::SliderInt(T("Power"), &power, 0, 100, "%d%%"))
 				gamepad->set_rumble_power(power);
 			ImGui::SameLine();
@@ -1100,13 +1121,13 @@ static void gamepadSettingsPopup(const std::shared_ptr<GamepadDevice>& gamepad)
 		{
 			header(T("Thumbsticks"));
 			int deadzone = std::round(gamepad->get_dead_zone() * 100.f);
-			ImGui::SetNextItemWidth(uiScaled(300));
+			ImGui::SetNextItemWidth(SettingsLayoutScaled(300));
 			if (ImGui::SliderInt(T("Dead zone"), &deadzone, 0, 100, "%d%%"))
 				gamepad->set_dead_zone(deadzone / 100.f);
 			ImGui::SameLine();
 			ShowFooterHelpMarker(T("Minimum deflection to register as input"));
 			int saturation = std::round(gamepad->get_saturation() * 100.f);
-			ImGui::SetNextItemWidth(uiScaled(300));
+			ImGui::SetNextItemWidth(SettingsLayoutScaled(300));
 			if (ImGui::SliderInt(T("Saturation"), &saturation, 50, 200, "%d%%"))
 				gamepad->set_saturation(saturation / 100.f);
 			ImGui::SameLine();
@@ -1610,7 +1631,7 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 	{
 		ImGui::SameLine();
 		ImguiStyleVar framePadding(ImGuiStyleVar_FramePadding,
-			ImVec2(ImGui::GetStyle().FramePadding.x, (uiScaled(30) - ImGui::GetFontSize()) / 2));
+			ImVec2(ImGui::GetStyle().FramePadding.x, (SettingsLayoutScaled(30) - ImGui::GetFontSize()) / 2));
 		portWidth = ImGui::CalcTextSize("AA").x + ImGui::GetStyle().ItemSpacing.x * 2.0f + ImGui::GetFontSize();
 		ImGui::SetNextItemWidth(portWidth);
 		if (ImGui::BeginCombo(T("Port"), kMaplePorts[g_gamepad_port_for_mapping + 1]))
@@ -1638,7 +1659,7 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 	}
 
 	ImGui::SameLine(0, ImGui::GetContentRegionAvail().x - comboWidth - gameConfigWidth
-		- ImGui::GetStyle().ItemSpacing.x - uiScaled(100) * 2 - portWidth);
+		- ImGui::GetStyle().ItemSpacing.x - SettingsLayoutScaled(100) * 2 - portWidth);
 	ImGui::AlignTextToFramePadding();
 
 	if (!settings.content.gameId.empty())
@@ -1684,7 +1705,7 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 			}
 			ImGui::NewLine();
 			{
-				ImguiStyleVar itemSpacing(ImGuiStyleVar_ItemSpacing, ImVec2(uiScaled(20), ImGui::GetStyle().ItemSpacing.y));
+				ImguiStyleVar itemSpacing(ImGuiStyleVar_ItemSpacing, ImVec2(SettingsLayoutScaled(20), ImGui::GetStyle().ItemSpacing.y));
 				ImguiStyleVar framePadding(ImGuiStyleVar_FramePadding, ScaledVec2(10, 10));
 				if (ImGui::Button(T("Yes")))
 				{
@@ -1707,7 +1728,7 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 
 	ImGui::SetNextItemWidth(comboWidth);
 	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
-		ImVec2(ImGui::GetStyle().FramePadding.x, (uiScaled(30) - ImGui::GetFontSize()) / 2));
+		ImVec2(ImGui::GetStyle().FramePadding.x, (SettingsLayoutScaled(30) - ImGui::GetFontSize()) / 2));
 	ImGui::Combo("##arcadeMode", &item_current_map_idx, items, IM_ARRAYSIZE(items));
 	ImGui::PopStyleVar();
 	if (last_item_current_map_idx != 2 && item_current_map_idx != last_item_current_map_idx)
@@ -2100,12 +2121,25 @@ static float SettingsNavigationWidth(const char* exitLabel)
 {
 	const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 #if defined(__ANDROID__)
-	// On phones the navigation rail must remain a stable frame. Larger UI text is
-	// clipped inside the existing rail instead of making the content column shrink.
-	(void)exitLabel;
-	const float minWidth = SettingsFixedNavigationScaled(136.0f);
-	const float maxWidth = std::clamp(displaySize.x * 0.20f, minWidth, SettingsFixedNavigationScaled(310.0f));
-	const float desiredWidth = UseCompactSettingsLayout() ? displaySize.x * 0.16f : SettingsFixedNavigationScaled(225.0f);
+	const bool compactLayout = UseCompactSettingsLayout();
+	const float maxWidth = displaySize.x * (compactLayout ? 0.24f : 0.20f);
+	const float minWidth = std::min(maxWidth,
+		std::max(displaySize.x * 0.10f, SettingsFixedNavigationScaled(72.0f)));
+	const float layoutWidth = displaySize.x * (compactLayout ? 0.14f : 0.16f);
+
+	ImFont* navFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+	ImFont* iconFont = settingsIconFont != nullptr ? settingsIconFont : navFont;
+	const float fontSize = SettingsPreviewFontSize(navFont);
+	float labelWidth = navFont->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, exitLabel).x
+			+ iconFont->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, ICON_FA_ARROW_LEFT).x
+			+ SettingsLayoutScaled(8.0f);
+	for (int i = 0; i < (int)SettingsTab::Count; i++)
+	{
+		const char* tabName = getTabName((SettingsTab)i);
+		labelWidth = std::max(labelWidth, navFont->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, tabName).x);
+	}
+
+	const float desiredWidth = std::max(layoutWidth, labelWidth + SettingsLayoutScaled(24.0f));
 	return std::clamp(desiredWidth, minWidth, maxWidth);
 #else
 	const float minWidth = 136.0f;
@@ -2323,7 +2357,7 @@ static bool RenderCollapsingHeader(
 		const float fontSize = ImGui::GetFontSize();
 		const float iconWidth = iconFont->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, labelIcon).x;
 		const float spaceWidth = std::max(1.0f, titleFont->CalcTextSizeA(fontSize, FLT_MAX, -1.0f, " ").x);
-		const int spacerCount = std::max(2, static_cast<int>(std::ceil((iconWidth + uiScaled(2.0f)) / spaceWidth)));
+		const int spacerCount = std::max(2, static_cast<int>(std::ceil((iconWidth + SettingsLayoutScaled(2.0f)) / spaceWidth)));
 		labelStr.append(spacerCount, ' ');
 	}
 
@@ -2335,7 +2369,7 @@ static bool RenderCollapsingHeader(
 		labelStr += id;
 	}
 
-	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(uiScaled(8.0f), uiScaled(10.0f)));
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(SettingsLayoutScaled(8.0f), SettingsLayoutScaled(10.0f)));
 	bool open = ImGui::CollapsingHeader(labelStr.c_str(), flags);
 	if (labelIcon && *labelIcon != '\0')
 	{
@@ -2636,8 +2670,8 @@ static void renderSettingsContentTab(SettingsTab tab)
 			const float extraOffsetPx = refreshBtnWidthPx + 8.0f;
 			RenderGeneralRightValue(T("Select Path"), 280.0f, extraOffsetPx, true);
 
-			const float refreshButtonWidth = uiScaled(refreshBtnWidthPx);
-			const float refreshButtonHeight = uiScaled(refreshBtnHeightPx);
+			const float refreshButtonWidth = SettingsLayoutScaled(refreshBtnWidthPx);
+			const float refreshButtonHeight = SettingsLayoutScaled(refreshBtnHeightPx);
 			const float refreshVerticalOffset = (TwoLineSettingContentHeight() - refreshButtonHeight) * 0.5f;
 			ImGui::SameLine(RightColumnX(refreshButtonWidth));
 			ImVec2 refreshButtonPos = ImGui::GetCursorPos();
@@ -2974,9 +3008,9 @@ static void renderSettingsContentTab(SettingsTab tab)
 				const float extraOffsetPx = buttonWidthPx * 2.0f + buttonSpacingPx;
 				RenderGeneralRightValue(config::BoxartPath.get(), 280.0f, extraOffsetPx);
 
-				const float buttonWidth = uiScaled(buttonWidthPx);
-				const float buttonHeight = uiScaled(buttonHeightPx);
-				const float buttonSpacing = uiScaled(buttonSpacingPx);
+				const float buttonWidth = SettingsLayoutScaled(buttonWidthPx);
+				const float buttonHeight = SettingsLayoutScaled(buttonHeightPx);
+				const float buttonSpacing = SettingsLayoutScaled(buttonSpacingPx);
 				const float verticalOffset = (TwoLineSettingContentHeight() - buttonHeight) * 0.5f;
 
 				ImGui::SameLine(RightColumnX(buttonWidth * 2.0f + buttonSpacing));
@@ -4367,8 +4401,8 @@ void renderVideoTab()
 		}
 
 		// 2x height toggle rows for Performance settings
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(uiScaled(8.0f), uiScaled(12.0f)));
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, uiScaled(8.0f)));
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(SettingsLayoutScaled(8.0f), SettingsLayoutScaled(12.0f)));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, SettingsLayoutScaled(8.0f)));
 
 		// Shadows toggle
 		RenderGeneralToggleSettingRow(
@@ -4407,8 +4441,8 @@ void renderVideoTab()
 		ImGui::Spacing();
 
 		// 2x height toggle rows for Advanced settings
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(uiScaled(8.0f), uiScaled(12.0f)));
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, uiScaled(8.0f)));
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(SettingsLayoutScaled(8.0f), SettingsLayoutScaled(12.0f)));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, SettingsLayoutScaled(8.0f)));
 
 		// Delay Frame Swapping
 		RenderGeneralToggleSettingRow(
@@ -5501,14 +5535,14 @@ static void renderVmuCardManager()
 		return labels;
 	};
 
-	const float listHeight = uiScaled(220.0f);
+	const float listHeight = SettingsLayoutScaled(220.0f);
 	ImGui::BeginChild("VmuCardManager", ImVec2(0.0f, listHeight), true,
 		ImGuiWindowFlags_DragScrolling);
 	if (ImGui::BeginTable("VmuCardTable", 2,
 			ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_NoSavedSettings))
 	{
 		ImGui::TableSetupColumn(T("Name"), ImGuiTableColumnFlags_WidthStretch);
-		ImGui::TableSetupColumn(T("Slot"), ImGuiTableColumnFlags_WidthFixed, uiScaled(90.0f));
+		ImGui::TableSetupColumn(T("Slot"), ImGuiTableColumnFlags_WidthFixed, SettingsLayoutScaled(90.0f));
 		ImGui::TableHeadersRow();
 
 		for (int i = 0; i < static_cast<int>(cachedVmuFiles.size()); i++)
@@ -5758,10 +5792,10 @@ void renderControlsTab()
 			ImGui::TableSetupColumn(T("Port"), ImGuiTableColumnFlags_WidthFixed);
 
 			const float portComboWidth = ImGui::CalcTextSize("None").x + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetFrameHeight();
-			const ImVec2 deviceButtonSize(0.0f, uiScaled(24.0f));
+			const ImVec2 deviceButtonSize(0.0f, SettingsLayoutScaled(24.0f));
 			const ImVec4 gray(0.5f, 0.5f, 0.5f, 1.f);
 
-			ImGui::TableNextRow(ImGuiTableRowFlags_None, uiScaled(24.0f));
+			ImGui::TableNextRow(ImGuiTableRowFlags_None, SettingsLayoutScaled(24.0f));
 			ImGui::TableSetColumnIndex(0);
 			ImGui::TextColored(gray, "%s", T("System"));
 
@@ -5788,7 +5822,7 @@ void renderControlsTab()
 				ImguiID gamepadRowId(gamepad_row_id);
 				(void)gamepadRowId;
 
-				ImGui::TableNextRow(ImGuiTableRowFlags_None, uiScaled(24.0f));
+				ImGui::TableNextRow(ImGuiTableRowFlags_None, SettingsLayoutScaled(24.0f));
 				ImGui::TableSetColumnIndex(0);
 				ImGui::Text("%s", gamepad->api_name().c_str());
 
@@ -5843,7 +5877,7 @@ void renderControlsTab()
 				// Settings button for rumble/deadzone/saturation
 				if (gamepad->is_rumble_enabled() || gamepad->has_analog_stick() || gamepad->is_virtual_gamepad())
 				{
-					ImGui::SameLine(0, uiScaled(16.0f));
+					ImGui::SameLine(0, SettingsLayoutScaled(16.0f));
 					if (ImGui::Button(T("Settings"), deviceButtonSize))
 					{
 						g_currentGamepadForSettings = gamepad;
@@ -5995,7 +6029,7 @@ void renderControlsTab()
 		if (ImGui::BeginTable("dreamcastDevices", 4,
 				ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings
 				| ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_BordersInnerV,
-				ImVec2(0, 0), uiScaled(8)))
+				ImVec2(0, 0), SettingsLayoutScaled(8)))
 		{
 			const float comboWidthPadding = ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetFrameHeight();
 			float mainComboWidth = comboWidthPadding;
@@ -6073,7 +6107,7 @@ void renderControlsTab()
 				else
 					selected_name = maple_device_name(config::MapleMainDevices[bus]);
 
-				ImGui::TableNextRow(ImGuiTableRowFlags_None, uiScaled(24.0f));
+				ImGui::TableNextRow(ImGuiTableRowFlags_None, SettingsLayoutScaled(24.0f));
 				ImGui::TableSetColumnIndex(0);
 				ImGui::Text(T("Port %c"), bus + 'A');
 
@@ -6198,7 +6232,7 @@ void renderControlsTab()
 
 					// Toggle switch (clickable row)
 					float rowHeight = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
-					ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, uiScaled(8.0f));
+					ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, SettingsLayoutScaled(8.0f));
 					bool rowClicked = ImGui::Selectable("##crosshair_row", false,
 						ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap,
 						ImVec2(0, rowHeight));
@@ -6232,15 +6266,15 @@ void renderControlsTab()
 					ImGui::Text("%s", T("Crosshair"));
 
 					// Toggle switch
-					ImGui::SameLine(ImGui::GetContentRegionAvail().x - uiScaled(40));
-					float toggleHeight = settings.display.uiScale * 20;
+					ImGui::SameLine(ImGui::GetContentRegionAvail().x - SettingsLayoutScaled(40));
+					float toggleHeight = SettingsLayoutScaled(20.0f);
 					float verticalOffset = (rowHeight - toggleHeight) * 0.5f;
 					ImVec2 cursorPos = ImGui::GetCursorPos();
 					ImGui::SetCursorPos(ImVec2(cursorPos.x, cursorPos.y + verticalOffset));
 					RenderToggleSwitchVisual(enabled);
 
 					// Color picker on same line
-					ImGui::SameLine(0, uiScaled(16));
+					ImGui::SameLine(0, SettingsLayoutScaled(16));
 					bool colorChanged = ImGui::ColorEdit4("##crosshair_color", xhairColor,
 						ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf
 						| ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoLabel);
@@ -7415,7 +7449,7 @@ void renderAdvancedTab()
 				ImGui::PushID(shortName.c_str());
 				float rowHeight = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
 
-				ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, uiScaled(8.0f));
+				ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, SettingsLayoutScaled(8.0f));
 				bool rowClicked = ImGui::Selectable(("##" + shortName + "_row").c_str(), false,
 					ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap,
 					ImVec2(0, rowHeight));
@@ -7904,9 +7938,16 @@ void renderSettingsNew()
 	if (g_settingsFooterText.empty())
 		ResetSettingsFooter();
 
+#if defined(__ANDROID__)
+	// Keep the Settings page internally consistent with its bounded scale without
+	// changing the global style used by the library, menus, or virtual controls.
+	const ImGuiStyle settingsStyleBackup = ImGui::GetStyle();
+	ImGui::GetStyle().ScaleAllSizes(SettingsTextPreviewScale());
+#endif
+
 	// Set up full-screen window
 	fullScreenWindow(false);
-	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
 
 	// Main settings window
 	const std::string settingsWindowTitle = std::string(T("Settings")) + "###Settings";
@@ -7952,6 +7993,11 @@ void renderSettingsNew()
 			ImGui::PopFont();
 	}
 	ImGui::End();
+	ImGui::PopStyleVar();
+
+#if defined(__ANDROID__)
+	ImGui::GetStyle() = settingsStyleBackup;
+#endif
 }
 
 } // namespace SettingsNew

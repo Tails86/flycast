@@ -64,6 +64,27 @@ struct MenuTouchState
 static std::mutex menuTouchStateMutex;
 static MenuTouchState menuTouchState;
 
+struct AndroidMenuScaleState
+{
+	float activeUiScale = -1.0f;
+	float appliedUserScale = 1.0f;
+};
+
+static float androidMenuScaleCompensation()
+{
+	static AndroidMenuScaleState state;
+	if (state.activeUiScale != settings.display.uiScale)
+	{
+		state.activeUiScale = settings.display.uiScale;
+		state.appliedUserScale = static_cast<float>(config::UIScaling) / 100.0f;
+	}
+
+	// The menu remains at the Android 100% size even when the user changes the
+	// general UI scale. This keeps its touch targets and nested dropdowns usable
+	// without changing the library or gameplay UI.
+	return 1.0f / (state.appliedUserScale > 0.01f ? state.appliedUserScale : 1.0f);
+}
+
 static void publishMenuTouchState(bool captureAllTouches, bool hasTouchArea,
 		const ImVec2& touchAreaMin = ImVec2(), const ImVec2& touchAreaMax = ImVec2())
 {
@@ -99,8 +120,14 @@ static bool shouldShowMenuBar()
 
 	ImGuiIO& io = ImGui::GetIO();
 	ImFont* menuFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+#if defined(__ANDROID__)
+	const float menuScale = androidMenuScaleCompensation();
+	ImGui::PushFont(menuFont, menuFont->LegacySize * menuScale);
+	const float revealHeight = (ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.y * 2.0f * menuScale) * 1.75f;
+#else
 	ImGui::PushFont(menuFont);
 	const float revealHeight = ImGui::GetFrameHeight() * 1.75f;
+#endif
 	ImGui::PopFont();
 	const bool hasPointer = io.MousePos.x != -FLT_MAX && io.MousePos.y != -FLT_MAX;
 	const bool pointerAtTop = hasPointer && io.MousePos.y <= revealHeight;
@@ -294,8 +321,14 @@ void renderMainMenuBar()
 	if (!menuBarVisibleThisFrame)
 	{
 		ImFont* menuFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+#if defined(__ANDROID__)
+		const float menuScale = androidMenuScaleCompensation();
+		ImGui::PushFont(menuFont, menuFont->LegacySize * menuScale);
+		const float revealHeight = (ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.y * 2.0f * menuScale) * 1.75f;
+#else
 		ImGui::PushFont(menuFont);
 		const float revealHeight = ImGui::GetFrameHeight() * 1.75f;
+#endif
 		ImGui::PopFont();
 		const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 		publishMenuTouchState(false, menuVisible && isFullscreenMenuMode(),
@@ -310,7 +343,14 @@ void renderMainMenuBar()
 	// - Cross-platform native appearance
 	// Theme colors are already set by applyCurrentTheme().
 	ImFont* menuFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+#if defined(__ANDROID__)
+	const ImGuiStyle menuStyleBackup = ImGui::GetStyle();
+	const float menuScale = androidMenuScaleCompensation();
+	ImGui::GetStyle().ScaleAllSizes(menuScale);
+	ImGui::PushFont(menuFont, menuFont->LegacySize * menuScale);
+#else
 	ImGui::PushFont(menuFont);
+#endif
 	if (ImGui::BeginMainMenuBar())
 	{
 		menuBarHeightThisFrame = ImGui::GetWindowHeight();
@@ -331,6 +371,9 @@ void renderMainMenuBar()
 	else
 		publishMenuTouchState(false, false);
 	ImGui::PopFont();
+#if defined(__ANDROID__)
+	ImGui::GetStyle() = menuStyleBackup;
+#endif
 }
 
 // Render File menu
