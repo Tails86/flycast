@@ -405,7 +405,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
     private void requestUsbPermission(int vendorId, int productId) {
         HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
 
-        for (UsbDevice usbDevice : deviceList.values()) {
+        for (final UsbDevice usbDevice : deviceList.values()) {
             if (usbDevice.getVendorId() == vendorId && usbDevice.getProductId() == productId) {
                 // This is the device's unique kernel file path
                 final String devName = usbDevice.getDeviceName();
@@ -415,7 +415,6 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
                         pendingPermissionRequests.add(devName);
                         ensureReceiverRegistered();
 
-                        final UsbDevice finalUsbDevice = usbDevice;
                         new Handler(Looper.getMainLooper()).post(() -> {
                             int flags = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
                                 ? PendingIntent.FLAG_MUTABLE
@@ -431,7 +430,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
                                 flags
                             );
 
-                            usbManager.requestPermission(finalUsbDevice, permissionIntent);
+                            usbManager.requestPermission(usbDevice, permissionIntent);
                         });
                     }
                 }

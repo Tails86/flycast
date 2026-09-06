@@ -63,13 +63,21 @@ public:
 	//! Contains all pertinent joystick data from Android
 	struct AndroidJoystickData
 	{
+		//! The android input device ID
 		int id = -1;
+		//! The device's vendor ID
 		int vid = -1;
+		//! The device's product ID
 		int pid = -1;
+		//! The device's name as reported by Android
 		std::string joyname = {};
+		//! The device's unique identifier as reported by Android
 		std::string uniqueId = {};
+		//! The device's full axes
 		std::vector<int> fullAxes = {};
+		//! The device's half axes
 		std::vector<int> halfAxes = {};
+		//! True iff the device has rumble capability
 		bool hasRumble = false;
 	};
 

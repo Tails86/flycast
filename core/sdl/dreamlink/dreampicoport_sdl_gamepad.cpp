@@ -194,10 +194,6 @@ DreamPicoPortSDLGamepad::DreamPicoPortSDLGamepad(
 		set_maple_port(bus);
 }
 
-DreamPicoPortSDLGamepad::~DreamPicoPortSDLGamepad()
-{
-}
-
 bool DreamPicoPortSDLGamepad::identify(int deviceIndex)
 {
 	char guid_str[33] {};

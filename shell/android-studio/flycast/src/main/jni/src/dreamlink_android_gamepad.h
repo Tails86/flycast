@@ -43,7 +43,7 @@ protected:
 
 public:
 	//! Destructor
-	virtual ~DreamLinkAndroidGamepad();
+	virtual ~DreamLinkAndroidGamepad() = default;
 
 	//! Overridden from GamepadDevice
 	//! @return "Connection Failed", "Connected", or "Disconnected"

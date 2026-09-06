@@ -380,29 +380,29 @@ private:
             newDev = dpp_api::DppDevice::find(dppFilter);
         }
 
-        if (!newDev || newDev->getVersion() < std::array<std::uint8_t, 3>{1,2,1}) {
-            if (newDev) {
-                upgrade_required = true;
-                std::array<std::uint8_t, 3> ver = newDev->getVersion();
-                WARN_LOG(
-                    INPUT,
-                    "DreamPicoPort[%s] API connect failed: device with serial \"%s\" uses version %i.%i.%i\n"
-                    "Update DreamPicoPort firmware to version 1.2.1 or later to enable peripheral connection",
-                    getLocDesc().c_str(),
-                    hw_info.serial_number.c_str(),
-                    static_cast<int>(ver[0]),
-                    static_cast<int>(ver[1]),
-                    static_cast<int>(ver[2])
-                );
-            }
-            else {
-                WARN_LOG(
-                    INPUT,
-                    "DreamPicoPort[%s] API connect failed: find failed for serial %s",
-                    getLocDesc().c_str(),
-                    hw_info.serial_number.c_str()
-                );
-            }
+        if (!newDev) {
+            WARN_LOG(
+                INPUT,
+                "DreamPicoPort[%s] API connect failed: find failed for serial %s",
+                getLocDesc().c_str(),
+                hw_info.serial_number.c_str()
+            );
+
+            return nullptr;
+        }
+        else if (newDev->getVersion() < std::array<std::uint8_t, 3>{1,2,1}) {
+            upgrade_required = true;
+            std::array<std::uint8_t, 3> ver = newDev->getVersion();
+            WARN_LOG(
+                INPUT,
+                "DreamPicoPort[%s] API connect failed: device with serial \"%s\" uses version %i.%i.%i\n"
+                "Update DreamPicoPort firmware to version 1.2.1 or later to enable peripheral connection",
+                getLocDesc().c_str(),
+                hw_info.serial_number.c_str(),
+                static_cast<int>(ver[0]),
+                static_cast<int>(ver[1]),
+                static_cast<int>(ver[2])
+            );
 
             return nullptr;
         }

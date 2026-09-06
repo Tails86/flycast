@@ -54,15 +54,13 @@ public:
 
 	//! Destructor
 	~AndroidDreamPicoPort()
-	{}
-
-	//! Called just before destruction in order to do cleanup
-	void close(JNIEnv *env)
 	{
+		// Ensure device connection is closed on destruction
 		usb_device_connection.reset();
 	}
 
 	//! Attempt to open a connection to a UsbDevice
+	//! @warning The returnedconnection should not be retained once the USB device is disconnected
 	//! @param[in] env Local Java environment
 	//! @param[in] usbManager A UsbManager object created from the current app context
 	//! @param[in] usbDev A UsbDevice object to open
@@ -119,7 +117,6 @@ public:
 		// Save to lookup for future use
 		lookup[serial] = newConnection;
 
-		// Warning: this connection should not be retained once the USB device is disconnected
 		return newConnection;
 	}
 
@@ -301,19 +298,19 @@ static const int kPreferredHardwareBusErr = -2;
 static int get_preferred_hardware_bus(JNIEnv *env, jobject inputDevice, const jni::Class& inputDeviceClass) {
 	if (inputDevice == nullptr || inputDeviceClass.isNull()) {
 		ERROR_LOG(INPUT, "InputDevice object or class is null");
-		return kPreferredHardwareBusErr;
+		std::abort();
 	}
 
 	jmethodID hasKeysMethodId = env->GetMethodID(inputDeviceClass, "hasKeys", "([I)[Z");
 	if (!hasKeysMethodId) {
 		ERROR_LOG(INPUT, "Failed to locate InputDevice.hasKeys()");
-		return kPreferredHardwareBusErr;
+		std::abort();
 	}
 
 	jni::Class keyEventClass(env->FindClass("android/view/KeyEvent"));
 	if (keyEventClass.isNull()) {
 		ERROR_LOG(INPUT, "Failed to locate KeyEvent class");
-		return kPreferredHardwareBusErr;
+		std::abort();
 	}
 
 	jfieldID keyAFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_PLAY_PAUSE", "I");
@@ -322,7 +319,7 @@ static int get_preferred_hardware_bus(JNIEnv *env, jobject inputDevice, const jn
 	jfieldID keyDFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_STOP", "I");
 	if (!keyAFid || !keyBFid || !keyCFid || !keyDFid) {
 		ERROR_LOG(INPUT, "Failed to locate key event codes");
-		return kPreferredHardwareBusErr;
+		std::abort();
 	}
 
 	const jint keyCodes[4] = {
@@ -350,7 +347,7 @@ static int get_preferred_hardware_bus(JNIEnv *env, jobject inputDevice, const jn
 
 	if (hasKeysArray.isNull() || env->GetArrayLength(hasKeysArray) < 4) {
 		ERROR_LOG(INPUT, "Failed to get data from InputDevice.hasKeys()");
-		return kPreferredHardwareBusErr;
+		std::abort();
 	}
 
 	jboolean hasKeys[4] = { JNI_FALSE, JNI_FALSE, JNI_FALSE, JNI_FALSE };
@@ -654,9 +651,7 @@ const char *DreamPicoPortAndroidGamepad::get_axis_name(u32 code)
 void DreamPicoPortAndroidGamepad::close(JNIEnv *env)
 {
 	DreamLinkAndroidGamepad::close(env);
-	if (dpp) {
-		dpp->close(env);
-	}
+	dpp.reset();
 }
 
 bool DreamPicoPortAndroidGamepad::identify(int vendorId, int productId)

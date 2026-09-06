@@ -44,10 +44,6 @@
 #include <setupapi.h>
 #endif
 
-DreamLinkAndroidGamepad::~DreamLinkAndroidGamepad()
-{
-}
-
 bool DreamLinkAndroidGamepad::isDreamLinkGamepad(int vid, int pid)
 {
 	if (DreamPicoPortAndroidGamepad::identify(vid, pid))

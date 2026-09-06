@@ -80,7 +80,7 @@ public:
 
 public:
 	DreamPicoPortSDLGamepad(int maple_port, int joystick_idx, SDL_Joystick* sdl_joystick);
-	~DreamPicoPortSDLGamepad();
+	~DreamPicoPortSDLGamepad() = default;
 	const char *get_button_name(u32 code) override;
 	static bool identify(int deviceIndex);
 

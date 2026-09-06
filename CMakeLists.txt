@@ -518,7 +518,7 @@ if(NOT LIBRETRO)
 	endif()
 
 	if (NOT NINTENDO_SWITCH AND NOT IOS)
-		# DreamLink enabled for non-mobile Linux, MacOS, and Windows
+		# DreamLink enabled for Linux, MacOS, Windows, and Android
 		target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DREAMLINK_DEVICES=1)
 		set(USE_DREAMLINK_DEVICES ON) # Must be set before adding core/sdl
 
