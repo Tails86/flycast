@@ -58,6 +58,18 @@ android {
             )
             signingConfig = signingConfigs.getByName("release")
         }
+
+        // Release build for local development.
+        create("developerRelease") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            // Causes error "Build type isn't debuggable"
+            // to prevent accidentally debugging a painful-to-debug build.
+            // Enable this locally if you need it.
+            isDebuggable = false
+            isJniDebuggable = false
+            matchingFallbacks += "release"
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
