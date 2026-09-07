@@ -103,6 +103,14 @@ cmake --preset <PRESET>
 cmake --build --preset <PRESET>
 ```
 
+### Development Instructions for Android
+
+- Install [Android Studio](https://developer.android.com/studio/install).
+- Open directory `shell/android-studio` in Android Studio.
+- The Hollycast project should be picked up automatically, with "Android" sidebar on the left, and devices and run configurations in the top right.
+- `debug` build variant is used by default. If you want to build in release mode for better performance, then open **View > Tool Windows > Build Variants**, and select Active Build Variant `developerRelease`.
+   - Note that `release` variant does production code signing. It's only intended for store publishing.
+
 ### Build Instructions for Android
 
 Ensure Android Studio is installed, and then execute the following.
@@ -124,3 +132,17 @@ If the build gets stuck or encounters and error, run the following before trying
 # Remove all artifacts of previous build.
 ./gradlew clean
 ```
+
+### Segmentation fault (SIGSEGV) / Access Violation (AV) handling
+
+When debugging Hollycast, you may notice the debugger frequently breaking on memory access violations when running games. This is normal and expected. This is related to how the emulator's dynamic recompiler works and doesn't reflect any actual memory safety bug.
+
+It's recommended you adjust your debugger or exception settings as needed for the current platform, in order to prevent disruptive breaks during debugging.
+
+For example, with LLDB, pass the following startup command:
+- `process handle -s false -n false -p true SIGSEGV`
+
+For Android, if you hit the breakpoint for `art_sigsegv_fault` in disassembly, delete the breakpoint and resume debugging.
+
+For VS Code C/C++ on Windows, use the following filter string on the "All Exceptions" breakpoint:
+- `!0xC0000005`

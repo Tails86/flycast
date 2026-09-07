@@ -170,6 +170,12 @@ static void parseConfigOption(const std::string& str)
 void parseCommandLine(int argc, const char * const argv[])
 {
 	settings.content.path.clear();
+	if (argc == 0) {
+		return;
+	}
+	if (argv == nullptr) {
+		std::abort();
+	}
 	const char *exe = argv[0];
 	for (int i = 1; i < argc; i++)
 	{
