@@ -84,6 +84,7 @@ public:
 		if (iter != lookup.end()) {
 			std::shared_ptr<UsbDeviceConnection> ptr = iter->second.lock();
 			if (ptr) {
+				// Reuse existing connection from lookup
 				return ptr;
 			}
 			// Weak pointer no longer valid; remove it
@@ -100,7 +101,7 @@ public:
 		jni::Object connection(env->CallObjectMethod(usbManager, openDeviceMethod, usbDev));
 
 		if (connection == nullptr) {
-			// openDevice failed — permission not granted, or device disconnected
+			ERROR_LOG(INPUT, "UsbManager.OpenDevice failed");
 			return nullptr;
 		}
 
@@ -108,6 +109,12 @@ public:
 		jmethodID getFileDescriptorMethod = env->GetMethodID(connectionClass, "getFileDescriptor", "()I");
 
 		jint fd = env->CallIntMethod(connection, getFileDescriptorMethod);
+
+		if (fd < 0)
+		{
+			ERROR_LOG(INPUT, "Invalid file descritor received from UsbDeviceConnection");
+			return nullptr;
+		}
 
 		std::shared_ptr<UsbDeviceConnection> newConnection = std::make_shared<UsbDeviceConnection>();
 		// Promote to global ref so it survives past this call — required since
@@ -122,6 +129,7 @@ public:
 	}
 
 private:
+	//! Holds the connection object for the lifespan of the DreamPicoPort
 	std::shared_ptr<UsbDeviceConnection> usb_device_connection;
 };
 
