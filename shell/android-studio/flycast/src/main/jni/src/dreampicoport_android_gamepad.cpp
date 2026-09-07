@@ -24,6 +24,7 @@
 #include <optional>
 #include <unordered_map>
 #include <mutex>
+#include <cmath>
 
 //! A DreamPicoPort device which also holds a connection object associated with the connection to a DreamPicoPort
 class AndroidDreamPicoPort : public DreamPicoPort
@@ -288,12 +289,12 @@ static int get_nth_interface_id(JNIEnv *env, jobject usbDevice, int n) {
 static const int kPreferredHardwareBusNone = -1;
 static const int kPreferredHardwareBusErr = -2;
 
-//! Version 1.2.5 of DreamPicoPort has media keys which provide hint of what hardware bus this controller is
+//! DreamPicoPort's RX range identifies the hardware bus in version 1.2.5 and later.
 //! @param[in] env The Java Native Interface environment object
 //! @param[in] inputDevice The InputDevice object
 //! @param[in] inputDeviceClass The InputDevice class
-//! @return 0-3 when descriptor-conveyed A/B/C/D key capability can be resolved
-//! @return kPreferredHardwareBusNone if device doesn't contain media keys
+//! @return 0-3 when the descriptor-conveyed RX range can be resolved
+//! @return kPreferredHardwareBusNone if device doesn't contain the RX range
 //! @return kPreferredHardwareBusErr on error
 static int get_preferred_hardware_bus(JNIEnv *env, jobject inputDevice, const jni::Class& inputDeviceClass) {
 	if (inputDevice == nullptr || inputDeviceClass.isNull()) {
@@ -301,70 +302,65 @@ static int get_preferred_hardware_bus(JNIEnv *env, jobject inputDevice, const jn
 		std::abort();
 	}
 
-	jmethodID hasKeysMethodId = env->GetMethodID(inputDeviceClass, "hasKeys", "([I)[Z");
-	if (!hasKeysMethodId) {
-		ERROR_LOG(INPUT, "Failed to locate InputDevice.hasKeys()");
+	jmethodID getMotionRangeMethodId = env->GetMethodID(
+		inputDeviceClass,
+		"getMotionRange",
+		"(I)Landroid/view/InputDevice$MotionRange;"
+	);
+	if (!getMotionRangeMethodId) {
+		ERROR_LOG(INPUT, "Failed to locate InputDevice.getMotionRange()");
 		std::abort();
 	}
 
-	jni::Class keyEventClass(env->FindClass("android/view/KeyEvent"));
-	if (keyEventClass.isNull()) {
-		ERROR_LOG(INPUT, "Failed to locate KeyEvent class");
-		std::abort();
-	}
-
-	jfieldID keyAFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_PLAY_PAUSE", "I");
-	jfieldID keyBFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_NEXT", "I");
-	jfieldID keyCFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_PREVIOUS", "I");
-	jfieldID keyDFid = env->GetStaticFieldID(keyEventClass, "KEYCODE_MEDIA_STOP", "I");
-	if (!keyAFid || !keyBFid || !keyCFid || !keyDFid) {
-		ERROR_LOG(INPUT, "Failed to locate key event codes");
-		std::abort();
-	}
-
-	const jint keyCodes[4] = {
-		env->GetStaticIntField(keyEventClass, keyAFid),
-		env->GetStaticIntField(keyEventClass, keyBFid),
-		env->GetStaticIntField(keyEventClass, keyCFid),
-		env->GetStaticIntField(keyEventClass, keyDFid)
-	};
-
-	jni::IntArray keyCodeArray(env->NewIntArray(4));
-	if (keyCodeArray.isNull()) {
-		ERROR_LOG(INPUT, "Failed to create int array");
-		return kPreferredHardwareBusErr;
-	}
-    jobject keyCodeArrayObj = keyCodeArray;
-
-	env->SetIntArrayRegion(keyCodeArray, 0, 4, keyCodes);
-	jni::BooleanArray hasKeysArray(env->CallObjectMethod(inputDevice, hasKeysMethodId, keyCodeArrayObj));
+	jni::Object motionRange(env->CallObjectMethod(
+		inputDevice,
+		getMotionRangeMethodId,
+		AMOTION_EVENT_AXIS_RX
+	));
 
 	if (env->ExceptionCheck()) {
-		ERROR_LOG(INPUT, "Exception occurred when calling InputDevice.hasKeys()");
+		ERROR_LOG(INPUT, "Exception occurred when calling InputDevice.getMotionRange()");
 		env->ExceptionClear();
 		return kPreferredHardwareBusErr;
 	}
 
-	if (hasKeysArray.isNull() || env->GetArrayLength(hasKeysArray) < 4) {
-		ERROR_LOG(INPUT, "Failed to get data from InputDevice.hasKeys()");
+	if (motionRange.isNull()) {
+		return kPreferredHardwareBusNone;
+	}
+
+	jni::Class motionRangeClass(env->GetObjectClass(motionRange));
+	jmethodID getResolutionMethodId = env->GetMethodID(motionRangeClass, "getResolution", "()F");
+	if (!getResolutionMethodId) {
+		ERROR_LOG(INPUT, "Failed to locate InputDevice.MotionRange.getResolution()");
 		std::abort();
 	}
 
-	jboolean hasKeys[4] = { JNI_FALSE, JNI_FALSE, JNI_FALSE, JNI_FALSE };
-	env->GetBooleanArrayRegion(hasKeysArray, 0, 4, hasKeys);
+	const jfloat dialResolution = env->CallFloatMethod(motionRange, getResolutionMethodId);
+	if (env->ExceptionCheck()) {
+		ERROR_LOG(INPUT, "Exception occurred when calling InputDevice.MotionRange.getResolution()");
+		env->ExceptionClear();
+		return kPreferredHardwareBusErr;
+	}
 
-	int foundIndex = kPreferredHardwareBusNone;
-	for (int i = 0; i < 4; i++) {
-		if (hasKeys[i] == JNI_TRUE) {
-			if (foundIndex >= 0) {
-				ERROR_LOG(INPUT, "DreamPicoPort has multiple media keys");
-				return kPreferredHardwareBusErr;
-			}
-			foundIndex = i;
+	if (dialResolution == 0.0f) {
+		return kPreferredHardwareBusNone;
+	}
+
+	static constexpr jfloat dialResolutions[] = {
+		114.603928f,
+		57.301964f,
+		38.203922f,
+		28.650982f
+	};
+	static constexpr jfloat dialResolutionTolerance = 0.01f;
+	for (int playerIdx = 0; playerIdx < 4; playerIdx++) {
+		if (std::fabs(dialResolution - dialResolutions[playerIdx]) < dialResolutionTolerance) {
+			return playerIdx;
 		}
 	}
 
-	return foundIndex;
+	ERROR_LOG(INPUT, "DreamPicoPort dial has unexpected resolution %f", dialResolution);
+	return kPreferredHardwareBusErr;
 }
 
 //! Only to be called during instantiation to determine hardware information
@@ -402,7 +398,7 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 	if (usbDev.isNull())
 	{
 		// Probably don't have permission yet
-		ERROR_LOG(INPUT, "Failed to retrieve DreamPicoPort UsbDevice for %s", hwInfo.base_info.serial_number.c_str());
+		NOTICE_LOG(INPUT, "Failed to retrieve DreamPicoPort UsbDevice for %s", hwInfo.base_info.serial_number.c_str());
 		return std::nullopt;
 	}
 
@@ -432,7 +428,7 @@ static std::optional<AndroidDreamPicoPort::ExtendedHardwareInfo> parse_hw_info(
 
 	if (preferredHardwareBus >= 0)
 	{
-		// Input descriptor has identified A/B/C/D directly from key capability bits.
+		// Input descriptor has identified A/B/C/D from the RX range.
 		hwInfo.base_info.hardware_bus = preferredHardwareBus;
 
 		// Determine if there are any other devices with this serial
