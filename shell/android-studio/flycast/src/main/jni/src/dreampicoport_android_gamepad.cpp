@@ -235,9 +235,10 @@ static jni::Object find_usb_device_by_vid_pid_serial(
 		if (matches) {
 			jni::String deviceSerial(env->CallObjectMethod(device, getSerialNumberMethod));
 
-			if (env->ExceptionCheck()) {
-				// SecurityException: permission not granted for this device
+			jni::Throwable throwable(env->ExceptionOccurred());
+			if (!throwable.isNull()) {
 				env->ExceptionClear();
+				ERROR_LOG(INPUT, "getSerialNumber() exception: '%s'", throwable.getMessage().c_str());
 				matches = false;
 			} else if (deviceSerial.isNull()) {
 				// Permission not yet granted, or device has no serial — can't match
