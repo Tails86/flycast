@@ -2142,7 +2142,14 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
     ImGui::SetNextWindowSize(ImVec2(popupWidth, 0), ImGuiCond_Always);
 
     PopupStyleScope style;
-    if (ImGui::BeginPopup(cfg.popupID, ImGuiWindowFlags_NoScrollbar)) {
+    const bool applyPending = cfg.hasPendingChanges || (cfg.showApplyFlag && *cfg.showApplyFlag);
+    // A pending preview may require explicit confirmation. Making only that
+    // state modal prevents outside input from discarding the popup before its
+    // Apply callback rebuilds the UI using the selected value.
+    const bool popupVisible = cfg.requireApplyToDismiss && applyPending
+        ? ImGui::BeginPopupModal(cfg.popupID, nullptr, ImGuiWindowFlags_NoScrollbar)
+        : ImGui::BeginPopup(cfg.popupID, ImGuiWindowFlags_NoScrollbar);
+    if (popupVisible) {
         if (rowLabel[0] != '\0') {
             ImGui::PushFont(largeFont);
             ImGui::TextUnformatted(rowLabel);

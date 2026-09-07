@@ -20,7 +20,6 @@
 #include "settings_new.h"
 #include "gui_util.h"
 #include "imgui.h"
-#include "imgui_driver.h"
 #include "imgui_stdlib.h"
 #include "audio/audiostream.h"
 #include "cfg/cfg.h"
@@ -54,7 +53,6 @@
 #include "oslib/resources.h"
 #include "oslib/storage.h"
 #include "stdclass.h"
-#include "stbi.h"
 #include "achievements/achievements.h"
 #include "vgamepad.h"
 #include <cmath>
@@ -71,6 +69,7 @@ extern ImFont *largeFont;
 extern ImFont *settingsTitleFont;
 extern ImFont *settingsRightValueFont;
 extern ImFont *settingsIconFont;
+extern ImFont *aboutAsciiFont;
 
 namespace SettingsNew {
 
@@ -2857,6 +2856,9 @@ static void renderSettingsContentTab(SettingsTab tab)
 		uiScalingCfg.slider.format = "%d%%";
 		uiScalingCfg.slider.valueWidth = 220.0f;
 		uiScalingCfg.slider.showApplyFlag = &showApplyButtonForUIScaling;
+#if defined(__ANDROID__)
+		uiScalingCfg.slider.requireApplyToDismiss = true;
+#endif
 		uiScalingCfg.slider.onApply = [&]() {
 			mainui_reinit();
 			uiUserScaleUpdated = false;
@@ -6126,6 +6128,11 @@ void renderControlsTab()
 
 				if (ImGui::BeginCombo(device_name, selected_name, ImGuiComboFlags_None))
 				{
+#if defined(__ANDROID__)
+					// BeginCombo has no window-flags argument. Opt this popup into
+					// the existing touch-drag handling before submitting its rows.
+					ImGui::GetCurrentWindow()->Flags |= ImGuiWindowFlags_DragScrolling;
+#endif
 					for (int i = 0; i < IM_ARRAYSIZE(maple_device_types); i++)
 					{
 						bool is_selected = config::MapleMainDevices[bus] == maple_device_type_from_index(i);
@@ -6137,6 +6144,10 @@ void renderControlsTab()
 						if (is_selected)
 							ImGui::SetItemDefaultFocus();
 					}
+#if defined(__ANDROID__)
+					scrollWhenDraggingOnVoid();
+					windowDragScroll(false);
+#endif
 					ImGui::EndCombo();
 				}
 
@@ -6181,6 +6192,10 @@ void renderControlsTab()
 
 					if (ImGui::BeginCombo(device_name, selectedDevIter->name, ImGuiComboFlags_None))
 					{
+#if defined(__ANDROID__)
+						// Expansion-device lists use the same vertical touch scrolling.
+						ImGui::GetCurrentWindow()->Flags |= ImGuiWindowFlags_DragScrolling;
+#endif
 						for (const auto& devIter : maple_expansion_device_types)
 						{
 							bool is_selected = (selectedDevIter->deviceType == devIter.deviceType);
@@ -6210,6 +6225,10 @@ void renderControlsTab()
 							if (is_selected)
 								ImGui::SetItemDefaultFocus();
 						}
+#if defined(__ANDROID__)
+						scrollWhenDraggingOnVoid();
+						windowDragScroll(false);
+#endif
 						ImGui::EndCombo();
 					}
 				}
@@ -7723,57 +7742,124 @@ void renderAdvancedTab()
 	}
 }
 
-static constexpr char kHollycastAsciiImagePath[] = "picture/hollycast_ascii.png";
+static constexpr char kHollycastAsciiTextPath[] = "picture/hollycast_ascii.txt";
 
-static ImTextureID LoadHollycastAsciiImage()
+static const std::string& GetHollycastAsciiText()
 {
-	ImTextureID textureId = imguiDriver->getTexture(kHollycastAsciiImagePath);
-	if (textureId != ImTextureID())
-		return textureId;
-
-	size_t imageSize;
-	std::unique_ptr<u8[]> imageData = resource::load(kHollycastAsciiImagePath, imageSize);
-	if (imageData == nullptr || imageSize == 0)
-		return ImTextureID();
-
-	int width, height, channels;
-	u8* pixels = stbi_load_from_memory(imageData.get(), static_cast<int>(imageSize),
-		&width, &height, &channels, STBI_rgb_alpha);
-	if (pixels == nullptr || width <= 0 || height <= 0)
-		return ImTextureID();
-
-	try {
-		textureId = imguiDriver->updateTextureAndAspectRatio(kHollycastAsciiImagePath, pixels, width, height, false);
-	} catch (...) {
-		// A renderer can be rebuilding its texture state while the About tab is open.
-	}
-	free(pixels);
-	return textureId;
+	static const std::string text = [] {
+		size_t dataSize = 0;
+		std::unique_ptr<u8[]> data = resource::load(kHollycastAsciiTextPath, dataSize);
+		if (data == nullptr || dataSize == 0)
+			return std::string{};
+		return std::string(reinterpret_cast<const char*>(data.get()), dataSize);
+	}();
+	return text;
 }
 
-static void RenderHollycastAsciiImage()
+static void RenderHollycastAsciiText()
 {
-	const ImTextureID textureId = LoadHollycastAsciiImage();
-	const float availableWidth = ImGui::GetContentRegionAvail().x;
-	if (textureId == ImTextureID() || availableWidth <= 0.0f)
+	const std::string& text = GetHollycastAsciiText();
+	ImFont* font = aboutAsciiFont != nullptr ? aboutAsciiFont : ImGui::GetFont();
+	const float availableWidth = ImGui::GetContentRegionAvail().x - 2.0f;
+	if (text.empty() || font == nullptr || availableWidth <= 0.0f)
 		return;
 
-	// The wide supplied artwork intentionally fills the available About-page header space.
-	const float imageWidth = availableWidth;
-	const float imageHeight = imageWidth * 797.0f / 2797.0f;
-	ImGui::Image(textureId, ImVec2(imageWidth, imageHeight));
+	size_t maxColumns = 0;
+	size_t currentColumns = 0;
+	size_t lineCount = 0;
+	for (char character : text)
+	{
+		if (character == '\n')
+		{
+			maxColumns = std::max(maxColumns, currentColumns);
+			currentColumns = 0;
+			lineCount++;
+		}
+		else if (character != '\r')
+		{
+			currentColumns++;
+		}
+	}
+	if (text.back() != '\n')
+	{
+		maxColumns = std::max(maxColumns, currentColumns);
+		lineCount++;
+	}
+	if (maxColumns == 0 || lineCount == 0)
+		return;
+
+	const float referenceSize = font->LegacySize;
+	const char space = ' ';
+	const float columnWidth = font->CalcTextSizeA(referenceSize, FLT_MAX, 0.0f, &space, &space + 1).x;
+	if (referenceSize <= 0.0f || columnWidth <= 0.0f)
+		return;
+
+	// Follow Settings UI scaling, but never allow a row to exceed the content
+	// width. No wrapping is used because it would corrupt the ASCII artwork.
+#if defined(__ANDROID__)
+	constexpr float AsciiFontScale = 0.25f;
+	const float desiredFontSize = SettingsPreviewFontSize(font) * AsciiFontScale;
+#else
+	// Desktop artwork needs a larger lower bound to preserve the original glyph
+	// detail. Start at the previous mapping's size at UI scale 90 (effective
+	// scale 150). Each subsequent UI scale step adds half its normal amount
+	// to the artwork only; values below 50 cannot lower this baseline.
+	constexpr float AsciiFontScale = 0.375f;
+	constexpr float MinimumUiScale = 50.0f;
+	constexpr float MinimumAsciiUiScale = 150.0f;
+	constexpr float AsciiUiScaleStep = 0.5f;
+	const float uiScale = static_cast<float>(config::UIScaling);
+	const float effectiveUiScale = MinimumAsciiUiScale
+			+ std::max(0.0f, uiScale - MinimumUiScale) * AsciiUiScaleStep;
+	const float desiredFontSize = SettingsPreviewFontSize(font) * AsciiFontScale
+			* effectiveUiScale / std::max(uiScale, 1.0f);
+#endif
+	const float fittingFontSize = referenceSize * availableWidth / (columnWidth * maxColumns);
+	const float fontSize = std::min(desiredFontSize, fittingFontSize);
+	if (fontSize <= 0.0f)
+		return;
+
+	ImVec2 position = ImGui::GetCursorScreenPos();
+#if !defined(__ANDROID__)
+	// Center the complete monospaced row without modifying the supplied text.
+	const float artworkWidth = columnWidth * maxColumns * fontSize / referenceSize;
+	position.x += std::max(0.0f, (ImGui::GetContentRegionAvail().x - artworkWidth) * 0.5f);
+#endif
+	// Normal text leading separates the ASCII rows into visible horizontal
+	// bands. Draw the original lines closer together without reflowing them.
+	constexpr float AsciiLineSpacing = 0.75f;
+	const float lineAdvance = fontSize * AsciiLineSpacing;
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+	size_t lineStart = 0;
+	size_t row = 0;
+	while (lineStart < text.size())
+	{
+		const size_t newline = text.find('\n', lineStart);
+		const size_t lineEnd = newline == std::string::npos ? text.size() : newline;
+		drawList->AddText(font, fontSize,
+			ImVec2(position.x, position.y + static_cast<float>(row) * lineAdvance), color,
+			text.data() + lineStart, text.data() + lineEnd, 0.0f);
+		if (newline == std::string::npos)
+			break;
+		lineStart = newline + 1;
+		++row;
+	}
+	// Reserve the full last row too, so the next section cannot overlap it.
+	ImGui::Dummy(ImVec2(0.0f, lineAdvance * static_cast<float>(lineCount - 1) + fontSize));
 }
+
 void renderAboutTab()
 {
 	// Use TextDisabled for the title (theme-aware)
 	ImGui::TextDisabled("%s", T("About Hollycast"));
 	ImGui::Separator();
 
-	// The supplied About artwork scales with the page width without being stretched or cropped.
+	// Center content for better appearance
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ScaledVec2(20, 20));
 
 	ImGui::Spacing();
-	RenderHollycastAsciiImage();
+	RenderHollycastAsciiText();
 
 	ImGui::Spacing();
 	ImGui::Spacing();

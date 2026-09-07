@@ -151,6 +151,15 @@ static bool shouldShowMenuBar()
 	const bool pointerAtTop = hasPointer && io.MousePos.y <= revealHeight;
 	const bool popupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
 
+#if !defined(__ANDROID__)
+	// Keep the bar in its current state while a popup owns input. Revealing a
+	// hidden bar for a Settings popup focuses the reappearing bar and closes
+	// that popup. Real menu dropdowns open from an already visible bar, so
+	// preserving visibility also keeps them accessible away from the top edge.
+	if (popupOpen)
+		return menuBarVisibleThisFrame;
+#endif
+
 	if (io.MouseSource == ImGuiMouseSource_TouchScreen)
 	{
 #if defined(__ANDROID__)
