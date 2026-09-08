@@ -62,16 +62,8 @@ Option<int, false> LibraryIconScale("Dreamcast.LibraryIconScale",
 #endif
 		);
 Option<int, false> VmuIconMode("Dreamcast.VmuIconMode", 0);
-Option<int, false> UIScaling("UIScaling",
-#ifdef __ANDROID__
-		65
-#elif defined(_WIN32) || (defined(__APPLE__) && !defined(TARGET_IPHONE)) \
-		|| (defined(__linux__) && !defined(__ANDROID__))
-		120
-#else
-		100
-#endif
-		);
+// Persist a portable percentage; platform sizing is applied only when rendering.
+Option<int, false> UIScaling("UIScaling", 100);
 Option<int, false> UITheme("UITheme", 0);
 
 // Sound

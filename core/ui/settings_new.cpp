@@ -143,7 +143,7 @@ static SettingsAndroidScaleState& SettingsAndroidScaleStateCache()
 {
 	static SettingsAndroidScaleState state;
 
-	const float userScale = std::max(0.01f, static_cast<float>(config::UIScaling) / 100.0f);
+	const float userScale = uiUserScale();
 	if (state.activeUiScale != settings.display.uiScale)
 	{
 		state.activeUiScale = settings.display.uiScale;
@@ -161,7 +161,8 @@ static float SettingsAndroidBaseScale()
 
 static float SettingsAndroidVisualUserScale(float userScale)
 {
-	constexpr float minimumUserScale = 0.50f;
+	// The portable slider's minimum of 50 becomes 32.5% on Android.
+	constexpr float minimumUserScale = 0.50f * 0.65f;
 	constexpr float defaultUserScale = 0.65f;
 	constexpr float maximumUserScale = 2.00f;
 	constexpr float maximumVisualScale = 1.25f;
@@ -181,7 +182,7 @@ static float SettingsAndroidVisualUserScale(float userScale)
 static float SettingsTextPreviewScale()
 {
 #if defined(__ANDROID__)
-	const float userScale = std::max(0.01f, static_cast<float>(config::UIScaling) / 100.0f);
+	const float userScale = uiUserScale();
 	const float appliedUserScale = std::max(0.01f, SettingsAndroidScaleStateCache().appliedUserScale);
 	// The font atlas contains the globally applied user scale. Compensate for it
 	// here so Settings text and geometry share the same bounded Android scale,
@@ -201,7 +202,7 @@ static float SettingsPreviewFontSize(ImFont* font)
 static float SettingsLayoutScaled(float px)
 {
 #if defined(__ANDROID__)
-	const float userScale = std::max(0.01f, static_cast<float>(config::UIScaling) / 100.0f);
+	const float userScale = uiUserScale();
 	return px * SettingsAndroidBaseScale() * SettingsAndroidVisualUserScale(userScale);
 #else
 	return uiScaled(px);

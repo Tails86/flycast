@@ -134,6 +134,19 @@ static inline float uiScaled(float f) {
 	return f * settings.display.uiScale;
 }
 
+// Apply the platform baseline to the portable, synced percentage before DPI
+// scaling and Settings-specific size limits. Never persist the adjusted value.
+static inline float uiUserScale() {
+#if defined(__ANDROID__)
+	constexpr float platformFactor = 0.65f;
+#elif defined(_WIN32) || (defined(__APPLE__) && !defined(TARGET_IPHONE)) || defined(__linux__)
+	constexpr float platformFactor = 1.20f;
+#else
+	constexpr float platformFactor = 1.0f;
+#endif
+	return std::max(0.01f, static_cast<float>(config::UIScaling) / 100.0f) * platformFactor;
+}
+
 static inline float uiLargeFontSize()
 {
 	return uiScaled(22.f);

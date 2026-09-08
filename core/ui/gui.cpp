@@ -258,7 +258,7 @@ void gui_updateStyle()
 	androidMenuScale = settings.display.uiScale * AndroidMenuUserScale;
 #endif
 #endif
-    settings.display.uiScale *= config::UIScaling / 100.f;
+    settings.display.uiScale *= uiUserScale();
 	if (settings.display.uiScale == uiScale && ImGui::GetIO().Fonts->IsBuilt())
 		return;
 	uiScale = settings.display.uiScale;
