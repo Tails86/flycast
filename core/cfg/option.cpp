@@ -49,18 +49,9 @@ Option<int, false> BoxartSourceMode("BoxartSourceMode", 0);
 Option<int, false> LibraryDisplayStyle("Dreamcast.LibraryDisplayStyle", 0);
 Option<int, false> LibraryImageSource("Dreamcast.LibraryImageSource", 0);
 Option<int, false> LibraryCoverMedia("Dreamcast.LibraryCoverMedia", 0);
-// Keep first-run layouts readable on touch displays and high-resolution desktop displays
-// without altering saved preferences for existing users.
-Option<int, false> LibraryIconScale("Dreamcast.LibraryIconScale",
-#if defined(__ANDROID__)
-		300
-#elif defined(_WIN32) || (defined(__APPLE__) && !defined(TARGET_IPHONE)) \
-		|| (defined(__linux__) && !defined(__ANDROID__))
-		300
-#else
-		100
-#endif
-		);
+// Keep the first-run library layout consistent across platforms without
+// altering saved preferences for existing users.
+Option<int, false> LibraryIconScale("Dreamcast.LibraryIconScale", 300);
 Option<int, false> VmuIconMode("Dreamcast.VmuIconMode", 0);
 // Persist a portable percentage; platform sizing is applied only when rendering.
 Option<int, false> UIScaling("UIScaling", 100);
