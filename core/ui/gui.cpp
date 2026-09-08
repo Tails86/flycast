@@ -55,6 +55,7 @@
 #endif
 #include "vgamepad.h"
 #include "settings.h"
+#include "settings_new.h"
 #include "oslib/i18n.h"
 #include "gui_font.h"
 using namespace i18n;
@@ -127,16 +128,25 @@ static void emuEventCallback(Event event, void *)
 	switch (event)
 	{
 	case Event::Resume:
+		boxart.resumePlaytime();
 		game_started = true;
 		vgamepad::startGame();
 		break;
 	case Event::Start:
+		boxart.startPlaytime(settings.platform.system == DC_PLATFORM_DREAMCAST ? settings.content.gameId : "", settings.content.path);
 		markLibraryGameBooted(settings.content.gameId, settings.content.path);
 		GamepadDevice::load_system_mappings();
 		break;
 	case Event::Terminate:
+		boxart.checkpointPlaytime(true);
 		GamepadDevice::load_system_mappings();
 		game_started = false;
+		break;
+	case Event::Pause:
+		boxart.checkpointPlaytime(true);
+		break;
+	case Event::VBlank:
+		boxart.checkpointPlaytime();
 		break;
 	default:
 		break;
@@ -168,6 +178,8 @@ void gui_init()
     EventManager::listen(Event::Resume, emuEventCallback);
     EventManager::listen(Event::Start, emuEventCallback);
 	EventManager::listen(Event::Terminate, emuEventCallback);
+	EventManager::listen(Event::Pause, emuEventCallback);
+	EventManager::listen(Event::VBlank, emuEventCallback);
     ggpo::receiveChatMessages([](int playerNum, const std::string& msg) { chat.receive(playerNum, msg); });
 
 #ifdef TARGET_UWP
@@ -2261,7 +2273,15 @@ static void gui_display_content()
     {
 		const bool useListStyle = config::LibraryDisplayStyle.get() == static_cast<int>(config::LibraryDisplayStyleMode::List);
 		const float totalWidth = ImGui::GetContentRegionMax().x - (!ImGui::GetCurrentWindow()->ScrollbarY ? ImGui::GetStyle().ScrollbarSize : 0);
-		const float libraryIconScaleFactor = libraryIconScale / 100.0f;
+		// Library tiles use pixel-based geometry rather than the DPI-scaled
+		// Settings layout, so they need their own platform baseline. Keep the
+		// saved percentage unchanged when syncing between devices.
+#if defined(__ANDROID__)
+		constexpr float libraryPlatformFactor = 0.85f;
+#else
+		constexpr float libraryPlatformFactor = 1.0f;
+#endif
+		const float libraryIconScaleFactor = libraryIconScale / 100.0f * libraryPlatformFactor;
 		const float libraryTextScaleFactor = 1.5f + (libraryIconScaleFactor - 1.0f) / 3.0f;
 		const ImVec2 iconSize(32.0f * libraryIconScaleFactor, 32.0f * libraryIconScaleFactor);
 		const double iconAnimationClock = getLibraryIconAnimationClock();
@@ -2281,10 +2301,18 @@ static void gui_display_content()
 		};
 		const float iconColumnWidth = std::max(iconSize.x, calcLibraryTextWidth("Icon"))
 				+ ImGui::GetStyle().CellPadding.x * 2.0f;
+		auto calcLibraryColumnWidth = [&](const char *header, const char *sample) {
+			return std::max(calcLibraryTextWidth(header), calcLibraryTextWidth(sample))
+					+ ImGui::GetStyle().CellPadding.x * 2.0f;
+		};
+		const float productIdColumnWidth = calcLibraryColumnWidth("Product ID", "T-12345M-50");
+		const float regionColumnWidth = calcLibraryColumnWidth("Region", "JP/US/EU");
+		const float formatColumnWidth = calcLibraryColumnWidth("Format", "Unknown");
 		const float lastBootedColumnWidth = calcLibraryTextWidth("12/31/2026 12:59:59 PM")
 				+ ImGui::GetStyle().CellPadding.x * 2.0f;
 		const float timePlayedColumnWidth = std::max(calcLibraryTextWidth(T("Time Played")), calcLibraryTextWidth("999h 59m"))
 				+ ImGui::GetStyle().CellPadding.x * 2.0f;
+		const float sizeColumnWidth = calcLibraryColumnWidth("Size", "99999 MB");
 
 		int counter = 0;
 		bool gameListEmpty = false;
@@ -2299,16 +2327,24 @@ static void gui_display_content()
 						| ImGuiTableFlags_ScrollY, ImVec2(0.0f, 0.0f)))
 				{
 					ImGui::TableSetupColumn("Icon", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, iconColumnWidth);
-					ImGui::TableSetupColumn("Product ID", ImGuiTableColumnFlags_WidthFixed, 96.0f);
+					ImGui::TableSetupColumn("Product ID", ImGuiTableColumnFlags_WidthFixed, productIdColumnWidth);
 					ImGui::TableSetupColumn("Title", ImGuiTableColumnFlags_WidthStretch);
-					ImGui::TableSetupColumn("Region", ImGuiTableColumnFlags_WidthFixed, 78.0f);
-					ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+					ImGui::TableSetupColumn("Region", ImGuiTableColumnFlags_WidthFixed, regionColumnWidth);
+					ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, formatColumnWidth);
 					ImGui::TableSetupColumn(T("Time Played"), ImGuiTableColumnFlags_WidthFixed, timePlayedColumnWidth);
 					ImGui::TableSetupColumn("Last Booted", ImGuiTableColumnFlags_WidthFixed, lastBootedColumnWidth);
-					ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 78.0f);
+					ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, sizeColumnWidth);
 					ImGui::TableSetColumnWidth(0, iconColumnWidth);
 					ImGui::TableSetupScrollFreeze(0, 1);
-					ImGui::TableHeadersRow();
+					ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+					const char *const libraryColumnHeaders[] = {
+						"Icon", "Product ID", "Title", "Region", "Format", T("Time Played"), "Last Booted", "Size"
+					};
+					for (int column = 0; column < static_cast<int>(sizeof(libraryColumnHeaders) / sizeof(libraryColumnHeaders[0])); ++column)
+					{
+						ImGui::TableSetColumnIndex(column);
+						textTableCellCentered(libraryColumnHeaders[column], tableTextSize);
+					}
 
 					const auto& gameList = scanner.get_game_list();
 					auto drawTableGame = [&](const GameMedia& game, int rowIndex) -> bool
@@ -2859,6 +2895,8 @@ void gui_display_ui()
 	// Initialize ImGui frame BEFORE any early returns
 	// This ensures the menu bar is always visible, even during auto-start
 	gui_newFrame();
+	if (gui_state == GuiState::Settings)
+		SettingsNew::prepareControllerNavigation();
 	ImGui::NewFrame();
 	error_msg_shown = false;
 	bool gui_open = gui_is_open();
@@ -3097,6 +3135,8 @@ void gui_term()
 	    EventManager::unlisten(Event::Resume, emuEventCallback);
 	    EventManager::unlisten(Event::Start, emuEventCallback);
 	    EventManager::unlisten(Event::Terminate, emuEventCallback);
+	    EventManager::unlisten(Event::Pause, emuEventCallback);
+	    EventManager::unlisten(Event::VBlank, emuEventCallback);
 	    clearVmuIconLookups();
 	    boxart.term();
 	}

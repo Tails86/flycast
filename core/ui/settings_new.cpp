@@ -128,6 +128,20 @@ static bool g_mapleDevicesChangedInSettings = false;
 static bool g_scrollToBoxArtSection = false;
 static bool g_focusSettingsNavigation = false;
 static bool g_focusSettingsContent = false;
+static bool g_focusSettingsBack = false;
+static bool g_controllerPopupWasOpen = false;
+static int g_controllerPopupDepth = 0;
+static bool g_controllerEditing = false;
+static ImGuiWindow* g_navigationWindow = nullptr;
+static ImGuiWindow* g_contentWindow = nullptr;
+static ImGuiID g_backButtonId = 0;
+enum class ControllerSection { None, Tabs, Content, Back };
+static ControllerSection g_controllerSection = ControllerSection::None;
+static double g_tabSlideStart = -1.0;
+static SettingsTab g_tabSlideTarget = SettingsTab::General;
+static int g_tabSlideDirection = 0;
+static bool g_tabSlideFocusContent = false;
+static constexpr double kTabSlideSeconds = 0.18;
 static std::string g_settingsFooterText;
 static constexpr float kSettingsFooterHeightPx = 152.0f;
 
@@ -427,6 +441,46 @@ static void SetSettingsFooterText(const char* text)
 static bool IsAnySettingsPopupOpen()
 {
 	return ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+}
+
+void prepareControllerNavigation()
+{
+	ImGuiContext& g = *GImGui;
+	// Capture before NewFrame closes popups: one B press must perform one step.
+	g_controllerPopupWasOpen = !g.OpenPopupStack.empty();
+	g_controllerPopupDepth = g.OpenPopupStack.Size;
+	g_controllerEditing = g.ActiveId != 0;
+	g_controllerSection = ControllerSection::None;
+	for (ImGuiWindow* window = g.NavWindow; window != nullptr; window = window->ParentWindow)
+	{
+		if (window == g_navigationWindow)
+		{
+			g_controllerSection = g.NavId == g_backButtonId ? ControllerSection::Back : ControllerSection::Tabs;
+			break;
+		}
+		if (window == g_contentWindow)
+		{
+			g_controllerSection = ControllerSection::Content;
+			break;
+		}
+	}
+	if (!g_controllerPopupWasOpen && g_controllerSection != ControllerSection::None)
+	{
+		const ImGuiID owner = ImHashStr("SettingsControllerNavigation");
+		ImGui::SetKeyOwner(ImGuiKey_GamepadFaceRight, owner);
+		if (!g_controllerEditing)
+			for (ImGuiKey key : {ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight,
+					ImGuiKey_GamepadLStickLeft, ImGuiKey_GamepadLStickRight})
+				ImGui::SetKeyOwner(key, owner);
+	}
+}
+
+static bool ControllerPopupCancelPressed()
+{
+	// A child popup may already have consumed B in NewFrame. Never cascade
+	// that press into the parent dialog as it renders later in the same frame.
+	return GImGui->BeginPopupStack.Size == g_controllerPopupDepth
+			&& ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
 }
 
 static void FocusCurrentSettingsItem()
@@ -1025,6 +1079,43 @@ static void gamepadSettingsPopup(const std::shared_ptr<GamepadDevice>& gamepad)
 	const std::string gamepadSettingsTitle = std::string(T("Gamepad Settings")) + "###Gamepad Settings";
 	if (ImGui::BeginPopupModal(gamepadSettingsTitle.c_str(), nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_DragScrolling))
 	{
+		static int openingRumble = 0;
+		static float openingDeadzone = 0.0f;
+		static float openingSaturation = 1.0f;
+		static int openingVibration = 0;
+		static int openingTransparency = 0;
+		static std::string openingImage;
+		if (ImGui::IsWindowAppearing())
+		{
+			openingRumble = gamepad->get_rumble_power();
+			if (gamepad->has_analog_stick())
+			{
+				openingDeadzone = gamepad->get_dead_zone();
+				openingSaturation = gamepad->get_saturation();
+			}
+			openingVibration = config::VirtualGamepadVibration;
+			openingTransparency = config::VirtualGamepadTransparency;
+			// These are the platform-specific custom image keys used by vgamepad.
+			openingImage = config::loadStr("vgamepad", settings.platform.isConsole() ? "image" : "image_arcade");
+		}
+		if (ControllerPopupCancelPressed())
+		{
+			gamepad->set_rumble_power(openingRumble);
+			if (gamepad->has_analog_stick())
+			{
+				gamepad->set_dead_zone(openingDeadzone);
+				gamepad->set_saturation(openingSaturation);
+			}
+			if (gamepad->is_virtual_gamepad())
+			{
+				config::VirtualGamepadVibration = openingVibration;
+				config::VirtualGamepadTransparency = openingTransparency;
+				vgamepad::loadImage(openingImage);
+			}
+			ImGui::CloseCurrentPopup();
+			ImGui::EndPopup();
+			return;
+		}
 		if (ImGui::Button(T("Done"), ScaledVec2(100, 30)))
 		{
 			gamepad->save_mapping();
@@ -1714,7 +1805,7 @@ static void controller_mapping_popup(const std::shared_ptr<GamepadDevice>& gamep
 					ImGui::CloseCurrentPopup();
 				}
 				ImGui::SameLine();
-				if (ImGui::Button(T("No")))
+				if (ImGui::Button(T("No")) || ControllerPopupCancelPressed())
 					ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndPopup();
@@ -2075,12 +2166,16 @@ SettingsUIState g_state;
 void resetState()
 {
 	g_state.currentTab = SettingsTab::General;
+	g_focusSettingsNavigation = true;
+	g_focusSettingsContent = g_focusSettingsBack = false;
+	g_tabSlideStart = -1.0;
 	ResetSettingsFooter();
 }
 
 void openTab(SettingsTab tab)
 {
 	g_state.currentTab = tab;
+	g_tabSlideStart = -1.0;
 	g_scrollToBoxArtSection = false;
 	ResetSettingsFooter();
 }
@@ -2209,8 +2304,15 @@ static void renderNavigationRail(const std::function<void()>& exitSettings, cons
 	g_focusSettingsNavigation = false;
 
 	ImGui::PushFont(settingsTitleFont);
+	g_navigationWindow = ImGui::GetCurrentWindow();
 	if (SettingsBackButton(ICON_FA_ARROW_LEFT, exitLabel))
 		exitSettings();
+	g_backButtonId = ImGui::GetItemID();
+	if (g_focusSettingsBack)
+	{
+		FocusCurrentSettingsItem();
+		g_focusSettingsBack = false;
+	}
 	ImGui::Spacing();
 	ImGui::Separator();
 	ImGui::Spacing();
@@ -2232,6 +2334,7 @@ static void renderNavigationRail(const std::function<void()>& exitSettings, cons
 		if (ImGui::Selectable(tabName, isSelected, ImGuiSelectableFlags_None, ImVec2(ImGui::GetContentRegionAvail().x, 0)))
 		{
 			g_state.currentTab = tab;
+			g_tabSlideStart = -1.0;
 			ResetSettingsFooter();
 		}
 		if (focusSelectedTab && isSelected)
@@ -2282,6 +2385,12 @@ static void renderContentArea()
 
 	if (focusContent)
 		ImGui::SetKeyboardFocusHere();
+	g_contentWindow = ImGui::GetCurrentWindow();
+	const bool sliding = g_tabSlideStart >= 0.0;
+	const int firstVertex = g_contentWindow->DrawList->VtxBuffer.Size;
+	// Animation changes presentation only. Input is disabled until the visual
+	// position agrees with the regular, stationary hit targets again.
+	ImGui::BeginDisabled(sliding);
 
 	// Call the appropriate tab renderer based on current selection
 	switch (g_state.currentTab)
@@ -2314,6 +2423,32 @@ static void renderContentArea()
 		break;
 	}
 
+	ImGui::EndDisabled();
+	if (sliding)
+	{
+		const float progress = std::clamp(float((ImGui::GetTime() - g_tabSlideStart) / kTabSlideSeconds), 0.0f, 1.0f);
+		const float phase = progress < 0.5f ? progress * 2.0f : (1.0f - progress) * 2.0f;
+		const float eased = phase * phase * (3.0f - 2.0f * phase);
+		const float offset = (progress < 0.5f ? -1.0f : 1.0f) * g_tabSlideDirection
+				* g_contentWindow->InnerRect.GetWidth() * eased;
+		for (ImGuiWindow* window : GImGui->Windows)
+		{
+			if (!window->Active || (window != g_contentWindow
+					&& !ImGui::IsWindowChildOf(window, g_contentWindow, false)))
+				continue;
+			ImDrawList* draw = window->DrawList;
+			for (int i = window == g_contentWindow ? firstVertex : 0; i < draw->VtxBuffer.Size; ++i)
+				draw->VtxBuffer[i].pos.x += offset;
+			// Nested lists move too, clipped to the stationary content pane.
+			if (window != g_contentWindow)
+				for (ImDrawCmd& command : draw->CmdBuffer)
+				{
+					command.ClipRect.x = std::clamp(command.ClipRect.x + offset, g_contentWindow->InnerClipRect.Min.x, g_contentWindow->InnerClipRect.Max.x);
+					command.ClipRect.z = std::clamp(command.ClipRect.z + offset, command.ClipRect.x, g_contentWindow->InnerClipRect.Max.x);
+				}
+		}
+	}
+
 	// The content pane uses drag scrolling, but Android swipes often begin on
 	// selectable rows. Keep this after rendering rows so the helper can turn
 	// those finger drags into scrolling instead of row activation.
@@ -2325,9 +2460,9 @@ static void renderContentArea()
 #endif
 
 	if (!IsAnySettingsPopupOpen()
+		&& !g_controllerPopupWasOpen
 		&& ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)
-		&& (ImGui::IsKeyPressed(ImGuiKey_Escape, false)
-			|| ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)))
+		&& ImGui::IsKeyPressed(ImGuiKey_Escape, false))
 	{
 		g_focusSettingsNavigation = true;
 	}
@@ -2861,6 +2996,13 @@ static void renderSettingsContentTab(SettingsTab tab)
 		uiScalingCfg.slider.requireApplyToDismiss = true;
 #endif
 		uiScalingCfg.slider.onApply = [&]() {
+			mainui_reinit();
+			uiUserScaleUpdated = false;
+			showApplyButtonForUIScaling = false;
+		};
+		uiScalingCfg.slider.onCancel = [&]() {
+			// The stored scale is restored before this runs. Rebuild any preview
+			// state too, so reopening the popup uses the original scale throughout.
 			mainui_reinit();
 			uiUserScaleUpdated = false;
 			showApplyButtonForUIScaling = false;
@@ -4861,6 +5003,7 @@ void renderAudioTab()
 		|| (config::AudioBackend.get() != "auto" && config::AudioBackend.get() != "android"))
 	{
 		static int latencyTemp = (int)roundf(config::AudioBufferSize.get() * 1000.f / 44100.f);
+		static int openingAudioBufferSize = 0;
 
 		SettingsUI::PopupSliderConfig latencyConfig {};
 		latencyConfig.label = T("Audio Latency");
@@ -4876,6 +5019,15 @@ void renderAudioTab()
 		latencyConfig.format = "%d ms";
 		latencyConfig.applyButtonText = T("Apply");
 		latencyConfig.onApply = nullptr;
+		latencyConfig.onOpen = []() {
+			openingAudioBufferSize = config::AudioBufferSize.get();
+			latencyTemp = (int)roundf(openingAudioBufferSize * 1000.f / 44100.f);
+		};
+		latencyConfig.onCancel = []() {
+			// Milliseconds round the sample count. Restore the exact original
+			// samples rather than round-tripping through the displayed value.
+			config::AudioBufferSize.set(openingAudioBufferSize);
+		};
 		latencyConfig.onValueChange = []() {
 			config::AudioBufferSize.set((int)roundf(latencyTemp * 44100.f / 1000.f));
 		};
@@ -5591,7 +5743,7 @@ static void renderVmuCardManager()
 			}
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(T("Cancel")))
+		if (ImGui::Button(T("Cancel")) || ControllerPopupCancelPressed())
 			ImGui::CloseCurrentPopup();
 		ImGui::EndPopup();
 	}
@@ -5631,7 +5783,7 @@ static void renderVmuCardManager()
 			}
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(T("Cancel")))
+		if (ImGui::Button(T("Cancel")) || ControllerPopupCancelPressed())
 			ImGui::CloseCurrentPopup();
 		ImGui::EndPopup();
 	}
@@ -5689,7 +5841,7 @@ static void renderVmuCardManager()
 			}
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(T("Cancel")))
+		if (ImGui::Button(T("Cancel")) || ControllerPopupCancelPressed())
 			ImGui::CloseCurrentPopup();
 		ImGui::EndPopup();
 	}
@@ -5761,7 +5913,7 @@ static void renderVmuCardManager()
 		}
 
 		ImGui::Spacing();
-		if (ImGui::Button(T("Close")))
+		if (ImGui::Button(T("Close")) || ControllerPopupCancelPressed())
 			ImGui::CloseCurrentPopup();
 		ImGui::EndPopup();
 	}
@@ -8022,6 +8174,59 @@ void renderAboutTab()
 // Main entry point - renders the entire settings UI
 void renderSettingsNew()
 {
+	if (!g_controllerPopupWasOpen && !IsAnySettingsPopupOpen()
+			&& g_controllerSection != ControllerSection::None)
+	{
+		if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+		{
+			ImGui::ClearActiveID();
+			ImGui::NavMoveRequestCancel();
+			if (g_tabSlideStart >= 0.0)
+				g_state.currentTab = g_tabSlideTarget;
+			g_tabSlideStart = -1.0;
+			g_focusSettingsContent = false;
+			g_focusSettingsNavigation = g_controllerSection == ControllerSection::Content;
+			g_focusSettingsBack = !g_focusSettingsNavigation;
+		}
+		// The navigation rail is for choosing a specific tab with A. Left and
+		// right only change tabs after entering that tab's content pane.
+		else if (!g_controllerEditing && g_controllerSection == ControllerSection::Content)
+		{
+			const bool left = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, true)
+					|| ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft, true);
+			const bool right = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, true)
+					|| ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight, true);
+			if (left != right)
+			{
+				ImGui::NavMoveRequestCancel();
+				if (g_tabSlideStart >= 0.0)
+					g_state.currentTab = g_tabSlideTarget;
+				g_tabSlideDirection = right ? 1 : -1;
+				g_tabSlideTarget = static_cast<SettingsTab>((static_cast<int>(g_state.currentTab)
+						+ g_tabSlideDirection + static_cast<int>(SettingsTab::Count)) % static_cast<int>(SettingsTab::Count));
+				g_tabSlideStart = ImGui::GetTime();
+				g_tabSlideFocusContent = g_controllerSection == ControllerSection::Content;
+				g_focusSettingsContent = false;
+			}
+		}
+	}
+	if (g_tabSlideStart >= 0.0)
+	{
+		const double elapsed = ImGui::GetTime() - g_tabSlideStart;
+		if (elapsed >= kTabSlideSeconds * 0.5 && g_state.currentTab != g_tabSlideTarget)
+		{
+			g_state.currentTab = g_tabSlideTarget;
+			if (g_contentWindow != nullptr)
+				ImGui::SetScrollY(g_contentWindow, 0.0f);
+			ResetSettingsFooter();
+		}
+		if (elapsed >= kTabSlideSeconds)
+		{
+			g_tabSlideStart = -1.0;
+			g_focusSettingsContent = g_tabSlideFocusContent;
+			g_focusSettingsNavigation = !g_focusSettingsContent;
+		}
+	}
 	if (g_settingsFooterText.empty())
 		ResetSettingsFooter();
 

@@ -29,6 +29,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <chrono>
 
 struct GameMedia;
 
@@ -49,6 +50,9 @@ public:
 	void term();
 	void refreshCache();
 	void refreshLibraryPlaytimeDatabase();
+	void startPlaytime(const std::string& gameId, const std::string& gamePath);
+	void resumePlaytime();
+	void checkpointPlaytime(bool pause = false);
 	void refreshCustomBoxartIndex(bool force = false);
 	void queueBoxart(const GameMedia& media);
 	void startFetch();
@@ -94,6 +98,18 @@ private:
 	std::unordered_map<std::string, GameBoxart> games;
 	std::unordered_map<std::string, GameBoxart> physicalCache;
 	std::unordered_map<std::string, u64> libraryPlaytimeByGameId;
+	// Independent of artwork refreshes; serialize session accounting and writes.
+	std::mutex playtimeMutex;
+	bool playtimeLoaded = false;
+	bool playtimeRunning = false;
+	bool playtimeDirty = false;
+	bool playtimeWritable = true;
+	std::string playtimeGameId;
+	std::string playtimeDatabasePath;
+	std::chrono::steady_clock::time_point playtimeStart;
+	std::chrono::steady_clock::time_point playtimeCheckpoint;
+	std::chrono::steady_clock::duration playtimeRemainder{};
+	std::future<bool> playtimeWrite;
 	CustomBoxartIndex customBoxartByName;
 	std::string customBoxartRoot;
 	std::string requestedCustomBoxartRoot;

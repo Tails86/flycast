@@ -511,6 +511,8 @@ GameBoxart Boxart::getBoxart(const GameMedia& media)
 		auto it = games.find(media.fileName);
 		if (it != games.end())
 			boxart = it->second;
+		else
+			boxart = makeMediaBoxart(media);
 		applyLibraryPlaytimeUnlocked(boxart);
 	}
 	if (boxart.fileName.empty())
@@ -1105,7 +1107,8 @@ void Boxart::loadDatabase()
 void Boxart::applyLibraryPlaytimeUnlocked(GameBoxart& boxart) const
 {
 	boxart.playTimeSeconds.reset();
-	const std::string gameId = normalizeLibraryGameId(boxart.uniqueId);
+	const std::string gameId = normalizeLibraryGameId(!boxart.arcade && !boxart.uniqueId.empty()
+			? boxart.uniqueId : "FILE:" + boxart.fileName);
 	if (gameId.empty())
 		return;
 	const auto it = libraryPlaytimeByGameId.find(gameId);
@@ -1115,10 +1118,18 @@ void Boxart::applyLibraryPlaytimeUnlocked(GameBoxart& boxart) const
 
 void Boxart::loadLibraryPlaytimeDatabase()
 {
+	std::lock_guard<std::mutex> sessionGuard(playtimeMutex);
+	if (playtimeLoaded)
+		return;
+	playtimeLoaded = true;
 	std::unordered_map<std::string, u64> loadedPlaytimes;
-	const std::string databasePath = getLibraryPlaytimeDatabasePath(getSaveDirectory());
+	// Use the same writable metadata fallback as artwork for SAF/read-only roots.
+	const std::string directory = getDatabaseDirectory();
+	playtimeDatabasePath = directory.empty() ? std::string{} : getLibraryPlaytimeDatabasePath(directory);
+	const std::string& databasePath = playtimeDatabasePath;
 	if (databasePath.empty())
 	{
+		playtimeWritable = false;
 		std::lock_guard<std::mutex> guard(mutex);
 		libraryPlaytimeByGameId.clear();
 		return;
@@ -1128,6 +1139,7 @@ void Boxart::loadLibraryPlaytimeDatabase()
 		const hostfs::FileInfo info = hostfs::storage().getFileInfo(databasePath);
 		if (info.isDirectory || info.size > kLibraryPlaytimeDatabaseMaxSize)
 		{
+			playtimeWritable = false;
 			WARN_LOG(COMMON, "Ignoring Library play-time database %s: invalid file type or size", databasePath.c_str());
 			std::lock_guard<std::mutex> guard(mutex);
 			libraryPlaytimeByGameId.clear();
@@ -1142,6 +1154,7 @@ void Boxart::loadLibraryPlaytimeDatabase()
 	std::string contents;
 	if (!readStorageFile(databasePath, contents, kLibraryPlaytimeDatabaseMaxSize))
 	{
+		playtimeWritable = false;
 		WARN_LOG(COMMON, "Can't read Library play-time database %s", databasePath.c_str());
 		std::lock_guard<std::mutex> guard(mutex);
 		libraryPlaytimeByGameId.clear();
@@ -1162,7 +1175,7 @@ void Boxart::loadLibraryPlaytimeDatabase()
 			const std::string gameId = normalizeLibraryGameId(it.key());
 			const json& entry = it.value();
 			auto seconds = entry.is_object() ? entry.find("seconds") : entry.end();
-			if (gameId.empty() || gameId.size() > 64 || seconds == entry.end()
+			if (gameId.empty() || gameId.size() > 1024 || seconds == entry.end()
 					|| (!seconds->is_number_unsigned() && !seconds->is_number_integer())
 					|| (seconds->is_number_integer() && seconds->get<s64>() < 0))
 			{
@@ -1175,6 +1188,8 @@ void Boxart::loadLibraryPlaytimeDatabase()
 			WARN_LOG(COMMON, "Ignored %d invalid Library play-time entries in %s", (int)invalidEntries, databasePath.c_str());
 	} catch (const json::exception& e) {
 		WARN_LOG(COMMON, "Ignoring invalid Library play-time database %s: %s", databasePath.c_str(), e.what());
+		// Preserve the original file for recovery rather than overwriting it.
+		playtimeWritable = false;
 		loadedPlaytimes.clear();
 	}
 
@@ -1185,6 +1200,97 @@ void Boxart::loadLibraryPlaytimeDatabase()
 void Boxart::refreshLibraryPlaytimeDatabase()
 {
 	loadLibraryPlaytimeDatabase();
+}
+
+void Boxart::startPlaytime(const std::string& gameId, const std::string& gamePath)
+{
+	checkpointPlaytime(true);
+	loadLibraryPlaytimeDatabase();
+	std::lock_guard<std::mutex> guard(playtimeMutex);
+	// Terminate is broadcast after settings.content is cleared. Retain the ID
+	// here so shutdown never attributes the final interval to another title.
+	playtimeGameId = normalizeLibraryGameId(gameId);
+	// Arcade archives have no product ID in the artwork metadata. Use the
+	// storage display name, which also works for Android content URIs.
+	if (playtimeGameId.empty() && !gamePath.empty())
+	{
+		try {
+			playtimeGameId = normalizeLibraryGameId("FILE:" + hostfs::storage().getFileInfo(gamePath).name);
+		} catch (const hostfs::StorageException&) {
+			WARN_LOG(COMMON, "Cannot identify title for playtime: %s", gamePath.c_str());
+		}
+	}
+	if (gamePath.empty() || playtimeGameId.size() > 1024)
+		playtimeGameId.clear();
+	playtimeRemainder = {};
+}
+
+void Boxart::resumePlaytime()
+{
+	std::lock_guard<std::mutex> guard(playtimeMutex);
+	if (!playtimeRunning && !playtimeGameId.empty())
+	{
+		playtimeRunning = true;
+		playtimeStart = playtimeCheckpoint = std::chrono::steady_clock::now();
+	}
+}
+
+void Boxart::checkpointPlaytime(bool pause)
+{
+	std::lock_guard<std::mutex> sessionGuard(playtimeMutex);
+	const auto now = std::chrono::steady_clock::now();
+	if (!pause && (!playtimeRunning || now - playtimeCheckpoint < std::chrono::seconds(30)))
+		return;
+	playtimeCheckpoint = now;
+	if (playtimeWrite.valid())
+	{
+		// Periodic disk I/O never stalls emulation. Pause/shutdown must join it
+		// before replacing the same file with the final session total.
+		if (!pause && playtimeWrite.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+			return;
+		if (!playtimeWrite.get())
+			playtimeDirty = true;
+	}
+	if (playtimeRunning)
+	{
+		const auto elapsed = now - playtimeStart + playtimeRemainder;
+		const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed);
+		playtimeRemainder = elapsed - seconds;
+		playtimeStart = now;
+		std::lock_guard<std::mutex> guard(mutex);
+		u64& total = libraryPlaytimeByGameId[playtimeGameId];
+		total += std::min<u64>(seconds.count(), std::numeric_limits<u64>::max() - total);
+		playtimeDirty = true;
+	}
+	if (pause)
+		playtimeRunning = false;
+	if (!playtimeDirty || !playtimeWritable)
+		return;
+	json entries = json::object();
+	{
+		std::lock_guard<std::mutex> guard(mutex);
+		for (const auto& entry : libraryPlaytimeByGameId)
+			entries[entry.first] = {{"seconds", entry.second}};
+	}
+	const std::string contents = json{{"version", 1}, {"games", entries}}.dump();
+	const std::string path = playtimeDatabasePath;
+	auto write = [path, contents]() {
+		try {
+			if (writeFileAtomically(path, contents))
+				return true;
+		} catch (const std::exception& e) {
+			WARN_LOG(COMMON, "Playtime save failed: %s", e.what());
+		}
+		WARN_LOG(COMMON, "Unable to save Library playtime to %s", path.c_str());
+		return false;
+	};
+	if (pause)
+		playtimeDirty = !write();
+	else
+	{
+		playtimeWrite = std::async(std::launch::async, std::move(write));
+		playtimeDirty = false;
+	}
 }
 
 void Boxart::reviewDatabaseArtwork()
@@ -1257,7 +1363,6 @@ void Boxart::refreshCache()
 		std::lock_guard<std::mutex> guard(mutex);
 		games.clear();
 		physicalCache.clear();
-		libraryPlaytimeByGameId.clear();
 		toFetch.clear();
 		databaseLoaded = false;
 		databaseDirty = false;
@@ -1274,6 +1379,7 @@ void Boxart::refreshCache()
 
 void Boxart::term()
 {
+	checkpointPlaytime(true);
 	{
 		std::lock_guard<std::mutex> guard(mutex);
 		customIndexShuttingDown = true;

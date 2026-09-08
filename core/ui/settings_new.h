@@ -49,6 +49,9 @@ extern SettingsUIState g_state;
 // Renders the full-screen settings interface with navigation rail and content area
 void renderSettingsNew();
 
+// Reserve controller navigation before ImGui consumes its default navigation keys.
+void prepareControllerNavigation();
+
 // Reset state when entering settings screen
 void resetState();
 
