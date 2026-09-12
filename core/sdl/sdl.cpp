@@ -47,6 +47,7 @@ static SDL_Window* window = NULL;
 static u32 windowFlags;
 
 // Used only when no saved desktop window size exists.
+// These should match DEFAULT_WINDOW_WIDTH and DEFAULT_WINDOW_HEIGHT in core/linux-dist/x11.cpp
 #define WINDOW_WIDTH  800
 #define WINDOW_HEIGHT  600
 

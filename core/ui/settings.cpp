@@ -41,6 +41,9 @@ SettingsNew::SettingsTab toSettingsNewTab(GuiSettingsTab tab)
 		return SettingsNew::SettingsTab::Advanced;
 	case GuiSettingsTab::About:
 		return SettingsNew::SettingsTab::About;
+	default:
+		ERROR_LOG(RENDERER, "Unknown GuiSettingsTab value: %d", static_cast<int>(tab));
+	    std::abort();
 	}
 
 	return SettingsNew::SettingsTab::General;

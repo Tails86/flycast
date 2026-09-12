@@ -241,10 +241,6 @@ static ImGuiKey keycodeToImGuiKey(u8 keycode)
 void gui_updateStyle()
 {
 	static float uiScale;
-#if defined(__ANDROID__)
-	constexpr float AndroidMenuUserScale = 0.90f;
-	float androidMenuScale = AndroidMenuUserScale;
-#endif
 
 	verify(inited);
 	uiThreadRunner.init();
@@ -264,11 +260,6 @@ void gui_updateStyle()
    	// Limit scaling on small low-res screens
     if (settings.display.width <= 640 || settings.display.height <= 480)
     	settings.display.uiScale = std::min(1.2f, settings.display.uiScale);
-#if defined(__ANDROID__)
-	// The hideable menu stays at the physical size produced by Android's 90%
-	// UI setting. User UI scaling continues to apply everywhere else.
-	androidMenuScale = settings.display.uiScale * AndroidMenuUserScale;
-#endif
 #endif
     settings.display.uiScale *= uiUserScale();
 	if (settings.display.uiScale == uiScale && ImGui::GetIO().Fonts->IsBuilt())
@@ -289,7 +280,7 @@ void gui_updateStyle()
 	ImGui::GetStyle().TouchExtraPadding = ImVec2(1, 1);	// from 0,0
 #endif
 #if defined(__ANDROID__)
-	GuiMenu::setAndroidMenuStyle(ImGui::GetStyle(), androidMenuScale);
+	GuiMenu::setAndroidMenuStyle(ImGui::GetStyle(), settings.display.uiScale);
 #endif
 	if (settings.display.uiScale != 1.f)
 		ImGui::GetStyle().ScaleAllSizes(settings.display.uiScale);

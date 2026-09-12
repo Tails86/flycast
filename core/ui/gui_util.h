@@ -134,8 +134,6 @@ static inline float uiScaled(float f) {
 	return f * settings.display.uiScale;
 }
 
-// Platform baselines keep portable, synced scale percentages visually similar.
-// Apply them only while rendering; never persist the adjusted value.
 static inline float uiPlatformScaleFactor() {
 #if defined(__ANDROID__)
 	return 0.65f;

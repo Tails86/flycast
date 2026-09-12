@@ -133,6 +133,7 @@ std::string gameIdFromFilename(const std::string& filename)
 	std::string fullyQualifiedFilename = error ? filename : absolutePath.string();
 
 #ifdef _WIN32
+	// Ensure backslashes are used for Windows paths, even when absolute() fails
 	std::replace(fullyQualifiedFilename.begin(), fullyQualifiedFilename.end(), '/', '\\');
 #endif
 
