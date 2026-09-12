@@ -146,7 +146,7 @@ static void emuEventCallback(Event event, void *)
 		boxart.checkpointPlaytime(true);
 		break;
 	case Event::VBlank:
-		boxart.checkpointPlaytime();
+		boxart.checkpointPlaytime(false);
 		break;
 	default:
 		break;
@@ -2859,7 +2859,7 @@ static void gui_display_loadscreen()
 				ImGui::Text("%s", label);
 				float progress = 0;
 				char overlay[64] = "";
-				
+
 				if (!gameReady)
 				{
 					progress = gameLoader.getProgress().progress;

@@ -36,7 +36,7 @@ void SetCurrentTARC(u32 addr)
 		//Flush cache to context
 		verify(ta_ctx != 0);
 		ta_ctx->tad=ta_tad;
-		
+
 		//clear context
 		ta_ctx=0;
 		ta_tad.Reset(0);
@@ -49,7 +49,7 @@ static cResetEvent frame_finished;
 bool QueueRender(TA_context* ctx)
 {
 	verify(ctx != 0);
-	
+
 	bool skipFrame = !rend_is_enabled();
 	if (!skipFrame)
 	{
@@ -91,7 +91,7 @@ TA_context* DequeueRender()
 
 void FinishRender(TA_context* ctx)
 {
-	if (ctx != nullptr)
+	if (ctx != nullptr && rqueue != nullptr)
 	{
 		verify(rqueue == ctx);
 		rqueue = nullptr;
@@ -179,7 +179,7 @@ TA_context *tactx_Pop(u32 addr)
 		if (ctx_list[i]->Address == addr)
 		{
 			TA_context *ctx = ctx_list[i];
-			
+
 			if (::ta_ctx == ctx)
 				SetCurrentTARC(TACTX_NONE);
 

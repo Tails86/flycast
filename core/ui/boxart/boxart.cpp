@@ -34,6 +34,7 @@
 #include <cstring>
 #include <cstdio>
 #include <future>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -120,6 +121,22 @@ std::string normalizeLibraryGameId(std::string value)
 		return static_cast<char>(std::toupper(c));
 	});
 	return value;
+}
+
+std::string gameIdFromFilename(const std::string& filename)
+{
+	if (filename.empty())
+		return {};
+
+	std::error_code error;
+	const std::filesystem::path absolutePath = std::filesystem::absolute(filename, error);
+	std::string fullyQualifiedFilename = error ? filename : absolutePath.string();
+
+#ifdef _WIN32
+	std::replace(fullyQualifiedFilename.begin(), fullyQualifiedFilename.end(), '/', '\\');
+#endif
+
+	return "FILE:" + fullyQualifiedFilename;
 }
 
 std::string getLibraryPlaytimeDatabasePath(const std::string& root)
@@ -506,19 +523,26 @@ GameBoxart Boxart::getBoxart(const GameMedia& media)
 		return getPhysicalBoxart(media);
 
 	GameBoxart boxart;
+
 	{
 		std::lock_guard<std::mutex> guard(mutex);
 		auto it = games.find(media.fileName);
-		if (it != games.end())
+
+		if (it != games.end()) {
 			boxart = it->second;
-		else
-			boxart = makeMediaBoxart(media);
+		}
+	}
+
+	if (!boxart.isValid()) {
+		boxart = makeMediaBoxart(media);
+	} else if (isMissingBoxartFile(boxart)) {
+		boxart.boxartPath.clear();
+	}
+
+	{
+		std::lock_guard<std::mutex> guard(playtimeMutex);
 		applyLibraryPlaytimeUnlocked(boxart);
 	}
-	if (boxart.fileName.empty())
-		boxart = makeMediaBoxart(media);
-	else if (isMissingBoxartFile(boxart))
-		boxart.boxartPath.clear();
 
 	if (sourceMode == static_cast<int>(BoxartSourceMode::CustomThenScraped))
 	{
@@ -599,6 +623,10 @@ GameBoxart Boxart::getBoxartAndQueue(const GameMedia& media, bool startFetch)
 			if (queueScrape)
 				toFetch.push_back(boxart);
 		}
+	}
+
+	{
+		std::lock_guard<std::mutex> guard(playtimeMutex);
 		applyLibraryPlaytimeUnlocked(boxart);
 	}
 
@@ -625,26 +653,32 @@ bool Boxart::shouldFetchOnline() const
 
 GameBoxart Boxart::getPhysicalBoxart(const GameMedia& media)
 {
+	GameBoxart boxart;
+
 	{
 		std::lock_guard<std::mutex> guard(mutex);
 		auto it = physicalCache.find(media.fileName);
-		if (it != physicalCache.end())
-		{
-			GameBoxart boxart = it->second;
-			applyLibraryPlaytimeUnlocked(boxart);
-			return boxart;
+		if (it != physicalCache.end()) {
+			boxart = it->second;
 		}
 	}
 
-	GameBoxart boxart = makeMediaBoxart(media);
+	if (!boxart.isValid()) {
+		boxart = makeMediaBoxart(media);
 
-	OfflineScraper physicalScraper;
-	physicalScraper.initialize(getSaveDirectory());
-	physicalScraper.scrape(boxart);
+		OfflineScraper physicalScraper;
+		physicalScraper.initialize(getSaveDirectory());
+		physicalScraper.scrape(boxart);
+
+		{
+			std::lock_guard<std::mutex> guard(mutex);
+			physicalCache[boxart.fileName] = boxart;
+
+		}
+	}
 
 	{
-		std::lock_guard<std::mutex> guard(mutex);
-		physicalCache[boxart.fileName] = boxart;
+		std::lock_guard<std::mutex> guard(playtimeMutex);
 		applyLibraryPlaytimeUnlocked(boxart);
 	}
 
@@ -929,7 +963,7 @@ void Boxart::saveDatabase()
 		savedGeneration = databaseGeneration;
 		snapshot.reserve(games.size());
 		for (const auto& game : games)
-			if (game.second.scraped || game.second.parsed || !game.second.fileName.empty())
+			if (game.second.scraped || game.second.parsed || game.second.isValid())
 				snapshot.push_back(game.second);
 	}
 
@@ -1107,10 +1141,16 @@ void Boxart::loadDatabase()
 void Boxart::applyLibraryPlaytimeUnlocked(GameBoxart& boxart) const
 {
 	boxart.playTimeSeconds.reset();
-	const std::string gameId = normalizeLibraryGameId(!boxart.arcade && !boxart.uniqueId.empty()
-			? boxart.uniqueId : "FILE:" + boxart.fileName);
+
+	const std::string gameId = (
+		(!boxart.arcade && !boxart.uniqueId.empty())
+			? normalizeLibraryGameId(boxart.uniqueId)
+			: gameIdFromFilename(boxart.fileName)
+	);
+
 	if (gameId.empty())
 		return;
+
 	const auto it = libraryPlaytimeByGameId.find(gameId);
 	if (it != libraryPlaytimeByGameId.end())
 		boxart.playTimeSeconds = it->second;
@@ -1215,7 +1255,7 @@ void Boxart::startPlaytime(const std::string& gameId, const std::string& gamePat
 	if (playtimeGameId.empty() && !gamePath.empty())
 	{
 		try {
-			playtimeGameId = normalizeLibraryGameId("FILE:" + hostfs::storage().getFileInfo(gamePath).name);
+			playtimeGameId = gameIdFromFilename(hostfs::storage().getFileInfo(gamePath).name);
 		} catch (const hostfs::StorageException&) {
 			WARN_LOG(COMMON, "Cannot identify title for playtime: %s", gamePath.c_str());
 		}
@@ -1235,18 +1275,18 @@ void Boxart::resumePlaytime()
 	}
 }
 
-void Boxart::checkpointPlaytime(bool pause)
+void Boxart::checkpointPlaytime(bool isPaused)
 {
 	std::lock_guard<std::mutex> sessionGuard(playtimeMutex);
 	const auto now = std::chrono::steady_clock::now();
-	if (!pause && (!playtimeRunning || now - playtimeCheckpoint < std::chrono::seconds(30)))
+	if (!isPaused && (!playtimeRunning || now - playtimeCheckpoint < std::chrono::seconds(30)))
 		return;
 	playtimeCheckpoint = now;
 	if (playtimeWrite.valid())
 	{
 		// Periodic disk I/O never stalls emulation. Pause/shutdown must join it
 		// before replacing the same file with the final session total.
-		if (!pause && playtimeWrite.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+		if (!isPaused && playtimeWrite.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
 			return;
 		if (!playtimeWrite.get())
 			playtimeDirty = true;
@@ -1262,7 +1302,7 @@ void Boxart::checkpointPlaytime(bool pause)
 		total += std::min<u64>(seconds.count(), std::numeric_limits<u64>::max() - total);
 		playtimeDirty = true;
 	}
-	if (pause)
+	if (isPaused)
 		playtimeRunning = false;
 	if (!playtimeDirty || !playtimeWritable)
 		return;
@@ -1284,7 +1324,7 @@ void Boxart::checkpointPlaytime(bool pause)
 		WARN_LOG(COMMON, "Unable to save Library playtime to %s", path.c_str());
 		return false;
 	};
-	if (pause)
+	if (isPaused)
 		playtimeDirty = !write();
 	else
 	{
