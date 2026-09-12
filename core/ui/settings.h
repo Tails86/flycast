@@ -27,6 +27,7 @@ using namespace i18n;
 enum class GuiSettingsTab
 {
 	General,
+	Library,
 	Video,
 	Audio,
 	Controls,

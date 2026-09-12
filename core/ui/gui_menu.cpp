@@ -298,6 +298,11 @@ void openGeneralSettings()
 	openSettingsTab(GuiSettingsTab::General);
 }
 
+void openLibrarySettings()
+{
+	openSettingsTab(GuiSettingsTab::Library);
+}
+
 void openVideoSettings()
 {
 	openSettingsTab(GuiSettingsTab::Video);
@@ -571,6 +576,12 @@ void renderSettingsMenu()
 		if (ImGui::MenuItem(T("General"), nullptr, false, true))
 		{
 			openGeneralSettings();
+		}
+
+		// Library
+		if (ImGui::MenuItem(T("Library"), nullptr, false, true))
+		{
+			openLibrarySettings();
 		}
 
 		// Video

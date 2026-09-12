@@ -27,6 +27,8 @@ SettingsNew::SettingsTab toSettingsNewTab(GuiSettingsTab tab)
 	{
 	case GuiSettingsTab::General:
 		return SettingsNew::SettingsTab::General;
+	case GuiSettingsTab::Library:
+		return SettingsNew::SettingsTab::Library;
 	case GuiSettingsTab::Video:
 		return SettingsNew::SettingsTab::Video;
 	case GuiSettingsTab::Audio:
