@@ -172,36 +172,16 @@ static float SettingsAndroidBaseScale()
 {
 	return SettingsAndroidScaleStateCache().baseScale;
 }
-
-static float SettingsAndroidVisualUserScale(float userScale)
-{
-	// The portable slider's minimum of 50 becomes 32.5% on Android.
-	constexpr float minimumUserScale = 0.50f * 0.65f;
-	constexpr float defaultUserScale = 0.65f;
-	constexpr float maximumUserScale = 2.00f;
-	constexpr float maximumVisualScale = 1.25f;
-
-	userScale = std::clamp(userScale, minimumUserScale, maximumUserScale);
-	if (userScale <= defaultUserScale)
-		return userScale;
-
-	// Android already converts physical display density into pixels. Preserve the
-	// useful lower range, but taper larger user values so dense phone displays do
-	// not multiply the Settings UI into an unusable layout.
-	const float progress = (userScale - defaultUserScale) / (maximumUserScale - defaultUserScale);
-	return defaultUserScale + progress * (maximumVisualScale - defaultUserScale);
-}
 #endif
 
 static float SettingsTextPreviewScale()
 {
 #if defined(__ANDROID__)
-	const float userScale = uiUserScale();
 	const float appliedUserScale = std::max(0.01f, SettingsAndroidScaleStateCache().appliedUserScale);
 	// The font atlas contains the globally applied user scale. Compensate for it
 	// here so Settings text and geometry share the same bounded Android scale,
 	// both while previewing and after Apply rebuilds the atlas.
-	return SettingsAndroidVisualUserScale(userScale) / appliedUserScale;
+	return uiUserScale() / appliedUserScale;
 #else
 	return 1.0f;
 #endif
@@ -216,8 +196,7 @@ static float SettingsPreviewFontSize(ImFont* font)
 static float SettingsLayoutScaled(float px)
 {
 #if defined(__ANDROID__)
-	const float userScale = uiUserScale();
-	return px * SettingsAndroidBaseScale() * SettingsAndroidVisualUserScale(userScale);
+	return px * SettingsAndroidBaseScale() * uiUserScale();
 #else
 	return uiScaled(px);
 #endif
@@ -2992,9 +2971,6 @@ static void renderSettingsContentTab(SettingsTab tab)
 		uiScalingCfg.slider.format = "%d%%";
 		uiScalingCfg.slider.valueWidth = 220.0f;
 		uiScalingCfg.slider.showApplyFlag = &showApplyButtonForUIScaling;
-#if defined(__ANDROID__)
-		uiScalingCfg.slider.requireApplyToDismiss = true;
-#endif
 		uiScalingCfg.slider.onApply = [&]() {
 			mainui_reinit();
 			uiUserScaleUpdated = false;
@@ -4265,10 +4241,10 @@ void renderVideoTab()
 		texturePreloadCfg.options.optionCount = static_cast<int>(texturePreloadingOptions.size());
 		texturePreloadCfg.options.currentValue = &configuredMode;
 		texturePreloadCfg.options.valueWidth = 220.0f;
-		texturePreloadCfg.options.onChange = [&](int selectedType) { 
+		texturePreloadCfg.options.onChange = [&](int selectedType) {
 			if (selectedType < 0 || selectedType >= texturePreloadingOptions.size())
 				return false;
-			config::PreloadCustomTextures = selectedType; 
+			config::PreloadCustomTextures = selectedType;
 			return true;
 		};
 
