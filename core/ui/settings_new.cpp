@@ -2412,19 +2412,25 @@ static void renderContentArea()
 				* g_contentWindow->InnerRect.GetWidth() * eased;
 		for (ImGuiWindow* window : GImGui->Windows)
 		{
-			if (!window->Active || (window != g_contentWindow
-					&& !ImGui::IsWindowChildOf(window, g_contentWindow, false)))
+			if (
+				!window->Active ||
+				(window != g_contentWindow && !ImGui::IsWindowChildOf(window, g_contentWindow, false))
+			) {
 				continue;
+			}
+
 			ImDrawList* draw = window->DrawList;
-			for (int i = window == g_contentWindow ? firstVertex : 0; i < draw->VtxBuffer.Size; ++i)
+			for (int i = window == g_contentWindow ? firstVertex : 0; i < draw->VtxBuffer.Size; ++i) {
 				draw->VtxBuffer[i].pos.x += offset;
+			}
 			// Nested lists move too, clipped to the stationary content pane.
-			if (window != g_contentWindow)
+			if (window != g_contentWindow) {
 				for (ImDrawCmd& command : draw->CmdBuffer)
 				{
 					command.ClipRect.x = std::clamp(command.ClipRect.x + offset, g_contentWindow->InnerClipRect.Min.x, g_contentWindow->InnerClipRect.Max.x);
 					command.ClipRect.z = std::clamp(command.ClipRect.z + offset, command.ClipRect.x, g_contentWindow->InnerClipRect.Max.x);
 				}
+			}
 		}
 	}
 
@@ -2433,7 +2439,7 @@ static void renderContentArea()
 	// those finger drags into scrolling instead of row activation.
 	scrollWhenDraggingOnVoid();
 #if defined(__ANDROID__)
-	windowDragScroll(g_state.currentTab != SettingsTab::Audio);
+	windowDragScroll(false);
 #else
 	windowDragScroll();
 #endif
