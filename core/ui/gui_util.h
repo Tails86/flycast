@@ -504,7 +504,6 @@ struct PopupSliderConfig {
     bool* showApplyFlag = nullptr;  // External flag to control apply button visibility
     bool hasPendingChanges = false; // Internal flag tracking if value changed
     bool preferTextEntry = false;   // Open popup in text-entry mode (mouse flow)
-    bool requireApplyToDismiss = false; // Block outside dismissal while Apply is pending
 };
 
 // Unified configuration struct

@@ -1917,29 +1917,34 @@ bool RenderOptionsPopup(const PopupOptionsConfig& cfg)
 	static int openingFrame = -1;
 	const ImGuiID ownerPopup = ImGui::GetID(cfg.popupID);
 	const bool isOpen = ImGui::IsPopupOpen(cfg.popupID);
-	if (isOpen)
-		for (const ImGuiPopupData& popup : GImGui->OpenPopupStack)
-			if (popup.PopupId == ownerPopup && (editingPopup != ownerPopup || openingFrame != popup.OpenFrameCount))
-			{
-				editingPopup = ownerPopup;
-				openingFrame = popup.OpenFrameCount;
-				openingValue = *cfg.currentValue;
-			}
-	if (editingPopup == ownerPopup && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)
-			&& (!isOpen || GImGui->OpenPopupStack.back().PopupId == ownerPopup))
-	{
+	const bool isTopmost = isOpen && !GImGui->OpenPopupStack.empty()
+			&& GImGui->OpenPopupStack.back().PopupId == ownerPopup;
+
+	if (isTopmost) {
+		const ImGuiPopupData& popup = GImGui->OpenPopupStack.back();
+		if (editingPopup != ownerPopup || openingFrame != popup.OpenFrameCount) {
+			editingPopup = ownerPopup;
+			openingFrame = popup.OpenFrameCount;
+			openingValue = *cfg.currentValue;
+		}
+	}
+
+	if (editingPopup == ownerPopup && isTopmost && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
 		const bool changed = *cfg.currentValue != openingValue;
 		*cfg.currentValue = openingValue;
 		if (changed && cfg.onChange)
 			cfg.onChange(openingValue);
 		editingPopup = 0;
 		ImGui::ClearActiveID();
-		if (isOpen)
-			ImGui::ClosePopupToLevel(GImGui->OpenPopupStack.Size - 1, true);
+		ImGui::ClosePopupToLevel(GImGui->OpenPopupStack.Size - 1, true);
 		return changed;
 	}
-	if (!isOpen && editingPopup == ownerPopup)
+
+	if (editingPopup == ownerPopup && !isTopmost) {
+		// A different (nested) popup is now active or this one closed; stop tracking it here.
 		editingPopup = 0;
+	}
+
     // Icon and row label
     SettingIcon(cfg.icon, ImVec2(uiScaled(cfg.iconSize), uiScaled(cfg.iconSize)));
     ImGui::SameLine(0, uiScaled(cfg.iconSpacing));
@@ -2105,29 +2110,28 @@ bool RenderOptionsPopup(const PopupOptionsConfig& cfg)
 // Internal helper to render slider popup (DuckStation-style)
 bool RenderSliderPopup(PopupSliderConfig& cfg)
 {
-	// Store values, never pointers/callbacks: configurations may refer to locals
-	// reconstructed each frame. Cancellation uses this frame's live callback.
 	static ImGuiID editingPopup = 0;
 	static int openingValue = 0;
 	static int openingFrame = -1;
 	const ImGuiID ownerPopup = ImGui::GetID(cfg.popupID);
 	const bool isOpen = ImGui::IsPopupOpen(cfg.popupID);
-	if (isOpen)
+	const bool isTopmost = isOpen && !GImGui->OpenPopupStack.empty()
+			&& GImGui->OpenPopupStack.back().PopupId == ownerPopup;
+
+	if (isTopmost)
 	{
-		for (const ImGuiPopupData& popup : GImGui->OpenPopupStack)
-			if (popup.PopupId == ownerPopup && (editingPopup != ownerPopup || openingFrame != popup.OpenFrameCount))
-			{
-				editingPopup = ownerPopup;
-				openingFrame = popup.OpenFrameCount;
-				if (cfg.onOpen)
-					cfg.onOpen();
-				openingValue = *cfg.currentValue;
-			}
+		const ImGuiPopupData& popup = GImGui->OpenPopupStack.back();
+		if (editingPopup != ownerPopup || openingFrame != popup.OpenFrameCount)
+		{
+			editingPopup = ownerPopup;
+			openingFrame = popup.OpenFrameCount;
+			if (cfg.onOpen)
+				cfg.onOpen();
+			openingValue = *cfg.currentValue;
+		}
 	}
-	const bool cancel = editingPopup == ownerPopup
-			&& ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)
-			&& (!isOpen || GImGui->OpenPopupStack.back().PopupId == ownerPopup);
-	if (cancel)
+
+	if ((editingPopup == ownerPopup) && isTopmost && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
 	{
 		const bool changed = *cfg.currentValue != openingValue;
 		*cfg.currentValue = openingValue;
@@ -2140,12 +2144,14 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
 			*cfg.showApplyFlag = false;
 		editingPopup = 0;
 		ImGui::ClearActiveID();
-		if (isOpen)
-			ImGui::ClosePopupToLevel(GImGui->OpenPopupStack.Size - 1, true);
+		ImGui::ClosePopupToLevel(GImGui->OpenPopupStack.Size - 1, true);
 		return changed;
 	}
-	if (!isOpen && editingPopup == ownerPopup)
-		editingPopup = 0;
+
+	if (editingPopup == ownerPopup && !isTopmost) {
+		editingPopup = 0; // Nested popup took over, or this one closed; release tracking.
+	}
+
     const auto formatValueText = [&](int value, char* out, size_t outSize) {
         if (cfg.valueFormatter) {
             const std::string text = cfg.valueFormatter(value);
@@ -2212,14 +2218,18 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
     ImGui::SetNextWindowSize(ImVec2(popupWidth, 0), ImGuiCond_Always);
 
     PopupStyleScope style;
-    const bool applyPending = editingPopup == ownerPopup && *cfg.currentValue != openingValue;
+
     // A pending preview may require explicit confirmation. Making only that
     // state modal prevents outside input from discarding the popup before its
     // Apply callback rebuilds the UI using the selected value.
     // Keep the same popup identity while becoming modal; switching to
     // BeginPopupModal creates a different window and loses the editing state.
-    const bool popupVisible = ImGui::BeginPopup(cfg.popupID, ImGuiWindowFlags_NoScrollbar
-        | ((cfg.onApply || cfg.requireApplyToDismiss) && applyPending ? ImGuiWindowFlags_Modal : 0));
+    const bool popupVisible = (
+		cfg.onApply
+		? ImGui::BeginPopupModal(cfg.popupID, nullptr, ImGuiWindowFlags_NoScrollbar)
+		: ImGui::BeginPopup(cfg.popupID, ImGuiWindowFlags_NoScrollbar)
+	);
+
     if (popupVisible) {
         if (rowLabel[0] != '\0') {
             ImGui::PushFont(largeFont);
@@ -2468,10 +2478,6 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
 
         ImGui::Spacing();
 
-        // DuckStation-style button layout (right-aligned)
-        bool shouldShowApply =
-                               (cfg.hasPendingChanges || modePendingChanges || (cfg.showApplyFlag && *cfg.showApplyFlag));
-
         if (controllerAcceptValue || keyboardAcceptValue) {
             if (cfg.onApply)
                 cfg.onApply();
@@ -2483,7 +2489,7 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
                 *cfg.showApplyFlag = false;
             ImGui::CloseCurrentPopup();
             editingPopup = 0;
-        } else if (cfg.onApply && shouldShowApply) {
+        } else if (cfg.onApply) {
             // Begin menu buttons container
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(uiScaled(8), uiScaled(8)));
 
@@ -2515,11 +2521,6 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
             ImGui::PopStyleVar(3); // Pop ItemSpacing, FrameRounding, FramePadding
         }
 
-        // NewFrame handles outside clicks before this function runs again.
-        // Mark pending previews modal now, including their first changed frame.
-        if ((cfg.onApply || cfg.requireApplyToDismiss) && editingPopup == ownerPopup
-            && *cfg.currentValue != openingValue)
-            ImGui::GetCurrentWindow()->Flags |= ImGuiWindowFlags_Modal;
         ImGui::EndPopup();
     }
 
