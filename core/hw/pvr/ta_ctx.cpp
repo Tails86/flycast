@@ -46,7 +46,7 @@ void SetCurrentTARC(u32 addr)
 static TA_context* rqueue;
 static cResetEvent frame_finished;
 
-bool QueueRender(TA_context* ctx)
+bool SetRender(TA_context* ctx)
 {
 	verify(ctx != 0);
 
@@ -81,7 +81,7 @@ bool QueueRender(TA_context* ctx)
 	return true;
 }
 
-TA_context* DequeueRender()
+TA_context* GetRender()
 {
 	if (rqueue != nullptr)
 		FrameCount++;
@@ -89,13 +89,12 @@ TA_context* DequeueRender()
 	return rqueue;
 }
 
-void FinishRender(TA_context* ctx)
+void FinishRender(bool resetRender)
 {
-	if (ctx != nullptr && rqueue != nullptr)
+	if (resetRender && rqueue != nullptr)
 	{
-		verify(rqueue == ctx);
+		tactx_Recycle(rqueue);
 		rqueue = nullptr;
-		tactx_Recycle(ctx);
 	}
 	frame_finished.Set();
 }
