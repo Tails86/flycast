@@ -2230,8 +2230,12 @@ static void gui_display_content()
 	filter.Draw(T("Filter"), filterWidth);
 	ImGui::SameLine(0, 24.0f * libraryToolbarScale);
 	ImGui::SetNextItemWidth(iconScaleSliderWidth);
-	if (ImGui::SliderInt(iconScaleLabel, &libraryIconScale, 50, 200, "%d%%"))
+	if (ImGui::SliderInt(iconScaleLabel, &libraryIconScale, 50, 200, "%d%%")) {
 		config::LibraryIconScale.set(libraryIconScale);
+	}
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        config::LibraryIconScale.save();
+    }
 #endif
     if (gui_state != GuiState::SelectDisk)
     {
