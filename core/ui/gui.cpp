@@ -55,6 +55,7 @@
 #endif
 #include "vgamepad.h"
 #include "settings.h"
+#include "settings_new.h"
 #include "oslib/i18n.h"
 #include "gui_font.h"
 using namespace i18n;
@@ -127,16 +128,25 @@ static void emuEventCallback(Event event, void *)
 	switch (event)
 	{
 	case Event::Resume:
+		boxart.resumePlaytime();
 		game_started = true;
 		vgamepad::startGame();
 		break;
 	case Event::Start:
+		boxart.startPlaytime(settings.platform.system == DC_PLATFORM_DREAMCAST ? settings.content.gameId : "", settings.content.path);
 		markLibraryGameBooted(settings.content.gameId, settings.content.path);
 		GamepadDevice::load_system_mappings();
 		break;
 	case Event::Terminate:
+		boxart.checkpointPlaytime(true);
 		GamepadDevice::load_system_mappings();
 		game_started = false;
+		break;
+	case Event::Pause:
+		boxart.checkpointPlaytime(true);
+		break;
+	case Event::VBlank:
+		boxart.checkpointPlaytime(false);
 		break;
 	default:
 		break;
@@ -168,6 +178,8 @@ void gui_init()
     EventManager::listen(Event::Resume, emuEventCallback);
     EventManager::listen(Event::Start, emuEventCallback);
 	EventManager::listen(Event::Terminate, emuEventCallback);
+	EventManager::listen(Event::Pause, emuEventCallback);
+	EventManager::listen(Event::VBlank, emuEventCallback);
     ggpo::receiveChatMessages([](int playerNum, const std::string& msg) { chat.receive(playerNum, msg); });
 
 #ifdef TARGET_UWP
@@ -249,7 +261,7 @@ void gui_updateStyle()
     if (settings.display.width <= 640 || settings.display.height <= 480)
     	settings.display.uiScale = std::min(1.2f, settings.display.uiScale);
 #endif
-    settings.display.uiScale *= config::UIScaling / 100.f;
+    settings.display.uiScale *= uiUserScale();
 	if (settings.display.uiScale == uiScale && ImGui::GetIO().Fonts->IsBuilt())
 		return;
 	uiScale = settings.display.uiScale;
@@ -266,6 +278,9 @@ void gui_updateStyle()
 	ImGui::GetStyle().ItemInnerSpacing = ImVec2(4, 6);	// from 4,4
 #if defined(__ANDROID__) || defined(TARGET_IPHONE) || defined(__SWITCH__)
 	ImGui::GetStyle().TouchExtraPadding = ImVec2(1, 1);	// from 0,0
+#endif
+#if defined(__ANDROID__)
+	GuiMenu::setAndroidMenuStyle(ImGui::GetStyle(), settings.display.uiScale);
 #endif
 	if (settings.display.uiScale != 1.f)
 		ImGui::GetStyle().ScaleAllSizes(settings.display.uiScale);
@@ -1959,8 +1974,13 @@ static bool gameImageButton(ImguiTexture& texture, const std::string& tooltip, I
 		const std::string& gameName, float fallbackTitleSize = 0.0f)
 {
 	(void)tooltip;
+	// Library artwork keeps a two-pixel highlight border regardless of the
+	// general UI scale. ImageButton otherwise inherits scaled FramePadding,
+	// which makes the artwork shrink inside an unchanged library card.
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, 2.0f));
 	bool pressed = texture.button("##imagebutton", size, gameName, ImVec4(0, 0, 0, 0), ImVec4(1, 1, 1, 1),
 			fallbackTitleSize);
+	ImGui::PopStyleVar();
 
     return pressed;
 }
@@ -2130,17 +2150,27 @@ static void gui_display_content()
 
     ImGui::Begin("##main", nullptr, ImGuiWindowFlags_NoDecoration);
 
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(20, 8));
-	ImGui::PushFont(largeFont, 18.5f);
+    // Keep the library toolbar cohesive at a larger size without coupling it to
+    // the user-configured global UI Scaling value.
+    constexpr float libraryToolbarScale = 4.0f / 3.0f;
+    const ImVec2 itemSpacing = ImGui::GetStyle().ItemSpacing;
+    const ImVec2 itemInnerSpacing = ImGui::GetStyle().ItemInnerSpacing;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+            ImVec2(20.0f * libraryToolbarScale, 8.0f * libraryToolbarScale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+            ImVec2(itemSpacing.x * libraryToolbarScale, itemSpacing.y * libraryToolbarScale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing,
+            ImVec2(itemInnerSpacing.x * libraryToolbarScale, itemInnerSpacing.y * libraryToolbarScale));
+	ImGui::PushFont(largeFont, 18.5f * libraryToolbarScale);
     ImGui::AlignTextToFramePadding();
     // Position "GAMES" text and search bar below the menu bar (window is already positioned below menu bar)
     ImGui::SetCursorPosY(ImGui::GetStyle().FramePadding.y);
-    ImGui::Indent(10);
+    ImGui::Indent(10.0f * libraryToolbarScale);
     ImGui::Text("%s", T("GAMES"));
-    ImGui::Unindent(10);
+    ImGui::Unindent(10.0f * libraryToolbarScale);
 
     static ImGuiTextFilter filter;
-	int libraryIconScale = std::clamp(config::LibraryIconScale.get(), 100, 1000);
+	int libraryIconScale = std::clamp(config::LibraryIconScale.get(), 50, 200);
 	static bool libraryHoverSettingsInitialized = false;
 	static int lastLibraryIconScale = libraryIconScale;
 	static int lastLibraryDisplayStyle = config::LibraryDisplayStyle.get();
@@ -2174,22 +2204,29 @@ static void gui_display_content()
 		lastBoxartDisplayMode = currentBoxartDisplayMode;
 	}
     IconButton settingsBtn(ICON_FA_GEAR, T("Settings"));
-#if !defined(__ANDROID__) && !defined(TARGET_IPHONE) && !defined(TARGET_UWP) && !defined(__SWITCH__)
-	const float iconScaleSliderWidth = 135.0f;
+#if !defined(TARGET_IPHONE) && !defined(TARGET_UWP) && !defined(__SWITCH__)
+	const float iconScaleSliderWidth = 135.0f * libraryToolbarScale;
+	const char* iconScaleLabel = T("Icon Size");
 	const float iconScaleControlWidth = iconScaleSliderWidth + ImGui::GetStyle().ItemInnerSpacing.x
-			+ ImGui::CalcTextSize("Icon Size").x;
+			+ ImGui::CalcTextSize(iconScaleLabel).x;
 	const float settingsLeft = ImGui::GetContentRegionMax().x - settingsBtn.width();
-	const float sliderLeft = settingsLeft - 24.0f - iconScaleControlWidth;
-	ImGui::SameLine(0, 32);
+	const float sliderLeft = settingsLeft - 24.0f * libraryToolbarScale - iconScaleControlWidth;
+	ImGui::SameLine(0, 32.0f * libraryToolbarScale);
 	const float availableFilterWidth = sliderLeft - ImGui::GetCursorPosX()
 			- ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize(T("Filter")).x;
-	const float maxFilterWidth = std::max(80.0f, std::min(availableFilterWidth, 520.0f));
-	const float filterWidth = std::clamp(availableFilterWidth * 0.5f, 80.0f, maxFilterWidth);
+	const float maxFilterWidth = std::max(80.0f * libraryToolbarScale,
+			std::min(availableFilterWidth, 520.0f * libraryToolbarScale));
+	const float filterWidth = std::clamp(availableFilterWidth * 0.5f,
+			80.0f * libraryToolbarScale, maxFilterWidth);
 	filter.Draw(T("Filter"), filterWidth);
-	ImGui::SameLine(0, 24.0f);
+	ImGui::SameLine(0, 24.0f * libraryToolbarScale);
 	ImGui::SetNextItemWidth(iconScaleSliderWidth);
-	if (ImGui::SliderInt("Icon Size", &libraryIconScale, 100, 1000, "%d%%"))
+	if (ImGui::SliderInt(iconScaleLabel, &libraryIconScale, 50, 200, "%d%%")) {
 		config::LibraryIconScale.set(libraryIconScale);
+	}
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        config::LibraryIconScale.save();
+    }
 #endif
     if (gui_state != GuiState::SelectDisk)
     {
@@ -2222,7 +2259,7 @@ static void gui_display_content()
 			gui_setState(GuiState::Commands);
     }
 	ImGui::PopFont();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(3);
 
     boxart.refreshCustomBoxartIndex(false);
     scanner.fetch_game_list();
@@ -2232,9 +2269,19 @@ static void gui_display_content()
     {
 		const bool useListStyle = config::LibraryDisplayStyle.get() == static_cast<int>(config::LibraryDisplayStyleMode::List);
 		const float totalWidth = ImGui::GetContentRegionMax().x - (!ImGui::GetCurrentWindow()->ScrollbarY ? ImGui::GetStyle().ScrollbarSize : 0);
-		const float libraryIconScaleFactor = libraryIconScale / 100.0f;
-		const float libraryTextScaleFactor = 1.5f + (libraryIconScaleFactor - 1.0f) / 3.0f;
-		const ImVec2 iconSize(32.0f * libraryIconScaleFactor, 32.0f * libraryIconScaleFactor);
+#if defined(__ANDROID__)
+		constexpr float libraryPlatformFactor = 0.85f;
+#else
+		constexpr float libraryPlatformFactor = 1.0f;
+#endif
+		// 100% icon scale corresponds to 1.18 inches based on display DPI.
+		constexpr float libraryIconBaseInches = 1.18f * libraryPlatformFactor;
+		constexpr float libraryListIconBaseInches = 0.34f * libraryPlatformFactor;
+		const float iconScaleMultiplier = libraryIconScale / 100.0f;
+		const float gridBoxBaseSize = libraryIconBaseInches * settings.display.dpi * iconScaleMultiplier;
+		const float libraryTextScaleFactor = iconScaleMultiplier;
+		const float listIconPixels = libraryListIconBaseInches * settings.display.dpi * iconScaleMultiplier;
+		const ImVec2 iconSize(listIconPixels, listIconPixels);
 		const double iconAnimationClock = getLibraryIconAnimationClock();
 
 		if (useListStyle)
@@ -2252,10 +2299,26 @@ static void gui_display_content()
 		};
 		const float iconColumnWidth = std::max(iconSize.x, calcLibraryTextWidth("Icon"))
 				+ ImGui::GetStyle().CellPadding.x * 2.0f;
+		auto calcLibraryColumnWidth = [&](const char *header, const char *sample) {
+			return std::max(calcLibraryTextWidth(header), calcLibraryTextWidth(sample))
+					+ ImGui::GetStyle().CellPadding.x * 2.0f;
+		};
+		const char* iconLabel = T("Icon");
+		const char* productIdLabel = T("Product ID");
+		const float productIdColumnWidth = calcLibraryColumnWidth(productIdLabel, "T-12345M-50");
+		const char* titleLabel = T("Title");
+		const char* regionLabel = T("Region");
+		const float regionColumnWidth = calcLibraryColumnWidth(regionLabel, "JP/US/EU");
+		const char* formatLabel = T("Format");
+		const char* timePlayedLabel = T("Time Played");
+		const char* lastBootedLabel = T("Last Booted");
+		const float formatColumnWidth = calcLibraryColumnWidth(formatLabel, "Unknown");
 		const float lastBootedColumnWidth = calcLibraryTextWidth("12/31/2026 12:59:59 PM")
 				+ ImGui::GetStyle().CellPadding.x * 2.0f;
 		const float timePlayedColumnWidth = std::max(calcLibraryTextWidth(T("Time Played")), calcLibraryTextWidth("999h 59m"))
 				+ ImGui::GetStyle().CellPadding.x * 2.0f;
+		const char* sizeLabel = T("Size");
+		const float sizeColumnWidth = calcLibraryColumnWidth(sizeLabel, "99999 MB");
 
 		int counter = 0;
 		bool gameListEmpty = false;
@@ -2269,17 +2332,24 @@ static void gui_display_content()
 						| ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit
 						| ImGuiTableFlags_ScrollY, ImVec2(0.0f, 0.0f)))
 				{
-					ImGui::TableSetupColumn("Icon", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, iconColumnWidth);
-					ImGui::TableSetupColumn("Product ID", ImGuiTableColumnFlags_WidthFixed, 96.0f);
-					ImGui::TableSetupColumn("Title", ImGuiTableColumnFlags_WidthStretch);
-					ImGui::TableSetupColumn("Region", ImGuiTableColumnFlags_WidthFixed, 78.0f);
-					ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 72.0f);
-					ImGui::TableSetupColumn(T("Time Played"), ImGuiTableColumnFlags_WidthFixed, timePlayedColumnWidth);
-					ImGui::TableSetupColumn("Last Booted", ImGuiTableColumnFlags_WidthFixed, lastBootedColumnWidth);
-					ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 78.0f);
-					ImGui::TableSetColumnWidth(0, iconColumnWidth);
+					ImGui::TableSetupColumn(iconLabel, ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, iconColumnWidth);
+					ImGui::TableSetupColumn(productIdLabel, ImGuiTableColumnFlags_WidthFixed, productIdColumnWidth);
+					ImGui::TableSetupColumn(titleLabel, ImGuiTableColumnFlags_WidthStretch);
+					ImGui::TableSetupColumn(regionLabel, ImGuiTableColumnFlags_WidthFixed, regionColumnWidth);
+					ImGui::TableSetupColumn(formatLabel, ImGuiTableColumnFlags_WidthFixed, formatColumnWidth);
+					ImGui::TableSetupColumn(timePlayedLabel, ImGuiTableColumnFlags_WidthFixed, timePlayedColumnWidth);
+					ImGui::TableSetupColumn(lastBootedLabel, ImGuiTableColumnFlags_WidthFixed, lastBootedColumnWidth);
+					ImGui::TableSetupColumn(sizeLabel, ImGuiTableColumnFlags_WidthFixed, sizeColumnWidth);
 					ImGui::TableSetupScrollFreeze(0, 1);
-					ImGui::TableHeadersRow();
+					ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+					const char *const libraryColumnHeaders[] = {
+						iconLabel, productIdLabel, titleLabel, regionLabel, formatLabel, timePlayedLabel, lastBootedLabel, sizeLabel
+					};
+					for (int column = 0; column < static_cast<int>(sizeof(libraryColumnHeaders) / sizeof(libraryColumnHeaders[0])); ++column)
+					{
+						ImGui::TableSetColumnIndex(column);
+						textTableCellCentered(libraryColumnHeaders[column], tableTextSize);
+					}
 
 					const auto& gameList = scanner.get_game_list();
 					auto drawTableGame = [&](const GameMedia& game, int rowIndex) -> bool
@@ -2412,7 +2482,6 @@ static void gui_display_content()
 			}
 			else
 			{
-				const float gridBoxBaseSize = 112.0f * libraryIconScaleFactor;
 				const int itemsPerLine = std::max<int>(totalWidth / (gridBoxBaseSize + ImGui::GetStyle().ItemSpacing.x), 1);
 				const float responsiveBoxSize = totalWidth / itemsPerLine - ImGui::GetStyle().FramePadding.x * 2;
 				const ImVec2 responsiveBoxVec2 = ImVec2(responsiveBoxSize, responsiveBoxSize);
@@ -2781,7 +2850,7 @@ static void gui_display_loadscreen()
 				ImGui::Text("%s", label);
 				float progress = 0;
 				char overlay[64] = "";
-				
+
 				if (!gameReady)
 				{
 					progress = gameLoader.getProgress().progress;
@@ -2830,6 +2899,8 @@ void gui_display_ui()
 	// Initialize ImGui frame BEFORE any early returns
 	// This ensures the menu bar is always visible, even during auto-start
 	gui_newFrame();
+	if (gui_state == GuiState::Settings)
+		SettingsNew::prepareControllerNavigation();
 	ImGui::NewFrame();
 	error_msg_shown = false;
 	bool gui_open = gui_is_open();
@@ -3068,6 +3139,8 @@ void gui_term()
 	    EventManager::unlisten(Event::Resume, emuEventCallback);
 	    EventManager::unlisten(Event::Start, emuEventCallback);
 	    EventManager::unlisten(Event::Terminate, emuEventCallback);
+	    EventManager::unlisten(Event::Pause, emuEventCallback);
+	    EventManager::unlisten(Event::VBlank, emuEventCallback);
 	    clearVmuIconLookups();
 	    boxart.term();
 	}

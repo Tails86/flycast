@@ -64,6 +64,47 @@ struct MenuTouchState
 static std::mutex menuTouchStateMutex;
 static MenuTouchState menuTouchState;
 
+static ImGuiStyle androidMenuStyle;
+static float androidMenuReferenceScale = 1.0f;
+static bool androidMenuStyleReady = false;
+
+void setAndroidMenuStyle(const ImGuiStyle& unscaledStyle, float referenceScale)
+{
+	androidMenuStyle = unscaledStyle;
+	androidMenuStyle.ScaleAllSizes(referenceScale);
+	androidMenuReferenceScale = referenceScale;
+	androidMenuStyleReady = true;
+}
+
+static float androidMenuFontScale()
+{
+	if (!androidMenuStyleReady || settings.display.uiScale <= 0.01f)
+		return 1.0f;
+	return androidMenuReferenceScale / settings.display.uiScale;
+}
+
+static float androidMenuRevealHeight(ImFont* menuFont)
+{
+	ImGui::PushFont(menuFont, menuFont->LegacySize * androidMenuFontScale());
+	const float framePaddingY = androidMenuStyleReady
+			? androidMenuStyle.FramePadding.y : ImGui::GetStyle().FramePadding.y;
+	const float revealHeight = (ImGui::GetFontSize() + framePaddingY * 2.0f) * 1.75f;
+	ImGui::PopFont();
+	return revealHeight;
+}
+
+static void applyAndroidMenuStyle(const ImGuiStyle& currentStyle)
+{
+	if (!androidMenuStyleReady)
+		return;
+
+	// Theme colors may change without rebuilding the font atlas. Preserve them
+	// while replacing only the menu's geometry with its fixed 90% reference.
+	for (int i = 0; i < ImGuiCol_COUNT; ++i)
+		androidMenuStyle.Colors[i] = currentStyle.Colors[i];
+	ImGui::GetStyle() = androidMenuStyle;
+}
+
 static void publishMenuTouchState(bool captureAllTouches, bool hasTouchArea,
 		const ImVec2& touchAreaMin = ImVec2(), const ImVec2& touchAreaMax = ImVec2())
 {
@@ -99,12 +140,25 @@ static bool shouldShowMenuBar()
 
 	ImGuiIO& io = ImGui::GetIO();
 	ImFont* menuFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+#if defined(__ANDROID__)
+	const float revealHeight = androidMenuRevealHeight(menuFont);
+#else
 	ImGui::PushFont(menuFont);
 	const float revealHeight = ImGui::GetFrameHeight() * 1.75f;
 	ImGui::PopFont();
+#endif
 	const bool hasPointer = io.MousePos.x != -FLT_MAX && io.MousePos.y != -FLT_MAX;
 	const bool pointerAtTop = hasPointer && io.MousePos.y <= revealHeight;
 	const bool popupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+
+#if !defined(__ANDROID__)
+	// Keep the bar in its current state while a popup owns input. Revealing a
+	// hidden bar for a Settings popup focuses the reappearing bar and closes
+	// that popup. Real menu dropdowns open from an already visible bar, so
+	// preserving visibility also keeps them accessible away from the top edge.
+	if (popupOpen)
+		return menuBarVisibleThisFrame;
+#endif
 
 	if (io.MouseSource == ImGuiMouseSource_TouchScreen)
 	{
@@ -244,6 +298,11 @@ void openGeneralSettings()
 	openSettingsTab(GuiSettingsTab::General);
 }
 
+void openLibrarySettings()
+{
+	openSettingsTab(GuiSettingsTab::Library);
+}
+
 void openVideoSettings()
 {
 	openSettingsTab(GuiSettingsTab::Video);
@@ -294,9 +353,13 @@ void renderMainMenuBar()
 	if (!menuBarVisibleThisFrame)
 	{
 		ImFont* menuFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+#if defined(__ANDROID__)
+		const float revealHeight = androidMenuRevealHeight(menuFont);
+#else
 		ImGui::PushFont(menuFont);
 		const float revealHeight = ImGui::GetFrameHeight() * 1.75f;
 		ImGui::PopFont();
+#endif
 		const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 		publishMenuTouchState(false, menuVisible && isFullscreenMenuMode(),
 				ImVec2(0.0f, 0.0f), ImVec2(displaySize.x, revealHeight));
@@ -310,7 +373,13 @@ void renderMainMenuBar()
 	// - Cross-platform native appearance
 	// Theme colors are already set by applyCurrentTheme().
 	ImFont* menuFont = settingsTitleFont != nullptr ? settingsTitleFont : ImGui::GetFont();
+#if defined(__ANDROID__)
+	const ImGuiStyle menuStyleBackup = ImGui::GetStyle();
+	applyAndroidMenuStyle(menuStyleBackup);
+	ImGui::PushFont(menuFont, menuFont->LegacySize * androidMenuFontScale());
+#else
 	ImGui::PushFont(menuFont);
+#endif
 	if (ImGui::BeginMainMenuBar())
 	{
 		menuBarHeightThisFrame = ImGui::GetWindowHeight();
@@ -331,6 +400,9 @@ void renderMainMenuBar()
 	else
 		publishMenuTouchState(false, false);
 	ImGui::PopFont();
+#if defined(__ANDROID__)
+	ImGui::GetStyle() = menuStyleBackup;
+#endif
 }
 
 // Render File menu
@@ -386,6 +458,7 @@ void renderFileMenu()
 			loadState();
 		}
 
+#if !defined(__ANDROID__)
 		ImGui::Separator();
 
 		// Exit Emulator
@@ -393,6 +466,7 @@ void renderFileMenu()
 		{
 			exitEmulator();
 		}
+#endif
 
 		ImGui::EndMenu();
 	}
@@ -504,6 +578,12 @@ void renderSettingsMenu()
 		if (ImGui::MenuItem(T("General"), nullptr, false, true))
 		{
 			openGeneralSettings();
+		}
+
+		// Library
+		if (ImGui::MenuItem(T("Library"), nullptr, false, true))
+		{
+			openLibrarySettings();
 		}
 
 		// Video

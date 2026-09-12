@@ -72,6 +72,10 @@ struct GameBoxart
 			nowide::remove(boxartPath.c_str());
 		boxartPath = path;
 	}
+
+	bool isValid() const {
+		return !fileName.empty();
+	}
 };
 
 class Scraper

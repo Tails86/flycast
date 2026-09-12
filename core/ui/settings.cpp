@@ -18,6 +18,9 @@
  */
 #include "settings.h"
 #include "settings_new.h"
+#include "log/Log.h"
+
+#include <cstdlib>
 
 namespace {
 
@@ -27,6 +30,8 @@ SettingsNew::SettingsTab toSettingsNewTab(GuiSettingsTab tab)
 	{
 	case GuiSettingsTab::General:
 		return SettingsNew::SettingsTab::General;
+	case GuiSettingsTab::Library:
+		return SettingsNew::SettingsTab::Library;
 	case GuiSettingsTab::Video:
 		return SettingsNew::SettingsTab::Video;
 	case GuiSettingsTab::Audio:
@@ -39,9 +44,10 @@ SettingsNew::SettingsTab toSettingsNewTab(GuiSettingsTab tab)
 		return SettingsNew::SettingsTab::Advanced;
 	case GuiSettingsTab::About:
 		return SettingsNew::SettingsTab::About;
+	default:
+		ERROR_LOG(RENDERER, "Unknown GuiSettingsTab value: %d", static_cast<int>(tab));
+	    std::abort();
 	}
-
-	return SettingsNew::SettingsTab::General;
 }
 
 } // namespace

@@ -65,8 +65,6 @@ bool mainui_rend_frame()
 				return false;
 			if (config::ProfilerEnabled && config::ProfilerDrawToGUI)
 				gui_display_profiler();
-			// OSD and menu bar are rendered together
-			gui_draw_osd();
 		} catch (const RendererException& e) {
 			gui_error(i18n::Ts("Renderer error:") + "\n" + e.what() + "\n\n"
 					+ i18n::Ts("The game has been paused but it is recommended to restart Hollycast"));

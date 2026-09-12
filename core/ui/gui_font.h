@@ -27,5 +27,6 @@ extern ImFont *settingsTitleFont;
 extern ImFont *settingsValueFont;
 extern ImFont *settingsRightValueFont;
 extern ImFont *settingsIconFont;
+extern ImFont *aboutAsciiFont;
 
 void gui_loadFonts();

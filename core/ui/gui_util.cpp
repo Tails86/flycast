@@ -1074,14 +1074,23 @@ static void computeScrollSpeed(float &v)
 	}
 }
 
-void windowDragScroll()
+void windowDragScroll(bool allowHorizontal)
 {
 	ImGuiWindow *window = ImGui::GetCurrentWindow();
+	if (!allowHorizontal)
+	{
+		// Settings rows are vertically paged. Keep a tiny layout overflow from
+		// turning an Android swipe into an unintended horizontal pan.
+		window->ScrollSpeed.x = 0.0f;
+		if (window->Scroll.x != 0.0f)
+			ImGui::SetScrollX(window, 0.0f);
+	}
 	if (window->DragScrolling)
 	{
 		if (!ImGui::GetIO().MouseDown[ImGuiMouseButton_Left])
 		{
-			computeScrollSpeed(window->ScrollSpeed.x);
+			if (allowHorizontal)
+				computeScrollSpeed(window->ScrollSpeed.x);
 			computeScrollSpeed(window->ScrollSpeed.y);
 			if (window->ScrollSpeed == ImVec2())
 			{
@@ -1096,11 +1105,14 @@ void windowDragScroll()
 			ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
 			if (delta != ImVec2())
 				ImGui::ResetMouseDragDelta();
+			if (!allowHorizontal)
+				delta.x = 0.0f;
 			window->ScrollSpeed = delta;
 		}
 		if (window->DragScrolling)
 		{
-			ImGui::SetScrollX(window, window->Scroll.x - window->ScrollSpeed.x);
+			if (allowHorizontal)
+				ImGui::SetScrollX(window, window->Scroll.x - window->ScrollSpeed.x);
 			ImGui::SetScrollY(window, window->Scroll.y - window->ScrollSpeed.y);
 		}
 	}
@@ -1900,6 +1912,39 @@ struct EndMenuButtons {
 // Internal helper to render options popup
 bool RenderOptionsPopup(const PopupOptionsConfig& cfg)
 {
+	static ImGuiID editingPopup = 0;
+	static int openingValue = 0;
+	static int openingFrame = -1;
+	const ImGuiID ownerPopup = ImGui::GetID(cfg.popupID);
+	const bool isOpen = ImGui::IsPopupOpen(cfg.popupID);
+	const bool isTopmost = isOpen && !GImGui->OpenPopupStack.empty()
+			&& GImGui->OpenPopupStack.back().PopupId == ownerPopup;
+
+	if (isTopmost) {
+		const ImGuiPopupData& popup = GImGui->OpenPopupStack.back();
+		if (editingPopup != ownerPopup || openingFrame != popup.OpenFrameCount) {
+			editingPopup = ownerPopup;
+			openingFrame = popup.OpenFrameCount;
+			openingValue = *cfg.currentValue;
+		}
+	}
+
+	if (editingPopup == ownerPopup && isTopmost && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+		const bool changed = *cfg.currentValue != openingValue;
+		*cfg.currentValue = openingValue;
+		if (changed && cfg.onChange)
+			cfg.onChange(openingValue);
+		editingPopup = 0;
+		ImGui::ClearActiveID();
+		ImGui::ClosePopupToLevel(GImGui->OpenPopupStack.Size - 1, true);
+		return changed;
+	}
+
+	if (editingPopup == ownerPopup && !isTopmost) {
+		// A different (nested) popup is now active or this one closed; stop tracking it here.
+		editingPopup = 0;
+	}
+
     // Icon and row label
     SettingIcon(cfg.icon, ImVec2(uiScaled(cfg.iconSize), uiScaled(cfg.iconSize)));
     ImGui::SameLine(0, uiScaled(cfg.iconSpacing));
@@ -2034,6 +2079,7 @@ bool RenderOptionsPopup(const PopupOptionsConfig& cfg)
                             shouldClose = cfg.onChange(storageIdx);
                         }
                         if (shouldClose) {
+                            editingPopup = 0;
                             ImGui::CloseCurrentPopup();
                         }
                     }
@@ -2064,6 +2110,48 @@ bool RenderOptionsPopup(const PopupOptionsConfig& cfg)
 // Internal helper to render slider popup (DuckStation-style)
 bool RenderSliderPopup(PopupSliderConfig& cfg)
 {
+	static ImGuiID editingPopup = 0;
+	static int openingValue = 0;
+	static int openingFrame = -1;
+	const ImGuiID ownerPopup = ImGui::GetID(cfg.popupID);
+	const bool isOpen = ImGui::IsPopupOpen(cfg.popupID);
+	const bool isTopmost = isOpen && !GImGui->OpenPopupStack.empty()
+			&& GImGui->OpenPopupStack.back().PopupId == ownerPopup;
+
+	if (isTopmost)
+	{
+		const ImGuiPopupData& popup = GImGui->OpenPopupStack.back();
+		if (editingPopup != ownerPopup || openingFrame != popup.OpenFrameCount)
+		{
+			editingPopup = ownerPopup;
+			openingFrame = popup.OpenFrameCount;
+			if (cfg.onOpen)
+				cfg.onOpen();
+			openingValue = *cfg.currentValue;
+		}
+	}
+
+	if ((editingPopup == ownerPopup) && isTopmost && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+	{
+		const bool changed = *cfg.currentValue != openingValue;
+		*cfg.currentValue = openingValue;
+		if (changed && cfg.onValueChange)
+			cfg.onValueChange();
+		if (cfg.onCancel)
+			cfg.onCancel();
+		cfg.hasPendingChanges = false;
+		if (cfg.showApplyFlag)
+			*cfg.showApplyFlag = false;
+		editingPopup = 0;
+		ImGui::ClearActiveID();
+		ImGui::ClosePopupToLevel(GImGui->OpenPopupStack.Size - 1, true);
+		return changed;
+	}
+
+	if (editingPopup == ownerPopup && !isTopmost) {
+		editingPopup = 0; // Nested popup took over, or this one closed; release tracking.
+	}
+
     const auto formatValueText = [&](int value, char* out, size_t outSize) {
         if (cfg.valueFormatter) {
             const std::string text = cfg.valueFormatter(value);
@@ -2130,7 +2218,19 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
     ImGui::SetNextWindowSize(ImVec2(popupWidth, 0), ImGuiCond_Always);
 
     PopupStyleScope style;
-    if (ImGui::BeginPopup(cfg.popupID, ImGuiWindowFlags_NoScrollbar)) {
+
+    // A pending preview may require explicit confirmation. Making only that
+    // state modal prevents outside input from discarding the popup before its
+    // Apply callback rebuilds the UI using the selected value.
+    // Keep the same popup identity while becoming modal; switching to
+    // BeginPopupModal creates a different window and loses the editing state.
+    const bool popupVisible = (
+		cfg.onApply
+		? ImGui::BeginPopupModal(cfg.popupID, nullptr, ImGuiWindowFlags_NoScrollbar)
+		: ImGui::BeginPopup(cfg.popupID, ImGuiWindowFlags_NoScrollbar)
+	);
+
+    if (popupVisible) {
         if (rowLabel[0] != '\0') {
             ImGui::PushFont(largeFont);
             ImGui::TextUnformatted(rowLabel);
@@ -2259,12 +2359,16 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
                         cfg.onValueChange();
                 }
                 if (cfg.onApply)
-                    cfg.onApply();
-                cfg.hasPendingChanges = false;
-                modePendingChanges = false;
-                if (cfg.showApplyFlag)
-                    *cfg.showApplyFlag = false;
-                ImGui::CloseCurrentPopup();
+                {
+                    cfg.hasPendingChanges = modePendingChanges = true;
+                    requestFocusApply = true;
+                }
+                else
+                {
+                    cfg.hasPendingChanges = modePendingChanges = false;
+                    editingPopup = 0;
+                    ImGui::CloseCurrentPopup();
+                }
             }
         }
         else
@@ -2293,6 +2397,12 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
                     && modeControllerSlider
                     && !popupAppearing
                     && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+                if (controllerAcceptValue && cfg.onApply)
+                {
+                    controllerAcceptValue = false;
+                    requestFocusApply = true;
+                    ImGui::ClearActiveID();
+                }
 
                 int navDelta = 0;
                 if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)
@@ -2348,7 +2458,7 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
                     cfg.onValueChange();
                 }
             }
-            keyboardAcceptValue = !modeControllerSlider
+            keyboardAcceptValue = !cfg.onApply && !modeControllerSlider
                 && (cfg.hasPendingChanges || modePendingChanges || (cfg.showApplyFlag && *cfg.showApplyFlag))
                 && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
 
@@ -2368,10 +2478,6 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
 
         ImGui::Spacing();
 
-        // DuckStation-style button layout (right-aligned)
-        bool shouldShowApply = !modeControllerSlider &&
-                               (cfg.hasPendingChanges || modePendingChanges || (cfg.showApplyFlag && *cfg.showApplyFlag));
-
         if (controllerAcceptValue || keyboardAcceptValue) {
             if (cfg.onApply)
                 cfg.onApply();
@@ -2382,7 +2488,8 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
             if (cfg.showApplyFlag)
                 *cfg.showApplyFlag = false;
             ImGui::CloseCurrentPopup();
-        } else if (cfg.onApply && shouldShowApply) {
+            editingPopup = 0;
+        } else if (cfg.onApply) {
             // Begin menu buttons container
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(uiScaled(8), uiScaled(8)));
 
@@ -2408,6 +2515,7 @@ bool RenderSliderPopup(PopupSliderConfig& cfg)
                     *cfg.showApplyFlag = false; // Reset external flag
                 }
                 ImGui::CloseCurrentPopup();
+                editingPopup = 0;
             }
 
             ImGui::PopStyleVar(3); // Pop ItemSpacing, FrameRounding, FramePadding

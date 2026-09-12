@@ -198,7 +198,7 @@ private:
 	{
 		FC_PROFILE_SCOPE;
 
-		TA_context *taContext = DequeueRender();
+		TA_context *taContext = GetRender();
 		if (taContext == nullptr)
 			return;
 		renderer->processGpuCleanupOperations();
@@ -220,7 +220,7 @@ private:
 			} catch (...) {
 				renderEnd.Set();
 				rend_allow_rollback();
-				FinishRender(taContext);
+				FinishRender(true);
 				throw;
 			}
 		}
@@ -236,7 +236,7 @@ private:
 			} catch (...) {
 				if (!renderToScreen)
 					renderEnd.Set();
-				FinishRender(taContext);
+				FinishRender(true);
 				throw;
 			}
 		}
@@ -247,7 +247,7 @@ private:
 			present();
 
 		//clear up & free data ..
-		FinishRender(taContext);
+		FinishRender(true);
 	}
 
 	void renderFramebuffer(const FramebufferInfo& config)
@@ -539,7 +539,7 @@ void Renderer::processGpuCleanupOperations()
 
 void rend_reset()
 {
-	FinishRender(DequeueRender());
+	FinishRender(true);
 	render_called = false;
 	pend_rend = false;
 	FrameCount = 1;
@@ -622,7 +622,7 @@ void rend_start_render()
 			ctx->rend.swapInterval = 1;
 	}
 
-	if (QueueRender(ctx))
+	if (SetRender(ctx))
 	{
 		palette_update();
 		pend_rend = true;
@@ -685,7 +685,7 @@ void rend_cancel_emu_wait()
 {
 	if (config::ThreadedRendering)
 	{
-		FinishRender(NULL);
+		FinishRender(false);
 		renderEnd.Set();
 		rend_allow_rollback();
 		pvrQueue.cancelEnqueue();

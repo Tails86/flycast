@@ -30,6 +30,7 @@ ImFont *settingsTitleFont;
 ImFont *settingsValueFont;
 ImFont *settingsRightValueFont;
 ImFont *settingsIconFont;
+ImFont *aboutAsciiFont;
 
 namespace FontFace
 {
@@ -285,6 +286,15 @@ void gui_loadFonts()
 	verify(data != nullptr);
 	largeFont = io.Fonts->AddFontFromMemoryTTF(data.release(), (int)dataSize, uiScaled(21.f), nullptr, nullptr);
 
+	// Keep the About-page artwork isolated from the application fonts. The
+	// embedded vector font is monospaced. Avoid whole-pixel advance snapping
+	// and hinting that exaggerate strokes at the artwork's small display size.
+	ImFontConfig aboutAsciiFontConfig;
+	aboutAsciiFontConfig.SizePixels = fontSize;
+	aboutAsciiFontConfig.PixelSnapH = false;
+	aboutAsciiFontConfig.FontLoaderFlags = ImGuiFreeTypeLoaderFlags_NoHinting;
+	aboutAsciiFont = io.Fonts->AddFontDefaultVector(&aboutAsciiFontConfig);
+
 	std::vector<FontEntry> fonts;
 	std::vector<FontEntry> boldFonts;
 	fontConfig.Flags |= ImFontFlags_NoLoadError;
@@ -531,6 +541,10 @@ void gui_loadFonts()
 	ImFontConfig faFontConfig = fontConfig;
 	faFontConfig.FontDataOwnedByAtlas = false;
 	io.Fonts->AddFontFromMemoryTTF(data.get(), (int)dataSize, fontSize, &faFontConfig);
+	// The Library toolbar uses largeFont for both text and icons, including
+	// the Settings gear. Merge the same symbols there to avoid fallback '?'.
+	faFontConfig.DstFont = largeFont;
+	io.Fonts->AddFontFromMemoryTTF(data.get(), (int)dataSize, largeFontSize, &faFontConfig);
 	boldFontConfig.FontDataOwnedByAtlas = true;
 	io.Fonts->AddFontFromMemoryTTF(data.release(), (int)dataSize, fontSize, &boldFontConfig);
 
