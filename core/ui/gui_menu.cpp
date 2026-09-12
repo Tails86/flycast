@@ -458,6 +458,7 @@ void renderFileMenu()
 			loadState();
 		}
 
+#if !defined(__ANDROID__)
 		ImGui::Separator();
 
 		// Exit Emulator
@@ -465,6 +466,7 @@ void renderFileMenu()
 		{
 			exitEmulator();
 		}
+#endif
 
 		ImGui::EndMenu();
 	}
