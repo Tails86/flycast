@@ -2179,7 +2179,7 @@ static void gui_display_content()
     ImGui::Unindent(10.0f * libraryToolbarScale);
 
     static ImGuiTextFilter filter;
-	int libraryIconScale = std::clamp(config::LibraryIconScale.get(), 100, 1000);
+	int libraryIconScale = std::clamp(config::LibraryIconScale.get(), 50, 200);
 	static bool libraryHoverSettingsInitialized = false;
 	static int lastLibraryIconScale = libraryIconScale;
 	static int lastLibraryDisplayStyle = config::LibraryDisplayStyle.get();
@@ -2215,8 +2215,9 @@ static void gui_display_content()
     IconButton settingsBtn(ICON_FA_GEAR, T("Settings"));
 #if !defined(TARGET_IPHONE) && !defined(TARGET_UWP) && !defined(__SWITCH__)
 	const float iconScaleSliderWidth = 135.0f * libraryToolbarScale;
+	const char* iconScaleLabel = "Icon Size";
 	const float iconScaleControlWidth = iconScaleSliderWidth + ImGui::GetStyle().ItemInnerSpacing.x
-			+ ImGui::CalcTextSize("Icon Size").x;
+			+ ImGui::CalcTextSize(iconScaleLabel).x;
 	const float settingsLeft = ImGui::GetContentRegionMax().x - settingsBtn.width();
 	const float sliderLeft = settingsLeft - 24.0f * libraryToolbarScale - iconScaleControlWidth;
 	ImGui::SameLine(0, 32.0f * libraryToolbarScale);
@@ -2229,7 +2230,7 @@ static void gui_display_content()
 	filter.Draw(T("Filter"), filterWidth);
 	ImGui::SameLine(0, 24.0f * libraryToolbarScale);
 	ImGui::SetNextItemWidth(iconScaleSliderWidth);
-	if (ImGui::SliderInt("Icon Size", &libraryIconScale, 100, 1000, "%d%%"))
+	if (ImGui::SliderInt(iconScaleLabel, &libraryIconScale, 50, 200, "%d%%"))
 		config::LibraryIconScale.set(libraryIconScale);
 #endif
     if (gui_state != GuiState::SelectDisk)
@@ -2273,17 +2274,19 @@ static void gui_display_content()
     {
 		const bool useListStyle = config::LibraryDisplayStyle.get() == static_cast<int>(config::LibraryDisplayStyleMode::List);
 		const float totalWidth = ImGui::GetContentRegionMax().x - (!ImGui::GetCurrentWindow()->ScrollbarY ? ImGui::GetStyle().ScrollbarSize : 0);
-		// Library tiles use pixel-based geometry rather than the DPI-scaled
-		// Settings layout, so they need their own platform baseline. Keep the
-		// saved percentage unchanged when syncing between devices.
 #if defined(__ANDROID__)
 		constexpr float libraryPlatformFactor = 0.85f;
 #else
 		constexpr float libraryPlatformFactor = 1.0f;
 #endif
-		const float libraryIconScaleFactor = libraryIconScale / 100.0f * libraryPlatformFactor;
-		const float libraryTextScaleFactor = 1.5f + (libraryIconScaleFactor - 1.0f) / 3.0f;
-		const ImVec2 iconSize(32.0f * libraryIconScaleFactor, 32.0f * libraryIconScaleFactor);
+		// 100% icon scale corresponds to 1.18 inches based on display DPI.
+		constexpr float libraryIconBaseInches = 1.18f * libraryPlatformFactor;
+		constexpr float libraryListIconBaseInches = 0.34f * libraryPlatformFactor;
+		const float iconScaleMultiplier = libraryIconScale / 100.0f;
+		const float gridBoxBaseSize = libraryIconBaseInches * settings.display.dpi * iconScaleMultiplier;
+		const float libraryTextScaleFactor = 1.5f + (iconScaleMultiplier - 1.0f) / 3.0f;
+		const float listIconPixels = libraryListIconBaseInches * settings.display.dpi * iconScaleMultiplier;
+		const ImVec2 iconSize(listIconPixels, listIconPixels);
 		const double iconAnimationClock = getLibraryIconAnimationClock();
 
 		if (useListStyle)
@@ -2334,7 +2337,6 @@ static void gui_display_content()
 					ImGui::TableSetupColumn(T("Time Played"), ImGuiTableColumnFlags_WidthFixed, timePlayedColumnWidth);
 					ImGui::TableSetupColumn("Last Booted", ImGuiTableColumnFlags_WidthFixed, lastBootedColumnWidth);
 					ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, sizeColumnWidth);
-					ImGui::TableSetColumnWidth(0, iconColumnWidth);
 					ImGui::TableSetupScrollFreeze(0, 1);
 					ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
 					const char *const libraryColumnHeaders[] = {
@@ -2477,7 +2479,6 @@ static void gui_display_content()
 			}
 			else
 			{
-				const float gridBoxBaseSize = 112.0f * libraryIconScaleFactor;
 				const int itemsPerLine = std::max<int>(totalWidth / (gridBoxBaseSize + ImGui::GetStyle().ItemSpacing.x), 1);
 				const float responsiveBoxSize = totalWidth / itemsPerLine - ImGui::GetStyle().FramePadding.x * 2;
 				const ImVec2 responsiveBoxVec2 = ImVec2(responsiveBoxSize, responsiveBoxSize);
