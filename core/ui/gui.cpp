@@ -2215,7 +2215,7 @@ static void gui_display_content()
     IconButton settingsBtn(ICON_FA_GEAR, T("Settings"));
 #if !defined(TARGET_IPHONE) && !defined(TARGET_UWP) && !defined(__SWITCH__)
 	const float iconScaleSliderWidth = 135.0f * libraryToolbarScale;
-	const char* iconScaleLabel = "Icon Size";
+	const char* iconScaleLabel = T("Icon Size");
 	const float iconScaleControlWidth = iconScaleSliderWidth + ImGui::GetStyle().ItemInnerSpacing.x
 			+ ImGui::CalcTextSize(iconScaleLabel).x;
 	const float settingsLeft = ImGui::GetContentRegionMax().x - settingsBtn.width();
@@ -2284,7 +2284,7 @@ static void gui_display_content()
 		constexpr float libraryListIconBaseInches = 0.34f * libraryPlatformFactor;
 		const float iconScaleMultiplier = libraryIconScale / 100.0f;
 		const float gridBoxBaseSize = libraryIconBaseInches * settings.display.dpi * iconScaleMultiplier;
-		const float libraryTextScaleFactor = 1.5f + (iconScaleMultiplier - 1.0f) / 3.0f;
+		const float libraryTextScaleFactor = iconScaleMultiplier;
 		const float listIconPixels = libraryListIconBaseInches * settings.display.dpi * iconScaleMultiplier;
 		const ImVec2 iconSize(listIconPixels, listIconPixels);
 		const double iconAnimationClock = getLibraryIconAnimationClock();
@@ -2308,14 +2308,22 @@ static void gui_display_content()
 			return std::max(calcLibraryTextWidth(header), calcLibraryTextWidth(sample))
 					+ ImGui::GetStyle().CellPadding.x * 2.0f;
 		};
-		const float productIdColumnWidth = calcLibraryColumnWidth("Product ID", "T-12345M-50");
-		const float regionColumnWidth = calcLibraryColumnWidth("Region", "JP/US/EU");
-		const float formatColumnWidth = calcLibraryColumnWidth("Format", "Unknown");
+		const char* iconLabel = T("Icon");
+		const char* productIdLabel = T("Product ID");
+		const float productIdColumnWidth = calcLibraryColumnWidth(productIdLabel, "T-12345M-50");
+		const char* titleLabel = T("Title");
+		const char* regionLabel = T("Region");
+		const float regionColumnWidth = calcLibraryColumnWidth(regionLabel, "JP/US/EU");
+		const char* formatLabel = T("Format");
+		const char* timePlayedLabel = T("Time Played");
+		const char* lastBootedLabel = T("Last Booted");
+		const float formatColumnWidth = calcLibraryColumnWidth(formatLabel, "Unknown");
 		const float lastBootedColumnWidth = calcLibraryTextWidth("12/31/2026 12:59:59 PM")
 				+ ImGui::GetStyle().CellPadding.x * 2.0f;
 		const float timePlayedColumnWidth = std::max(calcLibraryTextWidth(T("Time Played")), calcLibraryTextWidth("999h 59m"))
 				+ ImGui::GetStyle().CellPadding.x * 2.0f;
-		const float sizeColumnWidth = calcLibraryColumnWidth("Size", "99999 MB");
+		const char* sizeLabel = T("Size");
+		const float sizeColumnWidth = calcLibraryColumnWidth(sizeLabel, "99999 MB");
 
 		int counter = 0;
 		bool gameListEmpty = false;
@@ -2329,18 +2337,18 @@ static void gui_display_content()
 						| ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit
 						| ImGuiTableFlags_ScrollY, ImVec2(0.0f, 0.0f)))
 				{
-					ImGui::TableSetupColumn("Icon", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, iconColumnWidth);
-					ImGui::TableSetupColumn("Product ID", ImGuiTableColumnFlags_WidthFixed, productIdColumnWidth);
-					ImGui::TableSetupColumn("Title", ImGuiTableColumnFlags_WidthStretch);
-					ImGui::TableSetupColumn("Region", ImGuiTableColumnFlags_WidthFixed, regionColumnWidth);
-					ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, formatColumnWidth);
-					ImGui::TableSetupColumn(T("Time Played"), ImGuiTableColumnFlags_WidthFixed, timePlayedColumnWidth);
-					ImGui::TableSetupColumn("Last Booted", ImGuiTableColumnFlags_WidthFixed, lastBootedColumnWidth);
-					ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, sizeColumnWidth);
+					ImGui::TableSetupColumn(iconLabel, ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, iconColumnWidth);
+					ImGui::TableSetupColumn(productIdLabel, ImGuiTableColumnFlags_WidthFixed, productIdColumnWidth);
+					ImGui::TableSetupColumn(titleLabel, ImGuiTableColumnFlags_WidthStretch);
+					ImGui::TableSetupColumn(regionLabel, ImGuiTableColumnFlags_WidthFixed, regionColumnWidth);
+					ImGui::TableSetupColumn(formatLabel, ImGuiTableColumnFlags_WidthFixed, formatColumnWidth);
+					ImGui::TableSetupColumn(timePlayedLabel, ImGuiTableColumnFlags_WidthFixed, timePlayedColumnWidth);
+					ImGui::TableSetupColumn(lastBootedLabel, ImGuiTableColumnFlags_WidthFixed, lastBootedColumnWidth);
+					ImGui::TableSetupColumn(sizeLabel, ImGuiTableColumnFlags_WidthFixed, sizeColumnWidth);
 					ImGui::TableSetupScrollFreeze(0, 1);
 					ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
 					const char *const libraryColumnHeaders[] = {
-						"Icon", "Product ID", "Title", "Region", "Format", T("Time Played"), "Last Booted", "Size"
+						iconLabel, productIdLabel, titleLabel, regionLabel, formatLabel, timePlayedLabel, lastBootedLabel, sizeLabel
 					};
 					for (int column = 0; column < static_cast<int>(sizeof(libraryColumnHeaders) / sizeof(libraryColumnHeaders[0])); ++column)
 					{
