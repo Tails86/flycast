@@ -398,8 +398,33 @@ void maple_sega_vmu::deserialize(Deserializer& deser)
 		memset(&accessed_blocks[0], 0, sizeof(accessed_blocks));
 		loaded_us_since_write = std::numeric_limits<u64>::max();
 	}
+<<<<<<< HEAD
 	for (u8 b : lcd_data)
 		if (b != 0)
+=======
+	void deserialize(Deserializer& deser) override
+	{
+		if (sampling)
+			StopAudioRecording();
+		maple_base::deserialize(deser);
+		deser >> gain;
+		deser >> sampling;
+		deser >> eight_khz;
+		if (sampling)
+			StartAudioRecording(eight_khz);
+	}
+
+	void OnSetup() override
+	{
+		gain = 0xf;
+		sampling = false;
+		eight_khz = false;
+	}
+
+	u32 dma(u32 cmd) override
+	{
+		switch (cmd)
+>>>>>>> flycast/dev
 		{
 			setLcd();
 			break;

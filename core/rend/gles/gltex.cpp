@@ -428,7 +428,7 @@ bool TextureCacheData::Delete()
 	return true;
 }
 
-GLuint BindRTT(bool withDepthBuffer)
+GlFramebuffer *BindRTT(bool withDepthBuffer)
 {
 	GLenum channels, format;
 	switch(gl.rendContext->fb_W_CTRL.fb_packmode)
@@ -457,11 +457,11 @@ GLuint BindRTT(bool withDepthBuffer)
 	case 5: //0x5   0888 KRGB 32 bit    K is the value of fk_kval.
 	case 6: //0x6   8888 ARGB 32 bit
 		WARN_LOG(RENDERER, "Unsupported render to texture format: %d", gl.rendContext->fb_W_CTRL.fb_packmode);
-		return 0;
+		return nullptr;
 
 	case 7: //7     invalid
 		WARN_LOG(RENDERER, "Invalid framebuffer format: 7");
-		return 0;
+		return nullptr;
 	}
 	u32 fbw = gl.rendContext->framebufferWidth;
 	u32 fbh = gl.rendContext->framebufferHeight;
@@ -480,7 +480,7 @@ GLuint BindRTT(bool withDepthBuffer)
 
 	glViewport(0, 0, fbw, fbh);
 
-	return gl.rtt.framebuffer->getFramebuffer();
+	return gl.rtt.framebuffer.get();
 }
 
 void ReadRTTBuffer()
@@ -529,10 +529,9 @@ void ReadRTTBuffer()
 		}
 		else
 		{
-			PixelBuffer<u32> tmp_buf;
-			tmp_buf.init(w, h);
+			gl.framebufferBuffer.init(w, h);
 
-			u8 *p = (u8 *)tmp_buf.data();
+			u8 *p = (u8 *)gl.framebufferBuffer.data();
 			glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, p);
 
 			WriteTextureToVRam(w, h, p, dst, gl.rendContext->fb_W_CTRL, linestride, gl.rendContext->fbClip);
@@ -586,24 +585,38 @@ BaseTextureCacheData *OpenGLRenderer::GetTexture(TSP tsp, TCW tcw, int area)
 
 void glReadFramebuffer(const FramebufferInfo& info)
 {
-	PixelBuffer<u32> pb;
-	ReadFramebuffer(info, pb, gl.dcfb.width, gl.dcfb.height);
+	ReadFramebuffer(info, gl.framebufferBuffer, gl.dcfb.width, gl.dcfb.height);
+	const bool resize = gl.dcfb.tex == 0
+			|| gl.dcfb.textureWidth != gl.dcfb.width
+			|| gl.dcfb.textureHeight != gl.dcfb.height;
 	
-	if (gl.dcfb.tex == 0)
+	if (resize)
+	{
+		if (gl.dcfb.tex != 0)
+			glcache.DeleteTextures(1, &gl.dcfb.tex);
 		gl.dcfb.tex = glcache.GenTexture();
+		gl.dcfb.textureWidth = gl.dcfb.width;
+		gl.dcfb.textureHeight = gl.dcfb.height;
+	}
 	
 	glcache.BindTexture(GL_TEXTURE_2D, gl.dcfb.tex);
 	
-	//set texture repeat mode
-	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	if (resize)
+	{
+		// Texture storage is retained until the framebuffer dimensions change.
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, gl.dcfb.width, gl.dcfb.height,
+				0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	}
 	
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, gl.dcfb.width, gl.dcfb.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pb.data());
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, gl.dcfb.width, gl.dcfb.height,
+			GL_RGBA, GL_UNSIGNED_BYTE, gl.framebufferBuffer.data());
 }
 
-GLuint init_output_framebuffer(int width, int height)
+GlFramebuffer *init_output_framebuffer(int width, int height)
 {
 	if (gl.ofbo.framebuffer != nullptr
 			&& (width != gl.ofbo.framebuffer->getWidth() || height != gl.ofbo.framebuffer->getHeight()))
@@ -634,7 +647,7 @@ GLuint init_output_framebuffer(int width, int height)
 	glViewport(0, 0, width, height);
 	glCheck();
 
-	return gl.ofbo.framebuffer->getFramebuffer();
+	return gl.ofbo.framebuffer.get();
 }
 
 GlFramebuffer::GlFramebuffer(int width, int height, bool withDepth, GLuint texture)
@@ -665,7 +678,23 @@ GlFramebuffer::GlFramebuffer(int width, int height, bool withDepth, GLuint textu
 	makeFramebuffer(withDepth);
 }
 
-void GlFramebuffer::makeFramebuffer(bool withDepth)
+GlFramebuffer::GlFramebuffer(int width, int height, GLuint depthBuffer)
+	: width(width), height(height), texture(0)
+{
+	// Create a texture for rendering to
+	this->texture = glcache.GenTexture();
+	glcache.BindTexture(GL_TEXTURE_2D, this->texture);
+
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	makeFramebuffer(true, depthBuffer);
+	ownsDepthBuffer = false;
+}
+
+void GlFramebuffer::makeFramebuffer(bool withDepth, const GLuint depthBuffer)
 {
 	// Create the framebuffer
 	glGenFramebuffers(1, &framebuffer);
@@ -673,41 +702,48 @@ void GlFramebuffer::makeFramebuffer(bool withDepth)
 
 	if (withDepth)
 	{
-		// Generate and bind a render buffer which will become a depth buffer
-		glGenRenderbuffers(1, &depthBuffer);
-		glBindRenderbuffer(GL_RENDERBUFFER, depthBuffer);
+		if (depthBuffer != 0)
+			this->depthBuffer = depthBuffer;
+		else
+			// Generate a render buffer which will become a depth buffer
+			glGenRenderbuffers(1, &this->depthBuffer);
+		glBindRenderbuffer(GL_RENDERBUFFER, this->depthBuffer);
 
-		// Currently it is unknown to GL that we want our new render buffer to be a depth buffer.
-		// glRenderbufferStorage will fix this and will allocate a depth buffer
-		if (gl.is_gles)
+		if (depthBuffer == 0)
 		{
+			// Currently it is unknown to GL that we want our new render buffer to be a depth buffer.
+			// glRenderbufferStorage will fix this and will allocate a depth buffer
+			if (gl.is_gles)
+			{
 #if defined(GL_DEPTH24_STENCIL8)
-	        if (gl.gl_major >= 3)
-	            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
-	        else
+				if (gl.gl_major >= 3)
+					glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+				else
 #endif
 #if defined(GL_DEPTH24_STENCIL8_OES)
-	        if (gl.GL_OES_packed_depth_stencil_supported)
-	            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8_OES, width, height);
-	        else
+				if (gl.GL_OES_packed_depth_stencil_supported)
+					glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8_OES, width, height);
+				else
 #endif
 #if defined(GL_DEPTH_COMPONENT24_OES)
-	        if (gl.GL_OES_depth24_supported)
-	            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24_OES, width, height);
-	        else
+				if (gl.GL_OES_depth24_supported)
+					glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24_OES, width, height);
+				else
 #endif
-				glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, width, height);
-		}
+					glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, width, height);
+			}
 #ifdef GL_DEPTH24_STENCIL8
-		else
-			glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+			else  {
+				glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+			}
 #endif
+		}
 
 		// Attach the depth buffer we just created to our FBO.
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthBuffer);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, this->depthBuffer);
 
 		if (!gl.is_gles || gl.gl_major >= 3 || gl.GL_OES_packed_depth_stencil_supported)
-			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depthBuffer);
+			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, this->depthBuffer);
 	}
 
 	// Attach the texture/renderbuffer to the FBO
@@ -746,7 +782,8 @@ GlFramebuffer::GlFramebuffer(int width, int height, bool withDepth, bool withTex
 GlFramebuffer::~GlFramebuffer()
 {
 	glDeleteFramebuffers(1, &framebuffer);
-	glDeleteRenderbuffers(1, &depthBuffer);
+	if (ownsDepthBuffer)
+		glDeleteRenderbuffers(1, &depthBuffer);
 	glcache.DeleteTextures(1, &texture);
 	glDeleteRenderbuffers(1, &colorBuffer);
 }

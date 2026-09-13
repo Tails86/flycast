@@ -976,7 +976,7 @@ static void gui_display_commands()
 			}
 			else {
 				emu.openGdrom();
-				gui_setState(GuiState::Loading);
+				gui_resume_game();
 			}
 		}
 			// Settings
@@ -2169,6 +2169,7 @@ static void gui_display_content()
     ImGui::Text("%s", T("GAMES"));
     ImGui::Unindent(10.0f * libraryToolbarScale);
 
+<<<<<<< HEAD
     static ImGuiTextFilter filter;
 	int libraryIconScale = std::clamp(config::LibraryIconScale.get(), 50, 200);
 	static bool libraryHoverSettingsInitialized = false;
@@ -2227,19 +2228,30 @@ static void gui_display_content()
     if (ImGui::IsItemDeactivatedAfterEdit()) {
         config::LibraryIconScale.save();
     }
+=======
+    static TextFilter filter;
+    IconButton settingsBtn(ICON_FA_GEAR, T("Settings"));
+	ImGui::SameLine(0, uiScaled(32));
+	float filterWidth = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x
+			- settingsBtn.width() - ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize(T("Filter")).x;
+#ifdef TARGET_UWP
+	filterWidth -= ImGui::CalcTextSize(T("Load...")).x + ImGui::GetStyle().FramePadding.x * 2
+			+ ImGui::GetStyle().ItemSpacing.x;
+#elif defined(__SWITCH__)
+	IconButton exitBtn(ICON_FA_POWER_OFF, T("Exit"));
+	filterWidth -= exitBtn.width() + ImGui::GetStyle().ItemSpacing.x;
+>>>>>>> flycast/dev
 #endif
+	filter.Draw(T("Filter"), filterWidth);
     if (gui_state != GuiState::SelectDisk)
     {
 #ifdef TARGET_UWP
-		ImGui::SameLine(ImGui::GetContentRegionMax().x - settingsBtn.width()
-				- ImGui::GetStyle().FramePadding.x * 2.0f  - ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize(T("Load...")).x);
+    	ImGui::SameLine();
 		if (ImGui::Button(T("Load...")))
 			gui_load_game();
 		ImGui::SameLine();
 #elif defined(__SWITCH__)
-		IconButton exitBtn(ICON_FA_POWER_OFF, T("Exit"));
-		ImGui::SameLine(ImGui::GetContentRegionMax().x - settingsBtn.width()
-				- ImGui::GetStyle().ItemSpacing.x - exitBtn.width());
+		ImGui::SameLine();
 		if (exitBtn.realize())
 			dc_exit();
 		ImGui::SameLine();
@@ -2515,6 +2527,7 @@ static void gui_display_content()
 						bool pressed = false;
 						if (config::BoxartDisplayMode)
 						{
+<<<<<<< HEAD
 							if (counter % itemsPerLine != 0)
 								ImGui::SameLine();
 							counter++;
@@ -2525,6 +2538,13 @@ static void gui_display_content()
 								pressed = gameImageButton(tex, game.name, responsiveBoxVec2, gameName, gridTextSize);
 								updateLibraryLongPress(game, game.path.empty() ? "bios" : game.path, ImGui::IsItemActive());
 								draw_library_game_info_hover(game, !game.device ? &art : nullptr);
+=======
+							try {
+								emu.insertGdrom(game.path);
+								gui_resume_game();
+							} catch (const FlycastException& e) {
+								gui_error(e.what());
+>>>>>>> flycast/dev
 							}
 							ImGui::EndChild();
 						}

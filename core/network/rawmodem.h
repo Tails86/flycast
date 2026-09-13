@@ -1,5 +1,5 @@
 /*
-	Copyright 2020 flyinghead
+	Copyright 2026 flyinghead
 
 	This file is part of Flycast.
 
@@ -15,30 +15,24 @@
 
     You should have received a copy of the GNU General Public License
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
-*/
+ */
 #pragma once
-#include "gles.h"
-#include <memory>
+#include "netservice.h"
 
-class PostProcessor
+namespace net::modbba
+{
+
+class RawModemService : public Service
 {
 public:
-	void term();
-	void render(GLuint output_fbo);
-	GlFramebuffer *getFramebuffer(int width, int height);
+	bool start() override;
+	void stop() override;
 
-private:
-	void init(int width, int height);
+	void writeModem(u8 b) override;
+	int readModem() override;
+	int modemAvailable() override;
 
-	class VertexArray final : public GlVertexArray
-	{
-	protected:
-		void defineVtxAttribs() override;
-	};
-
-	std::unique_ptr<GlBuffer> vertexBuffer;
-	VertexArray vertexArray;
-	std::unique_ptr<GlFramebuffer> framebuffer;
+	void receiveEthFrame(const u8 *frame, u32 size) override {};
 };
 
-extern PostProcessor postProcessor;
+}
