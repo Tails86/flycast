@@ -2545,6 +2545,9 @@ static void renderSettingsContentTab(SettingsTab tab)
 				{ Tnop("日本語"), "ja" },
 				{ Tnop("Português (Brasil)"), "pt_BR" },
 				{ Tnop("Svenska"), "sv" },
+				{ Tnop("Türkçe"), "tr" },
+				{ Tnop("简体中文"), "zh_CN" },
+				{ Tnop("正體中文"), "zh_TW" },
 			};
 
 			const char* uiLanguageLabels[IM_ARRAYSIZE(uiLanguageOptions)];
@@ -6298,7 +6301,7 @@ void renderControlsTab()
 				}
 				else
 				{
-					port_count = maple_getPortCount(config::MapleMainDevices[bus]);
+					port_count = maple_getPortCount(config::MapleMainDevices[bus], MaplePortType::user_accessible);
 				}
 
 				for (int port = 0; port < port_count; port++)

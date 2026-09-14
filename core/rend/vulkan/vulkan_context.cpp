@@ -538,15 +538,12 @@ bool VulkanContext::InitDevice()
 		{
 			featuresChainHelper.unlink<vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR>();
 		}
-<<<<<<< HEAD
-=======
-		
+
 		auto& dynaRenderLocalReadFeatures = featuresChainHelper.get<vk::PhysicalDeviceDynamicRenderingLocalReadFeaturesKHR>();
 		if (!dynamicLocalReadSupported) {
 			featuresChainHelper.unlink<vk::PhysicalDeviceDynamicRenderingFeaturesKHR>();
 			featuresChainHelper.unlink<vk::PhysicalDeviceDynamicRenderingLocalReadFeaturesKHR>();
 		}
->>>>>>> flycast/dev
 
 		// Get the physical device's features
 		if (getPhysicalDeviceProperties2Supported && featuresChain.pNext)

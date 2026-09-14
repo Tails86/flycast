@@ -125,7 +125,6 @@ void mcfg_DestroyDevices(bool full = true);
 void mcfg_SerializeDevices(Serializer& ser);
 void mcfg_DeserializeDevices(Deserializer& deser);
 
-<<<<<<< HEAD
 //! Serialize a default device state to the Serializer without installing the device
 //! @param[out] ser The serializer to write to
 //! @param[in] forType The device type to serialize
@@ -141,10 +140,7 @@ void mcfg_SerializeDefaultDevice(Serializer& ser, MapleDeviceType forType, u32 b
 //! @param[in] playerNum The player number to deserialize
 void mcfg_DeserializeDiscardDevice(Deserializer& deser, MapleDeviceType forType, u32 bus, u32 port, int playerNum = -1);
 
-constexpr int maple_getPortCount(MapleDeviceType type)
-=======
 constexpr int maple_getPortCount(MapleDeviceType type, MaplePortType port)
->>>>>>> flycast/dev
 {
 	switch (type)
 	{

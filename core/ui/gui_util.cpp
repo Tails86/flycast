@@ -1568,7 +1568,6 @@ bool InputTextMultiline(const char* label, char* buf, size_t buf_size, const ImV
 	return ImGui::InputTextMultiline(label, buf, buf_size, size, flags, callback, user_data);
 }
 
-<<<<<<< HEAD
 // ============================================================================
 // Phase 0 Widget Infrastructure Components
 // ============================================================================
@@ -2593,8 +2592,6 @@ bool SettingPopup(
     return SettingPopup(cfg);
 }
 
-} // namespace SettingsUI
-=======
 bool TextFilter::Draw(const char* label, float width)
 {
     if (width != 0.0f)
@@ -2604,4 +2601,5 @@ bool TextFilter::Draw(const char* label, float width)
         Build();
     return value_changed;
 }
->>>>>>> flycast/dev
+
+} // namespace SettingsUI
