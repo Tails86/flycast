@@ -307,23 +307,6 @@ int remove(char const *name)
     return _wremove(wname.get());
 }
 
-int rename(char const *old_name, char const *new_name)
-{
-	wstackstring wold_name;
-	if (!wold_name.convert(old_name)) {
-		errno = EINVAL;
-		return -1;
-	}
-
-	wstackstring wnew_name;
-	if (!wnew_name.convert(new_name)) {
-		errno = EINVAL;
-		return -1;
-	}
-
-	return _wrename(wold_name.get(), wnew_name.get());
-}
-
 }
 #endif
 

@@ -1,6 +1,5 @@
 /*
 	Copyright 2022 flyinghead
-	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -382,36 +381,23 @@ void TheGamesDb::scrape(std::vector<GameBoxart>& items)
 	blackoutPeriod = 0.0;
 
 	fetchPlatforms();
-	try {
-		fetchByUids(items);
-	} catch (const std::runtime_error& e) {
-		if (*e.what() != '\0')
-			INFO_LOG(COMMON, "TheGamesDB batch uid lookup failed: %s", e.what());
-	}
+	fetchByUids(items);
 	for (GameBoxart& item : items)
 	{
 		if (!item.scraped)
 		{
-			bool lookupCompleted = false;
-			try {
-				if (!item.searchName.empty())
-					fetchByName(item);
-				else if (item.gamePath.empty())
-				{
-					std::string localPath = makeUniqueFilename("dreamcast_logo_grey.jpg");
-					std::string biosArtUrl{ "https://flyinghead.github.io/flycast-content/console/jpg/dreamcast_logo_grey.jpg" };
-					if (downloadImage(biosArtUrl, localPath)) {
-						item.setBoxartPath(localPath);
-						item.boxartUrl = biosArtUrl;
-					}
+			if (!item.searchName.empty())
+				fetchByName(item);
+			else if (item.gamePath.empty())
+			{
+				std::string localPath = makeUniqueFilename("dreamcast_logo_grey.jpg");
+				std::string biosArtUrl{ "https://flyinghead.github.io/flycast-content/console/jpg/dreamcast_logo_grey.jpg" };
+				if (downloadImage(biosArtUrl, localPath)) {
+					item.setBoxartPath(localPath);
+					item.boxartUrl = biosArtUrl;
 				}
-				lookupCompleted = true;
-			} catch (const std::runtime_error& e) {
-				if (*e.what() != '\0')
-					INFO_LOG(COMMON, "TheGamesDB lookup failed for %s: %s", item.fileName.c_str(), e.what());
 			}
-			if (lookupCompleted)
-				item.scraped = true;
+			item.scraped = true;
 		}
 	}
 }

@@ -81,7 +81,6 @@ u32 static inline bitscanrev(u32 v)
 
 namespace hostfs
 {
-	bool isConfiguredVmuFileNameValid(const std::string& name);
 	std::string getVmuPath(const std::string& port, bool save);
 #ifdef DREAMPOTATO_INTEGRATED_MODE
 	std::string getDreamPotatoPath();

@@ -34,7 +34,6 @@
 #include "oslib/directory.h"
 #include "vulkan_driver.h"
 #include "rend/transform_matrix.h"
-#include "rend/osd.h"
 #include "swappyvk.h"
 #if defined(__ANDROID__) && HOST_CPU == CPU_ARM64
 #include "adreno.h"
@@ -532,7 +531,7 @@ bool VulkanContext::InitDevice()
 		{
 			featuresChainHelper.unlink<vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR>();
 		}
-
+		
 		// Get the physical device's features
 		if (getPhysicalDeviceProperties2Supported && featuresChain.pNext)
 		{
@@ -1128,18 +1127,13 @@ void VulkanContext::DrawFrame(vk::ImageView imageView, const vk::Extent2D& exten
 	else
 		quadPipeline->BindPipeline(commandBuffer);
 
-	// Adjust 'viewport.y', 'viewport.height', 'Offset2D.y', and 'Extent2D.height'
-	// to avoid framebuffer overlapping with the menu bar
-	int topInset = getScaledTopInset();
-	int outheight = height - topInset;
-
 	int dx = 0;
 	int dy = 0;
-	getWindowboxDimensions(width, outheight, aspectRatio, dx, dy, config::Rotate90);
-
-	vk::Viewport viewport(dx, dy + topInset, width - dx * 2, outheight - dy * 2);
+	getWindowboxDimensions(width, height, aspectRatio, dx, dy, config::Rotate90);
+	
+	vk::Viewport viewport(dx, dy, width - dx * 2, height - dy * 2);
 	commandBuffer.setViewport(0, viewport);
-	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(dx, dy + topInset), vk::Extent2D(width - dx * 2, outheight - dy * 2)));
+	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(dx, dy), vk::Extent2D(width - dx * 2, height - dy * 2)));
 	if (config::Rotate90)
 		quadRotateDrawer->Draw(commandBuffer, imageView, vtx, !config::LinearInterpolation);
 	else
@@ -1208,7 +1202,7 @@ void VulkanContext::PresentFrame(vk::Image image, vk::ImageView imageView, const
 			imguiDriver->renderDrawData(ImGui::GetDrawData(), false);
 			EndFrame(overlayCmdBuffer);
 			static_cast<BaseVulkanRenderer*>(renderer)->RenderVideoRouting();
-
+			
 		} catch (const InvalidVulkanContext&) {
 			// Re-create swap chain
 			resized = true;

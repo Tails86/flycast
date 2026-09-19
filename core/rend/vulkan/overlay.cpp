@@ -200,7 +200,7 @@ void VulkanOverlay::Draw(vk::CommandBuffer commandBuffer, vk::Extent2D viewport,
 			}
 			else
 			{
-				y = vmu_padding + getScaledTopInset();
+				y = vmu_padding;
 				if (i & 1)
 					y += vmu_padding + h;
 			}

@@ -21,7 +21,6 @@
 #include "mainui.h"
 #include "hw/pvr/Renderer_if.h"
 #include "gui.h"
-#include "gui_menu.h"
 #include "oslib/oslib.h"
 #include "wsi/context.h"
 #include "cfg/option.h"

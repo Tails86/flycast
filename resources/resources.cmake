@@ -23,8 +23,7 @@ cmrc_add_resources(Hollycast-resources
         resources/flash/unomedal.nvmem.zip	# debug: comm and all errors disabled
         resources/flash/westdrmg.nvmem.zip	# debug: comm and all errors disabled
         resources/flash/smarinef.nvmem.zip	# standard cabinet
-        resources/picture/f355_print_template.png
-        resources/picture/hollycast_ascii.txt)
+        resources/picture/f355_print_template.png)
 
 cmrc_add_resources(Hollycast-resources
         fonts/printer_ascii8x16.bin.zip
@@ -36,9 +35,6 @@ if(NOT LIBRETRO)
     cmrc_add_resources(Hollycast-resources
             fonts/Roboto-Medium.ttf.zip
             fonts/Roboto-Bold.ttf.zip
-            fonts/Roboto-Regular.ttf.zip
-            fonts/Jura-wght.ttf.zip
-            fonts/EncodeSans-wdth-wght.ttf.zip
             fonts/fa-solid-900.ttf.zip)
     if(ANDROID OR IOS)
         cmrc_add_resources(Hollycast-resources

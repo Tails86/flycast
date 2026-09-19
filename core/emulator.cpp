@@ -48,9 +48,6 @@
 #include "ui/gui.h"
 #endif
 #include "oslib/i18n.h"
-#ifndef LIBRETRO
-#include <thread>
-#endif
 
 #include <algorithm>
 #include <chrono>
@@ -62,12 +59,6 @@
 
 settings_t settings;
 constexpr char const *BIOS_TITLE = "Dreamcast BIOS";
-static bool skipAutoSaveOnNextUnload = false;
-
-void dc_skipAutoSaveOnNextUnload()
-{
-	skipAutoSaveOnNextUnload = true;
-}
 
 static void loadSpecialSettings()
 {
@@ -704,6 +695,8 @@ void Emulator::loadGame(const char *path, LoadProgress *progress)
 #ifndef LIBRETRO
 			if (config::GGPOEnable)
 				dc_loadstate(-1);
+			else if (config::AutoLoadState && !naomiNetworkSupported() && !settings.naomi.multiboard)
+				dc_loadstate(config::SavestateSlot);
 #endif
 		}
 
@@ -763,19 +756,17 @@ void Emulator::runInternal()
 	}
 }
 
-void Emulator::unloadGame(bool allowAutoSave)
+void Emulator::unloadGame()
 {
-	bool skipAutoSaveThisUnload = skipAutoSaveOnNextUnload;
-	skipAutoSaveOnNextUnload = false;
 	try {
 		stop();
 	} catch (...) { }
 	if (state == Loaded || state == Error)
 	{
 #ifndef LIBRETRO
-		if (allowAutoSave && state == Loaded && config::AutoSaveState && !skipAutoSaveThisUnload && !settings.content.path.empty()
+		if (state == Loaded && config::AutoSaveState && !settings.content.path.empty()
 				&& !settings.naomi.multiboard && !config::GGPOEnable && !naomiNetworkSupported())
-			gui_saveState(dc_getAutoSaveSlot(), false);
+			gui_saveState(false);
 #endif
 		try {
 			dc_reset(true);
@@ -1126,26 +1117,6 @@ void Emulator::vblank()
 {
 	EventManager::event(Event::VBlank);
 	runner.execTasks(sh4_sched_now64());
-#ifndef LIBRETRO
-	if (settings.input.fastForwardMode && config::FastForwardSpeedLimit < 300)
-	{
-		const double speedFactor = 1.0 + (double)config::FastForwardSpeedLimit / 100.0;
-		const auto frameDuration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-				std::chrono::duration<double>(1.0 / (60.0 * speedFactor)));
-		const auto now = std::chrono::steady_clock::now();
-		if (fastForwardThrottleDeadline.time_since_epoch().count() == 0)
-			fastForwardThrottleDeadline = now;
-		fastForwardThrottleDeadline += frameDuration;
-		if (fastForwardThrottleDeadline > now)
-			std::this_thread::sleep_until(fastForwardThrottleDeadline);
-		else
-			fastForwardThrottleDeadline = now;
-	}
-	else
-	{
-		fastForwardThrottleDeadline = {};
-	}
-#endif
 	// Time out if a frame hasn't been rendered for 50 ms
 	if (sh4_sched_now64() - startTime <= 50_sh4ms)
 		return;

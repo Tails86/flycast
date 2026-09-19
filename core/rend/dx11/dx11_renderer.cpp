@@ -1,6 +1,5 @@
 /*
 	Copyright 2021 flyinghead
-	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -23,7 +22,6 @@
 #include "hw/pvr/pvr_mem.h"
 #include "ui/gui.h"
 #include "rend/sorter.h"
-#include "rend/osd.h"
 
 #include <memory>
 
@@ -583,12 +581,6 @@ void DX11Renderer::displayFramebuffer()
 		std::swap(shiftX, shiftY);
 		renderAR = 1 / renderAR;
 	}
-
-	// Adjust 'h' or 'w' to avoid overlapping with the menu bar
-	int topInset = getScaledTopInset();
-	int leftInset = 0;
-	if (config::Rotate90)
-		std::swap(topInset, leftInset);
 	
 	int dy = 0;
 	int dx = 0;
@@ -597,8 +589,8 @@ void DX11Renderer::displayFramebuffer()
 	
 	float x = (float)dx;
 	float y = (float)dy;
-	float w = (float)(outwidth - leftInset - 2 * dx);
-	float h = (float)(outheight - topInset - 2 * dy);
+	float w = (float)(outwidth - 2 * dx);
+	float h = (float)(outheight - 2 * dy);
 
 	// Normalize
 	x = x * 2.f / outwidth - 1.f;

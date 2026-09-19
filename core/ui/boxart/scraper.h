@@ -1,6 +1,5 @@
 /*
 	Copyright 2022 flyinghead
-	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -22,7 +21,6 @@
 #include "types.h"
 #include "json.hpp"
 
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,8 +39,6 @@ struct GameBoxart
 	std::string gamePath;
 	std::string boxartPath;
 	std::string boxartUrl;
-	// Populated from the read-only Library play-time database; never persisted in the boxart database.
-	std::optional<u64> playTimeSeconds;
 
 	bool arcade = false;
 	bool parsed = false;
@@ -71,10 +67,6 @@ struct GameBoxart
 		if (!boxartPath.empty())
 			nowide::remove(boxartPath.c_str());
 		boxartPath = path;
-	}
-
-	bool isValid() const {
-		return !fileName.empty();
 	}
 };
 

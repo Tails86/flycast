@@ -1,6 +1,4 @@
 /*
-	Portions Copyright 2026 The Hollycast Authors
-
 	This file is part of Flycast.
 
     Flycast is free software: you can redistribute it and/or modify
@@ -108,6 +106,7 @@ private:
 
 	rc_client_t *rc_client = nullptr;
 	bool loggedOn = false;
+	bool hostOverrideActive = false;
 	std::atomic_bool loadingGame {};
 	bool active = false;
 	bool paused = false;
@@ -252,6 +251,7 @@ bool Achievements::createClient()
 
 	if (!config::AchievementsHostUrl.get().empty()) {
 		rc_client_set_host(rc_client, config::AchievementsHostUrl.get().c_str());
+		hostOverrideActive = true;
 	}
 
 	return true;
@@ -260,6 +260,7 @@ bool Achievements::createClient()
 void Achievements::setHostOverride(const std::string& host)
 {
 	config::AchievementsHostUrl.set(host);
+	hostOverrideActive = !host.empty();
 	// rc_client_set_host sets the global URL even when rc_client is null
 	rc_client_set_host(rc_client, host.empty() ? nullptr : host.c_str());
 	if (rc_client != nullptr)
@@ -897,7 +898,7 @@ void Achievements::loadGame()
 	{
 		// settings.raHardcoreMode is set before enabling cheats and loading the initial savestate
 		// Hardcore is disabled when routing through a custom host (e.g. RAOfflineProxy).
-		bool effectiveHardcore = settings.raHardcoreMode && config::AchievementsHostUrl.get().empty();
+		bool effectiveHardcore = settings.raHardcoreMode && !hostOverrideActive;
 		rc_client_set_hardcore_enabled(rc_client, effectiveHardcore);
 		rc_client_begin_load_game(rc_client, gameHash.c_str(), [](int result, const char *error_message, rc_client_t *client, void *userdata) {
 				((Achievements *)userdata)->gameLoaded(result, error_message);

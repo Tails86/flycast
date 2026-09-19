@@ -21,8 +21,8 @@
 #define DEFAULT_FULLSCREEN    false
 
 // These should match WINDOW_WIDTH and WINDOW_HEIGHT in sdl.cpp
-#define DEFAULT_WINDOW_WIDTH  800
-#define DEFAULT_WINDOW_HEIGHT 600
+#define DEFAULT_WINDOW_WIDTH  640
+#define DEFAULT_WINDOW_HEIGHT 480
 
 static void x11_window_set_text(const char *text);
 

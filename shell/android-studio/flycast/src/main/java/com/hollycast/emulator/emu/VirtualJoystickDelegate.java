@@ -51,7 +51,6 @@ public class VirtualJoystickDelegate implements TouchEventHandler
     private int mouseButtons = 0;
     private int[] mousePos = { -32768, -32768 };
     private int mousePid = -1;
-    private int menuPointerId = -1;
 
     public VirtualJoystickDelegate(View view) {
         this.view = view;
@@ -64,38 +63,6 @@ public class VirtualJoystickDelegate implements TouchEventHandler
     public void stop() {
         vibratorThread.stopThread();
         vibratorThread = null;
-        menuPointerId = -1;
-    }
-
-    private boolean routeMenuTouchEvent(MotionEvent event)
-    {
-        final int action = event.getActionMasked();
-        final int actionIndex = event.getActionIndex();
-
-        if (menuPointerId == -1) {
-            if (action != MotionEvent.ACTION_DOWN && action != MotionEvent.ACTION_POINTER_DOWN)
-                return false;
-            if (!JNIdc.guiShouldCaptureMenuTouch(event.getX(actionIndex), event.getY(actionIndex)))
-                return false;
-
-            // Menu interactions always win over a virtual control that happens
-            // to overlap the menu. Do not leave that control pressed while the
-            // touch stream is handed to ImGui.
-            pidToControlId.clear();
-            joyPointerId = -1;
-            InputDeviceManager.getInstance().virtualReleaseAll();
-            mousePid = -1;
-            mouseButtons = 0;
-            InputDeviceManager.getInstance().touchMouseEvent(mousePos[0], mousePos[1], mouseButtons);
-            menuPointerId = event.getPointerId(actionIndex);
-        }
-
-        touchMouseEvent(event);
-        if (action == MotionEvent.ACTION_CANCEL
-                || ((action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP)
-                && event.getPointerId(actionIndex) == menuPointerId))
-            menuPointerId = -1;
-        return true;
     }
 
     private boolean touchMouseEvent(MotionEvent event)
@@ -179,8 +146,6 @@ public class VirtualJoystickDelegate implements TouchEventHandler
     @Override
     public boolean onTouchEvent(MotionEvent event, int width, int height)
     {
-        if (routeMenuTouchEvent(event))
-            return true;
         if (JNIdc.guiIsOpen())
             return touchMouseEvent(event);
         show();
