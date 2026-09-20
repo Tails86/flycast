@@ -43,16 +43,38 @@ To support this, we add the following Maple pseudo-commands:
 
 We aren't doing anything special with this right now, compared to the existing DreamPotato connectivity.
 
-For example, loading a save state in this mode, will not revert the VMU contents to when the state was saved, like would be done for ordinary VMUs.
+For example, loading a save state in this mode, will not revert the VMU contents to when the state was saved, like would be done for ordinary VMUs. Instead, the VMU is automatically reconnected to the Dreamcast if any of the already-read blocks have changed since the state was saved. This allows the game to observe changes in the VMU contents, but, can cause disruptive behaviors in games. For example, in Sonic Adventure 2, the game will stop briefly and show a popup.
 
 Theoretically, this tighter integration, would be an opportunity to ensure that the DreamPotato savestate is strongly coupled to the Hollycast savestate. This would allow restoring the VMU contents to match the savestate under all conditions, and prevent a need to "simulate reconnecting" VMUs. However, this is additional work and not thought to be part of the "most critical path" to get working.
 
-One way we could approach restoring the state of the device is:
-- If the DreamPotato VMU was docked when the state was saved, then, include the flash memory contents in the savestate. When the savestate loaded, perform the following steps:
-    1) Tell DreamPotato to close the VMU file it has open.
-    2) Overwrite the VMU file.
-    3) Tell DreamPotato to reopen the VMU file and dock the VMU (no-op if the VMU is already docked).
-    4) Send a Write LCD message with the VMU screen data from the savestate.
-- If the DreamPotato VMU was *ejected* when the state was saved, then, don't include anything about the VMU in the savestate.
-    - When loading the state, the only thing we want to do is tell DreamPotato to eject the VMU (which is a no-op if VMU is already ejected).
-- If loading the state changes the expansion device configuration, from not having a DreamPotato at all to having one for a slot, things probably get more complicated. We would probably just need to overwrite the VMU file on disk, and let DreamPotato connect normally. But in order to avoid the game "noticing" a disconnect, we would probably want to halt emulation until DreamPotato is connected and ready, which doesn't seem great.
+Note that the semantics of a `maple_sega_vmu` after loading state are:
+- Replace the `flash_data` with the data from the savestate.
+- Mark `fullSaveNeeded = true`.
+- When a flash write request comes through, observe the `fullSaveNeeded` and write the whole VMU content to disk instead of partial content.
+
+This means that the VMU files on disk only change if you load a state and then save a file in-game afterwards. There are multiple possible reasons for this:
+- Loading a state may be just a temporary "poke around" type of activity. If the user never saves a game, then it's likely they don't want their VMU files replaced.
+- However some games autosave just from completing a level, collecting an item, etc. So the user might end up saving and overwriting the old file by accident.
+
+This behavior can make it hard for users to predict what effects loading a state might have. They may not realize that loading a state can overwrite their save files, but only if they save to the VMU later on. This seems problematic.
+
+The problem is related to the issue with device settings UI after loading state. The connected maple devices might be completely different from what appears in the UI, because a state was loaded from when a previous configuration was being used. But nothing in the UI tells you that what it's currently showing you is not what's actually being used.
+
+We might want to adjust the default behavior of the `maple_sega_vmu` as well as the integrated DreamPotato VMU to see if we can accomplish all of the following at the same time:
+- No disruptive behaviors when loading state (e.g. automatic reconnect due to content difference).
+- Behavior is easier for user to predict.
+- No possibility of accidental data loss.
+  - For example, require some extra/more explicit action, before either the pre-load-state or post-load-state save data could be lost.
+
+However, it's not clear what design would actually accomplish all of the above.
+
+One approach for implementing the current `maple_sega_vmu` semantics for integrated DreamPotato VMUs would be:
+1) When saving state, ensure all the DreamPotato flash data is properly mirrored back to Hollycast. (e.g. changes made while VMU was ejected are recorded).
+2) Add a new custom maple command, to tell DP to WriteBlock but not mirror the data to disk. Have DP set its own equivalent of the `fullSaveNeeded` flag.
+3) Write all the flash data to DP from the savestate using the new command.
+4) Use another new custom maple command to set the docked/ejected state to match whatever it was when the state was saved.
+
+It's also not clear if we should overwrite VMU contents or state, if the DreamPotato VMU was ejected at the time the state was saved. 2 options that feel reasonable:
+- Just ensure it's still ejected when loading state. Don't restore the contents as the Dreamcast game was not tracking this anyway.
+- Alternatively, serialize an entire DreamPotato save state into the Hollycast save state, and let DreamPotato load it. This probably involves more custom maple commands.
+    - Otherwise, if we only restored the flash content, we'd need to also reset the VMU, which would just be another form of disruptive behavior.
