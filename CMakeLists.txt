@@ -1491,12 +1491,10 @@ if(NOT LIBRETRO)
 			string(REPLACE "9.9.9.9" ${MS_VERSION} MANIFEST ${MANIFEST})
 			file(WRITE ${CMAKE_BINARY_DIR}/Package.appxmanifest ${MANIFEST})
 			set(ResourceFiles ${CMAKE_BINARY_DIR}/Package.appxmanifest
-					shell/uwp/flycast150.png
-					shell/uwp/flycast50.png
-					shell/uwp/flycast44.png
+					shell/uwp/hollycast150.png
+					shell/uwp/hollycast50.png
+					shell/uwp/hollycast44.png
 					shell/uwp/splash.png
-					shell/uwp/flycast44.targetsize-48_altform-unplated.png
-					shell/uwp/flycast44.targetsize-48_altform-lightunplated.png
 					core/deps/SDL/src/main/winrt/SDL2-WinRTResource_BlankCursor.cur
 					core/deps/SDL/src/main/winrt/SDL2-WinRTResources.rc)
 			target_sources(${PROJECT_NAME} PRIVATE
