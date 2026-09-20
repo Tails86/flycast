@@ -29,6 +29,8 @@
 #include "hw/mem/addrspace.h"
 #endif
 
+#include <optional>
+
 static void gui_settings_advanced()
 {
 #if FEAT_SHREC != DYNAREC_NONE
@@ -198,9 +200,58 @@ static void gui_debug_tab()
 }
 #endif
 
-static bool beginTabItem(const char *icon, const char *label) {
-	return ImGui::BeginTabItem((std::string(icon) + " " + label).c_str());
-}
+class VerticalTabBar
+{
+private:
+	std::optional<ImGuiID> activeTabId = std::nullopt;
+
+public:
+	bool BeginTabBar(const char* id)
+	{
+		ImGui::PushID(id);
+
+		// Setup tab bar structure: tab list on the left, active tab content on the right.
+		ImGui::BeginChild("##verticalTabBar", ImVec2(150, 0));
+		ImGui::EndChild();
+		ImGui::SameLine();
+		ImGui::BeginChild("##activeTab", ImVec2(0, 0));
+		ImGui::EndChild();
+
+		return ImGui::BeginChild("##verticalTabBar");
+	}
+
+	void EndTabBar()
+	{
+		ImGui::EndChild(); // ##verticalTabBar
+		ImGui::PopID();
+	}
+
+	bool BeginTab(const char* icon, const char* label)
+	{
+		std::string fullLabel = std::string(icon) + " " + label;
+		ImGuiID tabID = ImGui::GetID(fullLabel.c_str());
+
+		// When we have no activeTabId stored, then the first tab becomes the active tab automatically
+		bool isActiveTab = !activeTabId.has_value() || activeTabId.value() == tabID;
+		if (ImGui::Selectable(fullLabel.c_str(), isActiveTab)) {
+			isActiveTab = true;
+			activeTabId = tabID;
+		}
+
+		if (isActiveTab) {
+			ImGui::EndChild(); // ##verticalTabBar
+			ImGui::BeginChild("##activeTab", ImVec2(0, 0));
+		}
+
+		return isActiveTab;
+	}
+
+	void EndTab()
+	{
+		ImGui::EndChild(); // ##activeTab
+		ImGui::BeginChild("##verticalTabBar");
+	}
+};
 
 void gui_display_settings()
 {
@@ -276,59 +327,68 @@ void gui_display_settings()
 		// low width
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ScaledVec2(4, 6));
 
-    if (ImGui::BeginTabBar("settings", ImGuiTabBarFlags_NoTooltip | ImGuiTabBarFlags_NoTabListScrollingButtons))
+	static VerticalTabBar SettingsTabBar;
+    if (SettingsTabBar.BeginTabBar("settings"))
     {
-		if (beginTabItem(ICON_FA_TOOLBOX, T("General")))
+		if (SettingsTabBar.BeginTab(ICON_FA_TOOLBOX, T("General")))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_general();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			SettingsTabBar.EndTab();
 		}
-		if (beginTabItem(ICON_FA_GAMEPAD, T("Controls")))
+		if (SettingsTabBar.BeginTab(ICON_FA_GAMEPAD, T("Controls")))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_controls(mapleDevicesChanges, expDevicesChanges);
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			SettingsTabBar.EndTab();
 		}
-		if (beginTabItem(ICON_FA_DISPLAY, T("Video")))
+		if (SettingsTabBar.BeginTab(ICON_FA_DISPLAY, T("Video")))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_video();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			SettingsTabBar.EndTab();
 		}
-		if (beginTabItem(ICON_FA_MUSIC, T("Audio")))
+		if (SettingsTabBar.BeginTab(ICON_FA_MUSIC, T("Audio")))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_audio();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			SettingsTabBar.EndTab();
 		}
-		if (beginTabItem(ICON_FA_WIFI, T("Network")))
+		if (SettingsTabBar.BeginTab(ICON_FA_WIFI, T("Network")))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_network();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			SettingsTabBar.EndTab();
 		}
-		if (beginTabItem(ICON_FA_MICROCHIP, T("Advanced")))
+		if (SettingsTabBar.BeginTab(ICON_FA_MICROCHIP, T("Advanced")))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_advanced();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			SettingsTabBar.EndTab();
 		}
 #if !defined(NDEBUG) || defined(DEBUGFAST) || FC_PROFILER
-		if (beginTabItem(ICON_FA_BUG, "Debug"))
+		if (SettingsTabBar.BeginTab(ICON_FA_BUG, "Debug"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_debug_tab();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			SettingsTabBar.EndTab();
 		}
 #endif
-		if (beginTabItem(ICON_FA_CIRCLE_INFO, T("About")))
+		if (SettingsTabBar.BeginTab(ICON_FA_CIRCLE_INFO, T("About")))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_about();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			SettingsTabBar.EndTab();
 		}
-		ImGui::EndTabBar();
+		SettingsTabBar.EndTabBar();
     }
     ImGui::PopStyleVar();
 
