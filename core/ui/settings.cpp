@@ -203,7 +203,8 @@ static void gui_debug_tab()
 class VerticalTabBar
 {
 private:
-	std::optional<ImGuiID> activeTabId = std::nullopt;
+	//! ID of the Selectable representing the currently selected tab.
+	std::optional<ImGuiID> activeSelectableID = std::nullopt;
 
 public:
 	bool BeginTabBar(const char* id)
@@ -214,7 +215,7 @@ public:
 		ImGui::BeginChild("##verticalTabBar", ImVec2(150, 0));
 		ImGui::EndChild();
 		ImGui::SameLine();
-		ImGui::BeginChild("##activeTab", ImVec2(0, 0));
+		ImGui::BeginChild("##activeTabContent", ImVec2(0, 0));
 		ImGui::EndChild();
 
 		return ImGui::BeginChild("##verticalTabBar");
@@ -229,18 +230,29 @@ public:
 	bool BeginTab(const char* icon, const char* label)
 	{
 		std::string fullLabel = std::string(icon) + " " + label;
-		ImGuiID tabID = ImGui::GetID(fullLabel.c_str());
+		ImGuiID selectableID = ImGui::GetID(fullLabel.c_str());
 
-		// When we have no activeTabId stored, then the first tab becomes the active tab automatically
-		bool isActiveTab = !activeTabId.has_value() || activeTabId.value() == tabID;
-		if (ImGui::Selectable(fullLabel.c_str(), isActiveTab)) {
+		// When we have no activeSelectableID stored, then the first tab becomes the active tab automatically
+		if (!activeSelectableID.has_value()) {
+			activeSelectableID = selectableID;
+		}
+
+		bool isActiveTab = activeSelectableID.value() == selectableID;
+		bool pressed = ImGui::Selectable(fullLabel.c_str(), isActiveTab);
+		IM_ASSERT(selectableID == ImGui::GetItemID());
+		if (pressed) {
 			isActiveTab = true;
-			activeTabId = tabID;
+			activeSelectableID = selectableID;
 		}
 
 		if (isActiveTab) {
 			ImGui::EndChild(); // ##verticalTabBar
-			ImGui::BeginChild("##activeTab", ImVec2(0, 0));
+			ImGui::BeginChild("##activeTabContent", ImVec2(0, 0));
+		}
+
+		if (pressed) {
+			// Move focus to ##activeTabContent
+			ImGui::SetKeyboardFocusHere();
 		}
 
 		return isActiveTab;
@@ -248,7 +260,7 @@ public:
 
 	void EndTab()
 	{
-		ImGui::EndChild(); // ##activeTab
+		ImGui::EndChild(); // ##activeTabContent
 		ImGui::BeginChild("##verticalTabBar");
 	}
 };
