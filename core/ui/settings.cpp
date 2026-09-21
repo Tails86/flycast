@@ -213,10 +213,10 @@ public:
 		ImGui::PushID(id);
 
 		// Setup tab bar structure: tab list on the left, active tab content on the right.
-		ImGui::BeginChild("##verticalTabBar", ScaledVec2(145, 0), ImGuiChildFlags_NavFlattened);
+		ImGui::BeginChild("##verticalTabBar", ScaledVec2(155, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_Borders);
 		ImGui::EndChild();
 		ImGui::SameLine();
-		ImGui::BeginChild("##activeTabContent", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+		ImGui::BeginChild("##activeTabContent", ImVec2(0, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_Borders);
 		ImGui::EndChild();
 
 		return ImGui::BeginChild("##verticalTabBar");
@@ -241,7 +241,9 @@ public:
 		}
 
 		bool isActiveTab = activeSelectableID.value() == selectableID;
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ScaledVec2(6, 12));
 		bool pressed = ImGui::Selectable(fullLabel.c_str(), isActiveTab);
+		ImGui::PopStyleVar();
 		IM_ASSERT(selectableID == ImGui::GetItemID());
 		if (pressed) {
 			// Delay changing the active selectable until the next frame.
@@ -322,6 +324,11 @@ void gui_display_settings_header(ImVec2 normal_padding, std::array<bool, 4>& map
 				config::Settings::instance().setPerGameConfig(true);
 		}
 	}
+
+	// Selectables apply ItemSpacing "internally" rather than "externally".
+	// Add an extra half-item worth of spacing so that the space between the Button and the Selectable looks good.
+	ImguiStyleVar _(ImGuiStyleVar_ItemSpacing, ImVec2(0, ImGui::GetStyle().ItemSpacing.y / 2));
+	ImGui::Dummy(ImVec2(0, 0));
 }
 
 void gui_display_settings()
