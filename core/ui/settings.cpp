@@ -205,6 +205,7 @@ class VerticalTabBar
 private:
 	//! ID of the Selectable representing the currently selected tab.
 	std::optional<ImGuiID> activeSelectableID = std::nullopt;
+	std::optional<ImGuiID> nextFrameSelectableID = std::nullopt;
 
 public:
 	bool BeginTabBar(const char* id)
@@ -212,7 +213,7 @@ public:
 		ImGui::PushID(id);
 
 		// Setup tab bar structure: tab list on the left, active tab content on the right.
-		ImGui::BeginChild("##verticalTabBar", ImVec2(160, 0), ImGuiChildFlags_NavFlattened);
+		ImGui::BeginChild("##verticalTabBar", ScaledVec2(145, 0), ImGuiChildFlags_NavFlattened);
 		ImGui::EndChild();
 		ImGui::SameLine();
 		ImGui::BeginChild("##activeTabContent", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
@@ -225,6 +226,8 @@ public:
 	{
 		ImGui::EndChild(); // ##verticalTabBar
 		ImGui::PopID();
+
+		activeSelectableID = nextFrameSelectableID;
 	}
 
 	bool BeginTab(const char* icon, const char* label)
@@ -237,26 +240,18 @@ public:
 			activeSelectableID = selectableID;
 		}
 
-		// TODO2: When tabs are switched, multiple tabs can render in a single frame.
-		// We may need the Selectable() overload which takes a pointer to 'isActiveTab', to catch when a tab is deselected
 		bool isActiveTab = activeSelectableID.value() == selectableID;
 		bool pressed = ImGui::Selectable(fullLabel.c_str(), isActiveTab);
 		IM_ASSERT(selectableID == ImGui::GetItemID());
 		if (pressed) {
-			isActiveTab = true;
-			activeSelectableID = selectableID;
+			// Delay changing the active selectable until the next frame.
+			// This prevents accidentally rendering multiple tab contents in a single frame.
+			nextFrameSelectableID = selectableID;
 		}
 
 		if (isActiveTab) {
 			ImGui::EndChild(); // ##verticalTabBar
 			ImGui::BeginChild("##activeTabContent", ImVec2(0, 0));
-		}
-
-		if (pressed) {
-			// Move focus to ##activeTabContent
-			// TODO2: If public APIs don't offer us a decent way to move focus back
-			// to the tab bar on B-press, then, it's probably not worth moving focus to the active area on A-press here.
-			// ImGui::SetKeyboardFocusHere();
 		}
 
 		return isActiveTab;
