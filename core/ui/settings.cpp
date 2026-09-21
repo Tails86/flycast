@@ -212,7 +212,7 @@ public:
 		ImGui::PushID(id);
 
 		// Setup tab bar structure: tab list on the left, active tab content on the right.
-		ImGui::BeginChild("##verticalTabBar", ImVec2(150, 0), ImGuiChildFlags_NavFlattened);
+		ImGui::BeginChild("##verticalTabBar", ImVec2(160, 0), ImGuiChildFlags_NavFlattened);
 		ImGui::EndChild();
 		ImGui::SameLine();
 		ImGui::BeginChild("##activeTabContent", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
@@ -237,6 +237,8 @@ public:
 			activeSelectableID = selectableID;
 		}
 
+		// TODO2: When tabs are switched, multiple tabs can render in a single frame.
+		// We may need the Selectable() overload which takes a pointer to 'isActiveTab', to catch when a tab is deselected
 		bool isActiveTab = activeSelectableID.value() == selectableID;
 		bool pressed = ImGui::Selectable(fullLabel.c_str(), isActiveTab);
 		IM_ASSERT(selectableID == ImGui::GetItemID());
@@ -248,6 +250,7 @@ public:
 		if (isActiveTab) {
 			ImGui::EndChild(); // ##verticalTabBar
 			ImGui::BeginChild("##activeTabContent", ImVec2(0, 0));
+			header(fullLabel.c_str());
 		}
 
 		if (pressed) {
@@ -267,19 +270,12 @@ public:
 	}
 };
 
-void gui_display_settings()
+void gui_display_settings_header(ImVec2 normal_padding, std::array<bool, 4>& mapleDevicesChanges, std::array<std::array<bool, 2>, 4>& expDevicesChanges)
 {
-	static std::array<bool, 4> mapleDevicesChanges;
-	static std::array<std::array<bool, 2>, 4> expDevicesChanges;
+	ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
 
-	fullScreenWindow(false);
-	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
-
-    ImGui::Begin(T("Settings"), nullptr, ImGuiWindowFlags_DragScrolling | ImGuiWindowFlags_NoResize
-    		| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-	ImVec2 normal_padding = ImGui::GetStyle().FramePadding;
-
-    if (ImGui::Button(T("Done"), ScaledVec2(100, 30)))
+	auto availableWidth = ImGui::GetContentRegionAvail().x;
+    if (ImGui::Button(T("Done"), ImVec2(availableWidth, uiScaled(30))))
     {
     	if (uiUserScaleUpdated)
     	{
@@ -317,11 +313,9 @@ void gui_display_settings()
     }
 	if (game_started)
 	{
-	    ImGui::SameLine();
-		ImguiStyleVar _(ImGuiStyleVar_FramePadding, ImVec2(uiScaled(16), normal_padding.y));
 		if (config::Settings::instance().hasPerGameConfig())
 		{
-			if (ImGui::Button(T("Delete Game Config"), ScaledVec2(0, 30)))
+			if (ImGui::Button(T("Delete Game Config"), ImVec2(availableWidth, uiScaled(30))))
 			{
 				config::Settings::instance().setPerGameConfig(false);
 				config::Settings::instance().load(false);
@@ -330,10 +324,23 @@ void gui_display_settings()
 		}
 		else
 		{
-			if (ImGui::Button(T("Make Game Config"), ScaledVec2(0, 30)))
+			if (ImGui::Button(T("Make Game Config"), ImVec2(availableWidth, uiScaled(30))))
 				config::Settings::instance().setPerGameConfig(true);
 		}
 	}
+}
+
+void gui_display_settings()
+{
+	static std::array<bool, 4> mapleDevicesChanges;
+	static std::array<std::array<bool, 2>, 4> expDevicesChanges;
+
+	fullScreenWindow(false);
+	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
+
+    ImGui::Begin(T("Settings"), nullptr, ImGuiWindowFlags_DragScrolling | ImGuiWindowFlags_NoResize
+    		| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+	ImVec2 normal_padding = ImGui::GetStyle().FramePadding;
 
 	if (ImGui::GetContentRegionAvail().x >= uiScaled(650.f))
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ScaledVec2(16, 6));
@@ -344,6 +351,8 @@ void gui_display_settings()
 	static VerticalTabBar SettingsTabBar;
     if (SettingsTabBar.BeginTabBar("settings"))
     {
+		gui_display_settings_header(normal_padding, mapleDevicesChanges, expDevicesChanges);
+
 		if (SettingsTabBar.BeginTab(ICON_FA_TOOLBOX, T("General")))
 		{
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
@@ -404,7 +413,7 @@ void gui_display_settings()
 		}
 		SettingsTabBar.EndTabBar();
     }
-    ImGui::PopStyleVar();
+	ImGui::PopStyleVar();
 
     scrollWhenDraggingOnVoid();
     windowDragScroll();
