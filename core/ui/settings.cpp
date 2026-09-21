@@ -250,7 +250,6 @@ public:
 		if (isActiveTab) {
 			ImGui::EndChild(); // ##verticalTabBar
 			ImGui::BeginChild("##activeTabContent", ImVec2(0, 0));
-			header(fullLabel.c_str());
 		}
 
 		if (pressed) {
