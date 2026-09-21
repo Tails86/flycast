@@ -325,10 +325,7 @@ void gui_display_settings_header(ImVec2 normal_padding, std::array<bool, 4>& map
 		}
 	}
 
-	// Selectables apply ItemSpacing "internally" rather than "externally".
-	// Add an extra half-item worth of spacing so that the space between the Button and the Selectable looks good.
-	ImguiStyleVar _(ImGuiStyleVar_ItemSpacing, ImVec2(0, ImGui::GetStyle().ItemSpacing.y / 2));
-	ImGui::Dummy(ImVec2(0, 0));
+	ImGui::Spacing();
 }
 
 void gui_display_settings()
