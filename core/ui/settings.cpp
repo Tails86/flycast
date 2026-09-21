@@ -212,10 +212,10 @@ public:
 		ImGui::PushID(id);
 
 		// Setup tab bar structure: tab list on the left, active tab content on the right.
-		ImGui::BeginChild("##verticalTabBar", ImVec2(150, 0));
+		ImGui::BeginChild("##verticalTabBar", ImVec2(150, 0), ImGuiChildFlags_NavFlattened);
 		ImGui::EndChild();
 		ImGui::SameLine();
-		ImGui::BeginChild("##activeTabContent", ImVec2(0, 0));
+		ImGui::BeginChild("##activeTabContent", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
 		ImGui::EndChild();
 
 		return ImGui::BeginChild("##verticalTabBar");
@@ -252,7 +252,9 @@ public:
 
 		if (pressed) {
 			// Move focus to ##activeTabContent
-			ImGui::SetKeyboardFocusHere();
+			// TODO2: If public APIs don't offer us a decent way to move focus back
+			// to the tab bar on B-press, then, it's probably not worth moving focus to the active area on A-press here.
+			// ImGui::SetKeyboardFocusHere();
 		}
 
 		return isActiveTab;
