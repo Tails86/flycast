@@ -29,8 +29,6 @@
 #include "hw/mem/addrspace.h"
 #endif
 
-#include <optional>
-
 static void gui_settings_advanced()
 {
 #if FEAT_SHREC != DYNAREC_NONE
