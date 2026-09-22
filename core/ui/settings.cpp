@@ -203,9 +203,10 @@ static void gui_debug_tab()
 class VerticalTabBar
 {
 private:
-	//! ID of the Selectable representing the currently selected tab.
-	std::optional<ImGuiID> activeSelectableID = std::nullopt;
-	std::optional<ImGuiID> nextFrameSelectableID = std::nullopt;
+	// ID of the Selectable representing the currently selected tab.
+	// Note: we don't want a translated label here, it should remain stable when locale changes.
+	const char* activeLabel = nullptr;
+	const char* nextFrameActiveLabel = nullptr;
 
 public:
 	bool BeginTabBar(const char* id)
@@ -227,28 +228,26 @@ public:
 		ImGui::EndChild(); // ##verticalTabBar
 		ImGui::PopID();
 
-		activeSelectableID = nextFrameSelectableID;
+		activeLabel = nextFrameActiveLabel;
 	}
 
 	bool BeginTab(const char* icon, const char* label)
 	{
-		std::string fullLabel = std::string(icon) + " " + label;
-		ImGuiID selectableID = ImGui::GetID(fullLabel.c_str());
+		std::string fullLabel = std::string(icon) + " " + T(label);
 
-		// When we have no activeSelectableID stored, then the first tab becomes the active tab automatically
-		if (!activeSelectableID.has_value()) {
-			activeSelectableID = selectableID;
+		// When we have no activeLabel stored, then the first tab becomes the active tab automatically
+		if (activeLabel == nullptr) {
+			activeLabel = label;
 		}
 
-		bool isActiveTab = activeSelectableID.value() == selectableID;
+		bool isActiveTab = activeLabel == label;
 		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ScaledVec2(6, 12));
 		bool pressed = ImGui::Selectable(fullLabel.c_str(), isActiveTab);
 		ImGui::PopStyleVar();
-		IM_ASSERT(selectableID == ImGui::GetItemID());
 		if (pressed) {
 			// Delay changing the active selectable until the next frame.
 			// This prevents accidentally rendering multiple tab contents in a single frame.
-			nextFrameSelectableID = selectableID;
+			nextFrameActiveLabel = label;
 		}
 
 		if (isActiveTab) {
@@ -351,42 +350,42 @@ void gui_display_settings()
     {
 		gui_display_settings_header(normal_padding, mapleDevicesChanges, expDevicesChanges);
 
-		if (SettingsTabBar.BeginTab(ICON_FA_TOOLBOX, T("General")))
+		if (SettingsTabBar.BeginTab(ICON_FA_TOOLBOX, "General"))
 		{
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_general();
 			ImGui::PopStyleVar();
 			SettingsTabBar.EndTab();
 		}
-		if (SettingsTabBar.BeginTab(ICON_FA_GAMEPAD, T("Controls")))
+		if (SettingsTabBar.BeginTab(ICON_FA_GAMEPAD, "Controls"))
 		{
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_controls(mapleDevicesChanges, expDevicesChanges);
 			ImGui::PopStyleVar();
 			SettingsTabBar.EndTab();
 		}
-		if (SettingsTabBar.BeginTab(ICON_FA_DISPLAY, T("Video")))
+		if (SettingsTabBar.BeginTab(ICON_FA_DISPLAY, "Video"))
 		{
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_video();
 			ImGui::PopStyleVar();
 			SettingsTabBar.EndTab();
 		}
-		if (SettingsTabBar.BeginTab(ICON_FA_MUSIC, T("Audio")))
+		if (SettingsTabBar.BeginTab(ICON_FA_MUSIC, "Audio"))
 		{
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_audio();
 			ImGui::PopStyleVar();
 			SettingsTabBar.EndTab();
 		}
-		if (SettingsTabBar.BeginTab(ICON_FA_WIFI, T("Network")))
+		if (SettingsTabBar.BeginTab(ICON_FA_WIFI, "Network"))
 		{
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_network();
 			ImGui::PopStyleVar();
 			SettingsTabBar.EndTab();
 		}
-		if (SettingsTabBar.BeginTab(ICON_FA_MICROCHIP, T("Advanced")))
+		if (SettingsTabBar.BeginTab(ICON_FA_MICROCHIP, "Advanced"))
 		{
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_advanced();
@@ -402,7 +401,7 @@ void gui_display_settings()
 			SettingsTabBar.EndTab();
 		}
 #endif
-		if (SettingsTabBar.BeginTab(ICON_FA_CIRCLE_INFO, T("About")))
+		if (SettingsTabBar.BeginTab(ICON_FA_CIRCLE_INFO, "About"))
 		{
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_about();
