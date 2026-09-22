@@ -336,7 +336,7 @@ void gui_display_settings()
 	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
 
     ImGui::Begin(T("Settings"), nullptr, ImGuiWindowFlags_DragScrolling | ImGuiWindowFlags_NoResize
-    		| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+			| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 	ImVec2 normal_padding = ImGui::GetStyle().FramePadding;
 
 	if (ImGui::GetContentRegionAvail().x >= uiScaled(650.f))
