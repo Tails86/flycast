@@ -198,23 +198,77 @@ static void gui_debug_tab()
 }
 #endif
 
-static bool beginTabItem(const char *icon, const char *label) {
-	return ImGui::BeginTabItem((std::string(icon) + " " + label).c_str());
-}
-
-void gui_display_settings()
+class VerticalTabBar
 {
-	static std::array<bool, 4> mapleDevicesChanges;
-	static std::array<std::array<bool, 2>, 4> expDevicesChanges;
+private:
+	// Label of the currently selected tab.
+	// Note: we don't want a translated label here, it should remain stable when locale changes.
+	const char* activeLabel = nullptr;
+	const char* nextFrameActiveLabel = nullptr;
 
-	fullScreenWindow(false);
-	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
+public:
+	bool BeginTabBar(const char* id)
+	{
+		ImGui::PushID(id);
 
-    ImGui::Begin(T("Settings"), nullptr, ImGuiWindowFlags_DragScrolling | ImGuiWindowFlags_NoResize
-    		| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-	ImVec2 normal_padding = ImGui::GetStyle().FramePadding;
+		// Setup tab bar structure: tab list on the left, active tab content on the right.
+		ImGui::BeginChild("##verticalTabBar", ScaledVec2(155, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_Borders);
+		ImGui::EndChild();
+		ImGui::SameLine();
+		ImGui::BeginChild("##activeTabContent", ImVec2(0, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_Borders);
+		ImGui::EndChild();
 
-    if (ImGui::Button(T("Done"), ScaledVec2(100, 30)))
+		return ImGui::BeginChild("##verticalTabBar");
+	}
+
+	void EndTabBar()
+	{
+		ImGui::EndChild(); // ##verticalTabBar
+		ImGui::PopID();
+
+		activeLabel = nextFrameActiveLabel;
+	}
+
+	bool BeginTab(const char* icon, const char* label)
+	{
+		std::string fullLabel = std::string(icon) + " " + T(label);
+
+		// When we have no activeLabel stored, then the first tab becomes the active tab automatically
+		if (activeLabel == nullptr) {
+			activeLabel = label;
+		}
+
+		bool isActiveTab = activeLabel == label;
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ScaledVec2(6, 12));
+		bool pressed = ImGui::Selectable(fullLabel.c_str(), isActiveTab);
+		ImGui::PopStyleVar();
+		if (pressed) {
+			// Delay changing the active selectable until the next frame.
+			// This prevents accidentally rendering multiple tab contents in a single frame.
+			nextFrameActiveLabel = label;
+		}
+
+		if (isActiveTab) {
+			ImGui::EndChild(); // ##verticalTabBar
+			ImGui::BeginChild("##activeTabContent", ImVec2(0, 0));
+		}
+
+		return isActiveTab;
+	}
+
+	void EndTab()
+	{
+		ImGui::EndChild(); // ##activeTabContent
+		ImGui::BeginChild("##verticalTabBar");
+	}
+};
+
+void gui_display_settings_header(ImVec2 normal_padding, std::array<bool, 4>& mapleDevicesChanges, std::array<std::array<bool, 2>, 4>& expDevicesChanges)
+{
+	ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+
+	auto availableWidth = ImGui::GetContentRegionAvail().x;
+    if (ImGui::Button(T("Done"), ImVec2(availableWidth, uiScaled(30))))
     {
     	if (uiUserScaleUpdated)
     	{
@@ -252,11 +306,9 @@ void gui_display_settings()
     }
 	if (game_started)
 	{
-	    ImGui::SameLine();
-		ImguiStyleVar _(ImGuiStyleVar_FramePadding, ImVec2(uiScaled(16), normal_padding.y));
 		if (config::Settings::instance().hasPerGameConfig())
 		{
-			if (ImGui::Button(T("Delete Game Config"), ScaledVec2(0, 30)))
+			if (ImGui::Button(T("Delete Game Config"), ImVec2(availableWidth, uiScaled(30))))
 			{
 				config::Settings::instance().setPerGameConfig(false);
 				config::Settings::instance().load(false);
@@ -265,10 +317,26 @@ void gui_display_settings()
 		}
 		else
 		{
-			if (ImGui::Button(T("Make Game Config"), ScaledVec2(0, 30)))
+			if (ImGui::Button(T("Make Game Config"), ImVec2(availableWidth, uiScaled(30))))
 				config::Settings::instance().setPerGameConfig(true);
 		}
 	}
+
+	ImGui::Spacing();
+}
+
+void gui_display_settings()
+{
+	static std::array<bool, 4> mapleDevicesChanges;
+	static std::array<std::array<bool, 2>, 4> expDevicesChanges;
+	static VerticalTabBar settingsTabBar;
+
+	fullScreenWindow(false);
+	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
+
+    ImGui::Begin(T("Settings"), nullptr, ImGuiWindowFlags_DragScrolling | ImGuiWindowFlags_NoResize
+			| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+	ImVec2 normal_padding = ImGui::GetStyle().FramePadding;
 
 	if (ImGui::GetContentRegionAvail().x >= uiScaled(650.f))
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ScaledVec2(16, 6));
@@ -276,61 +344,71 @@ void gui_display_settings()
 		// low width
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ScaledVec2(4, 6));
 
-    if (ImGui::BeginTabBar("settings", ImGuiTabBarFlags_NoTooltip | ImGuiTabBarFlags_NoTabListScrollingButtons))
+    if (settingsTabBar.BeginTabBar("settings"))
     {
-		if (beginTabItem(ICON_FA_TOOLBOX, T("General")))
+		gui_display_settings_header(normal_padding, mapleDevicesChanges, expDevicesChanges);
+
+		if (settingsTabBar.BeginTab(ICON_FA_TOOLBOX, "General"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_general();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
-		if (beginTabItem(ICON_FA_GAMEPAD, T("Controls")))
+		if (settingsTabBar.BeginTab(ICON_FA_GAMEPAD, "Controls"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_controls(mapleDevicesChanges, expDevicesChanges);
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
-		if (beginTabItem(ICON_FA_DISPLAY, T("Video")))
+		if (settingsTabBar.BeginTab(ICON_FA_DISPLAY, "Video"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_video();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
-		if (beginTabItem(ICON_FA_MUSIC, T("Audio")))
+		if (settingsTabBar.BeginTab(ICON_FA_MUSIC, "Audio"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_audio();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
-		if (beginTabItem(ICON_FA_WIFI, T("Network")))
+		if (settingsTabBar.BeginTab(ICON_FA_WIFI, "Network"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_network();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
-		if (beginTabItem(ICON_FA_MICROCHIP, T("Advanced")))
+		if (settingsTabBar.BeginTab(ICON_FA_MICROCHIP, "Advanced"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_advanced();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
 #if !defined(NDEBUG) || defined(DEBUGFAST) || FC_PROFILER
-		if (beginTabItem(ICON_FA_BUG, "Debug"))
+		if (settingsTabBar.BeginTab(ICON_FA_BUG, "Debug"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_debug_tab();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
 #endif
-		if (beginTabItem(ICON_FA_CIRCLE_INFO, T("About")))
+		if (settingsTabBar.BeginTab(ICON_FA_CIRCLE_INFO, "About"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_about();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
-		ImGui::EndTabBar();
+		settingsTabBar.EndTabBar();
     }
-    ImGui::PopStyleVar();
+	ImGui::PopStyleVar();
 
     scrollWhenDraggingOnVoid();
     windowDragScroll();
