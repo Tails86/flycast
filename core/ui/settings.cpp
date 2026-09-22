@@ -201,7 +201,7 @@ static void gui_debug_tab()
 class VerticalTabBar
 {
 private:
-	// ID of the Selectable representing the currently selected tab.
+	// Label of the currently selected tab.
 	// Note: we don't want a translated label here, it should remain stable when locale changes.
 	const char* activeLabel = nullptr;
 	const char* nextFrameActiveLabel = nullptr;
