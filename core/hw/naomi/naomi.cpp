@@ -25,6 +25,7 @@
 #include "naomi_cart.h"
 #include "naomi_regs.h"
 #include "naomi_m3comm.h"
+#include "naomi_flashrom.h"
 #include "multiboard.h"
 #include "serialize.h"
 #include "network/output.h"
@@ -223,7 +224,19 @@ void naomi_reg_Init()
 		'0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0'
 	};
 	romSerialId.setData(romSerialData);
+#if 0
+	// Generate random main board serial id
+	u8 mainSerialData[sizeof(romSerialData)];
+	memcpy(mainSerialData, romSerialData, sizeof(romSerialData));
+	for (unsigned i = 52; i < 52 + 16; i++)
+		mainSerialData[i] = (rand() % 10) + '0';
+	u16 crc = eeprom_crc(&mainSerialData[22], 46);
+	mainSerialData[20] = crc >> 8;
+	mainSerialData[21] = crc;
+	mainSerialId.setData(mainSerialData);
+#else
 	mainSerialId.setData(romSerialData);
+#endif
 	if (dmaSchedId == -1)
 		dmaSchedId = sh4_sched_register(0, naomiDmaSched);
 }
@@ -297,40 +310,8 @@ void naomi_Serialize(Serializer& ser)
 }
 void naomi_Deserialize(Deserializer& deser)
 {
-	if (deser.version() < Deserializer::V40)
-	{
-		deser.skip<u32>();	// GSerialBuffer
-		deser.skip<u32>();	// BSerialBuffer
-		deser.skip<int>();	// GBufPos
-		deser.skip<int>();	// BBufPos
-		deser.skip<int>();	// GState
-		deser.skip<int>();	// BState
-		deser.skip<int>();	// GOldClk
-		deser.skip<int>();	// BOldClk
-		deser.skip<int>();	// BControl
-		deser.skip<int>();	// BCmd
-		deser.skip<int>();	// BLastCmd
-		deser.skip<int>();	// GControl
-		deser.skip<int>();	// GCmd
-		deser.skip<int>();	// GLastCmd
-		deser.skip<int>();	// SerStep
-		deser.skip<int>();	// SerStep2
-		deser.skip(69);		// BSerial
-		deser.skip(69);		// GSerial
-	}
-	else
-	{
-		mainSerialId.deserialize(deser);
-		romSerialId.deserialize(deser);
-	}
-	if (deser.version() < Deserializer::V36)
-	{
-		deser.skip<u32>(); // reg_dimm_command;
-		deser.skip<u32>(); // reg_dimm_offsetl;
-		deser.skip<u32>(); // reg_dimm_parameterl;
-		deser.skip<u32>(); // reg_dimm_parameterh;
-		deser.skip<u32>(); // reg_dimm_status;
-	}
+	mainSerialId.deserialize(deser);
+	romSerialId.deserialize(deser);
 	atomiswave::deserialize(deser);
 	midiffb::deserialize(deser);
 	if (deser.version() >= Deserializer::V45)

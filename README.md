@@ -25,7 +25,11 @@ We are committed to maintaining the high bar for speed and precision set by the 
 
 Hollycast aims to support every platform and release offered by Flycast. If Flycast can do it, Hollycast will too, ideally with a newer looking and more feature rich environment while keeping the performance you have come to know and love from Flyinghead's hard work and dedication on Flycast.
 
+<<<<<<< HEAD
 > **Note:** Hollycast is under active development. If you'd like to contribute, please [join our Discord](https://discord.gg/erSUx3v4YH) and open a Feature Request to discuss your plans before submitting code.
+=======
+&emsp;Install Flycast from [**Google Play**](https://play.google.com/store/apps/details?id=com.flycast.emulator).
+>>>>>>> flycast/dev
 
 ### Build Prerequisites for Windows
 
@@ -35,7 +39,67 @@ Hollycast aims to support every platform and release offered by Flycast. If Flyc
 
 ### Build Prerequisites for Linux
 
+<<<<<<< HEAD
 Run the following to install all prerequisites.
+=======
+&emsp;`flatpak install -y org.flycast.Flycast`
+
+3. Run Flycast:
+
+&emsp;`flatpak run org.flycast.Flycast`
+
+### Homebrew (macOS ![apple logo](https://flyinghead.github.io/flycast-builds/apple.png))
+
+1. [Set up Homebrew](https://brew.sh) or run `brew update` if already installed.
+
+2. Choose one channel:
+
+| Channel              | Install command                                         |
+| -------------------- | ------------------------------------------------------- |
+| Master (recommended) | `brew install --cask flyinghead/flycast/flycast@master` |
+| Stable               | `brew install --cask flyinghead/flycast/flycast`        |
+| Nightly dev          | `brew install --cask flyinghead/flycast/flycast@dev`    |
+
+3. Run Flycast from your Application folder
+
+&emsp;See the <a href="https://github.com/flyinghead/homebrew-flycast#readme">Flycast tap</a> for updating, uninstalling, and switching channels.
+
+### iOS
+
+&emsp;Due to persistent harassment from an iOS user, support for this platform has been dropped.
+
+### Xbox One/Series ![xbox logo](https://flyinghead.github.io/flycast-builds/xbox.png)
+
+&emsp;Grab the latest build from [**the builds page**](https://flyinghead.github.io/flycast-builds/), or the [**GitHub Actions**](https://github.com/flyinghead/flycast/actions/workflows/uwp.yml). Then install it using the **Xbox Device Portal**.
+
+## Build from source
+
+### macOS
+
+&emsp;Right-click the bootstrap script and choose **Open**:
+
+&emsp;`shell/apple/generate_xcode_project.command`
+
+### Windows
+
+&emsp;Double-click the bootstrap script:
+
+&emsp;`shell\windows\generate_vs_project.bat`
+
+### Linux
+
+#### Dependencies
+
+- **C/C++ compiler toolchain** (e.g. `gcc`/`g++`)
+- **CMake**
+- **make**
+- **libcurl** (development headers)
+- **libudev** (development headers)
+- **SDL2** (development headers)
+- **Graphics API**: Vulkan, OpenGL
+
+#### Build
+>>>>>>> flycast/dev
 
 ```
 sudo apt-get update

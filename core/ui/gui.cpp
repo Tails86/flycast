@@ -638,7 +638,7 @@ static void gui_display_commands()
 			}
 			else {
 				emu.openGdrom();
-				gui_setState(GuiState::Loading);
+				gui_resume_game();
 			}
 		}
 		// Settings
@@ -844,7 +844,8 @@ static void gameTooltip(const std::string& tip)
 static bool gameImageButton(ImguiTexture& texture, const std::string& tooltip, ImVec2 size, const std::string& gameName)
 {
 	bool pressed = texture.button("##imagebutton", size, gameName);
-	gameTooltip(tooltip);
+	if (ImGui::IsRectVisible(size))
+		gameTooltip(tooltip);
 
     return pressed;
 }
@@ -899,25 +900,28 @@ static void gui_display_content()
     ImGui::Text("%s", T("GAMES"));
     ImGui::Unindent(uiScaled(10));
 
-    static ImGuiTextFilter filter;
+    static TextFilter filter;
     IconButton settingsBtn(ICON_FA_GEAR, T("Settings"));
-#if !defined(__ANDROID__) && !defined(TARGET_IPHONE) && !defined(TARGET_UWP) && !defined(__SWITCH__)
 	ImGui::SameLine(0, uiScaled(32));
-	filter.Draw(T("Filter"), ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x
-			- settingsBtn.width() - ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize(T("Filter")).x);
+	float filterWidth = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x
+			- settingsBtn.width() - ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize(T("Filter")).x;
+#ifdef TARGET_UWP
+	filterWidth -= ImGui::CalcTextSize(T("Load...")).x + ImGui::GetStyle().FramePadding.x * 2
+			+ ImGui::GetStyle().ItemSpacing.x;
+#elif defined(__SWITCH__)
+	IconButton exitBtn(ICON_FA_POWER_OFF, T("Exit"));
+	filterWidth -= exitBtn.width() + ImGui::GetStyle().ItemSpacing.x;
 #endif
+	filter.Draw(T("Filter"), filterWidth);
     if (gui_state != GuiState::SelectDisk)
     {
 #ifdef TARGET_UWP
-		ImGui::SameLine(ImGui::GetContentRegionMax().x - settingsBtn.width()
-				- ImGui::GetStyle().FramePadding.x * 2.0f  - ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize(T("Load...")).x);
+    	ImGui::SameLine();
 		if (ImGui::Button(T("Load...")))
 			gui_load_game();
 		ImGui::SameLine();
 #elif defined(__SWITCH__)
-		IconButton exitBtn(ICON_FA_POWER_OFF, T("Exit"));
-		ImGui::SameLine(ImGui::GetContentRegionMax().x - settingsBtn.width()
-				- ImGui::GetStyle().ItemSpacing.x - exitBtn.width());
+		ImGui::SameLine();
 		if (exitBtn.realize())
 			dc_exit();
 		ImGui::SameLine();
@@ -987,17 +991,10 @@ static void gui_display_content()
 						if (counter % itemsPerLine != 0)
 							ImGui::SameLine();
 						counter++;
-						if (ImGui::IsRectVisible(responsiveBoxVec2))
-						{
-							ImguiFileTexture tex(art.boxartPath);
-							pressed = gameImageButton(tex, game.name, responsiveBoxVec2, gameName);
-						}
-						else {
-							ImGui::Dummy(responsiveBoxVec2);
-						}
+						ImguiFileTexture tex(art.boxartPath);
+						pressed = gameImageButton(tex, game.name, responsiveBoxVec2, gameName);
 					}
-					else
-					{
+					else {
 						pressed = ImGui::Selectable(gameName.c_str());
 					}
 					if (pressed)
@@ -1011,7 +1008,7 @@ static void gui_display_content()
 						{
 							try {
 								emu.insertGdrom(game.path);
-								gui_setState(GuiState::Loading);
+								gui_resume_game();
 							} catch (const FlycastException& e) {
 								gui_error(e.what());
 							}

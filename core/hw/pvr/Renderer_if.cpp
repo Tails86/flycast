@@ -3,6 +3,7 @@
 #include "rend/CustomTexture.h"
 #include "rend/texconv.h"
 #include "rend/transform_matrix.h"
+#include "pvr_mem.h"
 #include "cfg/option.h"
 #include "emulator.h"
 #include "serialize.h"
@@ -32,9 +33,6 @@ static cResetEvent vramRollback;
 
 // direct framebuffer write detection
 static bool render_called = false;
-u32 fb_watch_addr_start;
-u32 fb_watch_addr_end;
-bool fb_dirty;
 
 static bool pend_rend;
 static bool rendererEnabled = true;
@@ -203,6 +201,8 @@ private:
 			return;
 		renderer->processGpuCleanupOperations();
 
+		// tile clipping is used to calculate framebuffer size in RTT below
+		setTileClipping(taContext->rend);
 		int width, height;
 		getScaledFramebufferSize(taContext->rend, width, height);
 		taContext->rend.framebufferWidth = width;
@@ -332,7 +332,7 @@ public:
 			{
 				// force 60/50 FPS now
 				lastInterval = 1;
-				stability = std::max(stability, 10);
+				currentInterval = 1;
 				return;
 			}
 		}
@@ -340,37 +340,46 @@ public:
 			rendersFullSpeed = 0;
 		}
 
-		const float refreshRate = SPG_CONTROL.isPAL() ? 20_sh4ms : 16667_sh4us;
-		int interval = std::round(avgRenderInterval / refreshRate);
-		float frac = std::abs(avgRenderInterval / refreshRate - interval);
+		const float vblankPerRender = avgRenderInterval / (SPG_CONTROL.isPAL() ? 20_sh4ms : 16667_sh4us);
+		int interval = std::round(vblankPerRender);
+		float frac = std::abs(vblankPerRender - interval);
 
-		if (frac <= .05f || (interval == 1 && frac <= .2f))
+		if ((interval == 2 && frac <= .05f)
+				|| (interval == 1 && frac <= .2f))
 		{
-			if (lastInterval == (int)interval) {
-				stability++;
+			if (lastInterval == (int)interval)
+			{
+				if (++stable >= 10)
+					currentInterval = std::min(lastInterval, 2);
+				unstable = 0;
 			}
-			else {
-				stability = 0;
+			else
+			{
+				stable = 0;
 				lastInterval = interval;
+				unstable++;
 			}
 		}
 		else {
-			stability = 0;
+			stable = 0;
+			unstable++;
 		}
+		if (unstable >= 30 && vblankPerRender < 2.f)
+			// Force swap interval to 1 if the frame rate is off over 30 frames
+			// Helps with games that render slightly above 30 FPS (ECCO 33 FPS, Armada ~40 FPS)
+			currentInterval = 1;
 	}
 
-	int swapInterval()
-	{
-		if (stability < 10)
-			return -1;
-		else
-			return std::min(lastInterval, 2);
+	int swapInterval() const {
+		return currentInterval;
 	}
 
 	void reset()
 	{
 		lastInterval = 1;
-		stability = 0;
+		stable = 0;
+		unstable = 0;
+		currentInterval = 1;
 
 		lastRender = 0;
 		renderInterval = 0;
@@ -387,7 +396,9 @@ private:
 	}
 
 	int lastInterval;
-	int stability;
+	int stable;
+	int unstable;
+	int currentInterval;
 
 	u64 lastRender;
 	u64 renderInterval;
@@ -655,7 +666,7 @@ int rend_end_render(int tag, int cycles, int jitter, void *arg)
 void rend_vblank()
 {
 	if (config::EmulateFramebuffer
-			|| (!render_called && fb_dirty && FB_R_CTRL.fb_enable))
+			|| (!render_called && FB_R_CTRL.fb_enable && FramebufferWatcher::Instance().isDirty()))
 	{
 		if (rend_is_enabled())
 		{
@@ -666,19 +677,11 @@ void rend_vblank()
 			if (!config::EmulateFramebuffer)
 				DEBUG_LOG(PVR, "Direct framebuffer write detected");
 		}
-		fb_dirty = false;
 	}
+
 	render_called = false;
-	check_framebuffer_write();
 	emu.vblank();
 	swapIntervalDetector.vblank();
-}
-
-void check_framebuffer_write()
-{
-	u32 fb_size = (FB_R_SIZE.fb_y_size + 1) * (FB_R_SIZE.fb_x_size + FB_R_SIZE.fb_modulus) * 4;
-	fb_watch_addr_start = (SPG_CONTROL.interlace ? FB_R_SOF2 : FB_R_SOF1) & VRAM_MASK;
-	fb_watch_addr_end = fb_watch_addr_start + fb_size;
 }
 
 void rend_cancel_emu_wait()
@@ -737,20 +740,13 @@ void rend_serialize(Serializer& ser)
 {
 	ser << fb_w_cur;
 	ser << render_called;
-	ser << fb_dirty;
-	ser << fb_watch_addr_start;
-	ser << fb_watch_addr_end;
+	FramebufferWatcher::Instance().serialize(ser);
 }
 void rend_deserialize(Deserializer& deser)
 {
 	deser >> fb_w_cur;
-	if (deser.version() >= Deserializer::V20)
-	{
-		deser >> render_called;
-		deser >> fb_dirty;
-		deser >> fb_watch_addr_start;
-		deser >> fb_watch_addr_end;
-	}
+	deser >> render_called;
+	FramebufferWatcher::Instance().deserialize(deser);
 	pend_rend = false;
 	fbAddrHistory[0] = 1;
 	fbAddrHistory[1] = 1;

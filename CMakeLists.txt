@@ -108,6 +108,7 @@ option(ENABLE_DC_PROFILER "Build with support for target machine (SH4) profiler"
 option(ENABLE_FC_PROFILER "Build with support for host app (Hollycast) profiler" OFF)
 option(USE_DISCORD "Use Discord Presence API" OFF)
 option(USE_LIBCDIO "Use libcdio for CDROM access" OFF)
+option(USE_DREAMLINK_DEVICES "Use DreamLink devices" ON)
 
 if(ASAN AND MSVC)
 	add_compile_options(/fsanitize=address)
@@ -126,6 +127,11 @@ if(WEBOS)
 		set(USE_OPENMP OFF CACHE BOOL "Force openmp off" FORCE)
 	endif()
 	set(USE_VULKAN OFF CACHE BOOL "Force vulkan off" FORCE)
+endif()
+
+if(ANDROID OR IOS OR NINTENDO_SWITCH OR LIBRETRO)
+	# DreamLink only available for non-mobile Linux, MacOS, and Windows
+	set(USE_DREAMLINK_DEVICES OFF CACHE BOOL "Force DreamLink devices off" FORCE)
 endif()
 
 include(GNUInstallDirs)
@@ -226,7 +232,10 @@ elseif(LIBRETRO)
 		target_link_libraries(${PROJECT_NAME} PRIVATE ${FOUNDATION})
 	endif()
 	if(ANDROID OR USE_GLES)
-		target_compile_definitions(${PROJECT_NAME} PRIVATE GLES GLES3 HAVE_OPENGLES HAVE_OPENGLES3 HAVE_OIT)
+		target_compile_definitions(${PROJECT_NAME} PRIVATE GLES GLES3 HAVE_OPENGLES HAVE_OPENGLES3 HAVE_OPENGLES_3_1 HAVE_OIT)
+		if(ANDROID)
+			target_link_libraries(${PROJECT_NAME} PRIVATE android)
+		endif()
     elseif(IOS)
 		target_compile_definitions(${PROJECT_NAME} PRIVATE GLES GLES3 HAVE_OPENGLES HAVE_OPENGLES3)
 		find_library(OPENGLES OpenGLES)
@@ -497,6 +506,37 @@ if(USE_VULKAN)
 	target_link_libraries(${PROJECT_NAME} PRIVATE glslang::glslang-default-resource-limits glslang::SPIRV)
 endif()
 
+if(USE_DREAMLINK_DEVICES)
+	target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DREAMLINK_DEVICES=1)
+
+	if (WINDOWS_STORE)
+		# Use winrt implementation of the DreamPicoPort-API
+		option(DREAMPICOPORT_WITH_LIBUSB "Use libusb to access DreamPicoPort-API" OFF)
+	elseif (CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD|NetBSD|OpenBSD|Haiku")
+		find_package(PkgConfig REQUIRED)
+		pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+
+		set(DREAMPICOPORT_LIBUSB_LIBRARIES "${LIBUSB_LIBRARIES}" CACHE STRING "Name of the libusb library to link against")
+		set(DREAMPICOPORT_LIBUSB_INCLUDE_DIRS "${LIBUSB_INCLUDE_DIRS}" CACHE STRING "Path to libusb include directory, when applicable")
+	else()
+		if(MINGW)
+			# Shim 'windowsapp' to prevent libusb from linking against the UWP library
+			# and link against standard desktop libraries instead for Windows 7 support.
+			if(NOT TARGET windowsapp)
+				add_library(windowsapp INTERFACE)
+				target_link_libraries(windowsapp INTERFACE advapi32 ole32 shell32 user32)
+			endif()
+		endif()
+		# libusb
+		add_subdirectory(core/deps/DreamPicoPort-API/ext/libusb-cmake)
+	endif()
+
+	# DreamPicoPort-API
+	option(DREAMPICOPORT_ADD_LIBUSB "Add internal libusb library" OFF) # Already included above, when applicable
+	add_subdirectory(core/deps/DreamPicoPort-API EXCLUDE_FROM_ALL)
+	target_link_libraries(${PROJECT_NAME} PRIVATE dream_pico_port_api)
+endif()
+
 if(NOT LIBRETRO)
 	if(USE_OSS)
 		target_compile_definitions(${PROJECT_NAME} PRIVATE USE_OSS)
@@ -516,39 +556,6 @@ if(NOT LIBRETRO)
 	endif()
 
 	if(NOT ANDROID AND NOT IOS)
-		if (NOT NINTENDO_SWITCH)
-			# DreamLink enabled for non-mobile Linux, MacOS, and Windows
-			target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DREAMLINK_DEVICES=1)
-			set(USE_DREAMLINK_DEVICES ON) # Must be set before adding core/sdl
-
-			if (WINDOWS_STORE)
-				# Use winrt implementation of the DreamPicoPort-API
-				option(DREAMPICOPORT_WITH_LIBUSB "Use libusb to access DreamPicoPort-API" OFF)
-			elseif (CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD|NetBSD|OpenBSD|Haiku")
-				find_package(PkgConfig REQUIRED)
-   	 			pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
-
-				set(DREAMPICOPORT_LIBUSB_LIBRARIES "${LIBUSB_LIBRARIES}" CACHE STRING "Name of the libusb library to link against")
-				set(DREAMPICOPORT_LIBUSB_INCLUDE_DIRS "${LIBUSB_INCLUDE_DIRS}" CACHE STRING "Path to libusb include directory, when applicable")
-			else()
-				if(MINGW)
-					# Shim 'windowsapp' to prevent libusb from linking against the UWP library
-					# and link against standard desktop libraries instead for Windows 7 support.
-					if(NOT TARGET windowsapp)
-						add_library(windowsapp INTERFACE)
-						target_link_libraries(windowsapp INTERFACE advapi32 ole32 shell32 user32)
-					endif()
-				endif()
-				# libusb
-				add_subdirectory(core/deps/DreamPicoPort-API/ext/libusb-cmake)
-			endif()
-
-			# DreamPicoPort-API
-			option(DREAMPICOPORT_ADD_LIBUSB "Add internal libusb library" OFF) # Already included above, when applicable
-			add_subdirectory(core/deps/DreamPicoPort-API EXCLUDE_FROM_ALL)
-			target_link_libraries(${PROJECT_NAME} PRIVATE dream_pico_port_api)
-		endif()
-
 		if(USE_HOST_SDL)
 			find_package(SDL2 2.0.18)
 		endif()
@@ -1530,7 +1537,13 @@ endif()
 
 if(NINTENDO_SWITCH)
 	if(LIBRETRO)
+		# ar names a member after the basename of the object, so extracting every
+		# archive into one directory loses whatever two of them happen to share:
+		# zstd carries its own copy of xxhash.c, whose object lands on top of the
+		# real xxHash one and takes XXH32 with it. A directory per archive keeps
+		# them apart.
 		add_custom_target(combined ALL
+<<<<<<< HEAD
 			COMMAND ${CMAKE_AR} -x $<TARGET_FILE:xxHash::xxhash>
 			COMMAND ${CMAKE_AR} -x $<TARGET_FILE:chdr-static>
 			COMMAND ${CMAKE_AR} -x $<TARGET_FILE:zip>
@@ -1538,8 +1551,32 @@ if(NINTENDO_SWITCH)
 			COMMAND ${CMAKE_AR} -x $<TARGET_FILE:Hollycast::res>
 			COMMAND ${CMAKE_AR} -rs Hollycast_libretro_libnx.a *.o
 			COMMAND rm *.o
+=======
+			COMMAND ${CMAKE_COMMAND} -E rm -rf combined-objs
+			COMMAND ${CMAKE_COMMAND} -E make_directory
+				combined-objs/xxhash combined-objs/chdr combined-objs/zip
+				combined-objs/zstd combined-objs/elf combined-objs/tinygettext
+				combined-objs/res
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/xxhash
+				${CMAKE_AR} -x $<TARGET_FILE:xxHash::xxhash>
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/chdr
+				${CMAKE_AR} -x $<TARGET_FILE:chdr-static>
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/zip
+				${CMAKE_AR} -x $<TARGET_FILE:zip>
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/zstd
+				${CMAKE_AR} -x $<TARGET_FILE:libzstd_static>
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/elf
+				${CMAKE_AR} -x $<TARGET_FILE:elf>
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/tinygettext
+				${CMAKE_AR} -x $<TARGET_FILE:tinygettext::tinygettext>
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/res
+				${CMAKE_AR} -x $<TARGET_FILE:flycast::res>
+			COMMAND ${CMAKE_AR} -rs flycast_libretro_libnx.a combined-objs/*/*.o
+			COMMAND ${CMAKE_COMMAND} -E rm -rf combined-objs
+>>>>>>> flycast/dev
 			WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}
-			DEPENDS xxHash::xxhash chdr-static zip ${PROJECT_NAME})
+			DEPENDS xxHash::xxhash chdr-static zip libzstd_static
+				tinygettext::tinygettext ${PROJECT_NAME})
 	else()
 		nx_generate_nacp(Hollycast.nacp NAME "Hollycast" AUTHOR "The Hollycast Authors" VERSION "${GIT_VERSION}")
 		nx_create_nro(Hollycast NACP Hollycast.nacp ICON "${CMAKE_SOURCE_DIR}/shell/switch/flycast.jpeg")

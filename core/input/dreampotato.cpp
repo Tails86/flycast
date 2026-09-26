@@ -671,6 +671,7 @@ void update()
 	for (unsigned bus = 0; bus < Potatoes.size(); bus++)
 	{
 		auto& potato = Potatoes[bus];
+<<<<<<< HEAD
 
 		const bool inPort1 = (
 			config::NetworkExpansionDevices[bus][0] == 1 &&
@@ -686,6 +687,11 @@ void update()
 			(inPort1 && maple_getPortCount(config::MapleMainDevices[bus]) >= 1) ||
 			(inPort2 && maple_getPortCount(config::MapleMainDevices[bus]) >= 2)
 		)
+=======
+		if (config::NetworkExpansionDevices[bus][0] == 1
+				&& config::MapleExpansionDevices[bus][0] == MDT_SegaVMU
+				&& maple_getPortCount(config::MapleMainDevices[bus], MaplePortType::built_in) >= 1)
+>>>>>>> flycast/dev
 		{
 			if (potato == nullptr) {
 				potato = std::make_shared<DreamPotato>(bus);

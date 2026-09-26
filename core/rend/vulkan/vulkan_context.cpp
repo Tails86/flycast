@@ -53,8 +53,8 @@ void ReInitOSD();
 
 #ifdef VK_DEBUG
 #ifndef __ANDROID__
-VKAPI_ATTR static VkBool32 VKAPI_CALL debugUtilsMessengerCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageTypes,
-									 VkDebugUtilsMessengerCallbackDataEXT const * pCallbackData, void * /*pUserData*/)
+static vk::Bool32 debugUtilsMessengerCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity, vk::DebugUtilsMessageTypeFlagsEXT messageTypes,
+									 vk::DebugUtilsMessengerCallbackDataEXT const *pCallbackData, void * /*pUserData*/)
 {
 	std::string msg = vk::to_string(static_cast<vk::DebugUtilsMessageSeverityFlagBitsEXT>(messageSeverity)) + ": "
 			+ vk::to_string(static_cast<vk::DebugUtilsMessageTypeFlagsEXT>(messageTypes)) + ": ";
@@ -179,7 +179,6 @@ bool VulkanContext::InitInstance(const char** extensions, uint32_t extensions_co
 #ifdef VK_DEBUG
 #ifndef __ANDROID__
 		vext.push_back(vk::EXTDebugUtilsExtensionName);
-		vext.push_back(vk::EXTDebugReportExtensionName);
 		layer_names.push_back("VK_LAYER_KHRONOS_validation");
 #else
 		vext.push_back(vk::EXTDebugReportExtensionName);	// NDK <= 19?
@@ -509,12 +508,19 @@ bool VulkanContext::InitDevice()
 			NOTICE_LOG(RENDERER, "VK_GOOGLE_display_timing supported");
 #endif
 
+		dynamicLocalReadSupported = tryAddDeviceExtension(vk::KHRCreateRenderpass2ExtensionName)
+				&& tryAddDeviceExtension(vk::KHRDepthStencilResolveExtensionName)
+				&& tryAddDeviceExtension(vk::KHRDynamicRenderingExtensionName)
+				&& tryAddDeviceExtension(vk::KHRDynamicRenderingLocalReadExtensionName);
+
 		// Get device features
 
 		vk::StructureChain<
 			vk::PhysicalDeviceFeatures2,
 			vk::PhysicalDeviceProvokingVertexFeaturesEXT,
-			vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR
+			vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR,
+			vk::PhysicalDeviceDynamicRenderingFeaturesKHR,
+			vk::PhysicalDeviceDynamicRenderingLocalReadFeaturesKHR
 		> featuresChainHelper;
 
 		vk::PhysicalDeviceFeatures2& featuresChain = featuresChainHelper.get();
@@ -532,6 +538,12 @@ bool VulkanContext::InitDevice()
 			featuresChainHelper.unlink<vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR>();
 		}
 		
+		auto& dynaRenderLocalReadFeatures = featuresChainHelper.get<vk::PhysicalDeviceDynamicRenderingLocalReadFeaturesKHR>();
+		if (!dynamicLocalReadSupported) {
+			featuresChainHelper.unlink<vk::PhysicalDeviceDynamicRenderingFeaturesKHR>();
+			featuresChainHelper.unlink<vk::PhysicalDeviceDynamicRenderingLocalReadFeaturesKHR>();
+		}
+
 		// Get the physical device's features
 		if (getPhysicalDeviceProperties2Supported && featuresChain.pNext)
 		{
@@ -552,6 +564,13 @@ bool VulkanContext::InitDevice()
 		{
 			bufferDeviceAddressSupported &= bufferDeviceAddressFeatures.bufferDeviceAddress;
 			NOTICE_LOG(RENDERER, "bufferDeviceAddressSupported %d", bufferDeviceAddressSupported);
+		}
+		if (dynamicLocalReadSupported)
+		{
+			if (!dynaRenderLocalReadFeatures || !dynaRenderLocalReadFeatures.dynamicRenderingLocalRead)
+				dynamicLocalReadSupported = false;
+			else
+				NOTICE_LOG(RENDERER, "dynamicLocalReadSupported");
 		}
 
 		samplerAnisotropy = features.samplerAnisotropy;
@@ -754,33 +773,27 @@ void VulkanContext::CreateSwapChain()
 
 			// The FIFO present mode is guaranteed by the spec to be supported
 			vk::PresentModeKHR swapchainPresentMode = vk::PresentModeKHR::eFifo;
-			bool mailboxSupported = false;
-			// Use FIFO on mobile, prefer Mailbox on desktop
-			for (auto& presentMode : physicalDevice.getSurfacePresentModesKHR(GetSurface()))
+			// Use FIFO if VSync is enabled, otherwise use Immediate, or Mailbox if Immediate not available
+			if (!swapOnVSync)
 			{
-				if (presentMode == vk::PresentModeKHR::eMailbox)
-					mailboxSupported = true;
-#if HOST_CPU != CPU_ARM && HOST_CPU != CPU_ARM64 && !defined(__ANDROID__)
-				if (swapOnVSync && presentMode == vk::PresentModeKHR::eMailbox
-						&& vendorID != VENDOR_ATI && vendorID != VENDOR_AMD)
+				bool mailboxSupported = false;
+				for (auto& presentMode : physicalDevice.getSurfacePresentModesKHR(GetSurface()))
 				{
+					if (presentMode == vk::PresentModeKHR::eMailbox)
+						mailboxSupported = true;
+					if (presentMode == vk::PresentModeKHR::eImmediate)
+					{
+						INFO_LOG(RENDERER, "Using immediate present mode");
+						swapchainPresentMode = vk::PresentModeKHR::eImmediate;
+						break;
+					}
+				}
+				if (swapchainPresentMode == vk::PresentModeKHR::eFifo && mailboxSupported)
+				{
+					// prefer mailbox over FIFO if immediate isn't available
 					INFO_LOG(RENDERER, "Using mailbox present mode");
 					swapchainPresentMode = vk::PresentModeKHR::eMailbox;
-					break;
 				}
-#endif
-				if (!swapOnVSync && presentMode == vk::PresentModeKHR::eImmediate)
-				{
-					INFO_LOG(RENDERER, "Using immediate present mode");
-					swapchainPresentMode = vk::PresentModeKHR::eImmediate;
-					break;
-				}
-			}
-			if (!swapOnVSync && swapchainPresentMode == vk::PresentModeKHR::eFifo && mailboxSupported)
-			{
-				// prefer mailbox over FIFO if immediate isn't available
-				INFO_LOG(RENDERER, "Using mailbox present mode");
-				swapchainPresentMode = vk::PresentModeKHR::eMailbox;
 			}
 #ifndef SWAPPY
 			if (swapOnVSync && config::DupeFrames && settings.display.refreshRate > 60.f)
@@ -1401,6 +1414,7 @@ void VulkanContext::DoSwapAutomation()
 
 			device->unmapMemory(*deviceMemory);
 		}
+		rend_term_renderer();
 		dc_exit();
 		flycast_term();
 		exit(0);
