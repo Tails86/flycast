@@ -1270,7 +1270,6 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 #endif
 					ImGui::EndCombo();
 				}
-<<<<<<< HEAD
 
 				std::list<MapleExpansionDeviceDesc> maple_expansion_device_types = static_maple_expansion_device_types;
 				int port_count = 0;
@@ -1284,12 +1283,9 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 				}
 				else
 				{
-					port_count = maple_getPortCount(config::MapleMainDevices[bus]);
+					port_count = maple_getPortCount(config::MapleMainDevices[bus], MaplePortType::user_accessible);
 				}
 
-=======
-				int port_count = maple_getPortCount(config::MapleMainDevices[bus], MaplePortType::user_accessible);
->>>>>>> flycast/dev
 				for (int port = 0; port < port_count; port++)
 				{
 					const bool port_has_dream_link = has_dream_link && (MapleLinkRegistry::GetMapleLink(bus, port) != std::nullopt);
