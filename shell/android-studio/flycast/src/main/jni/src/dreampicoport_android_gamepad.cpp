@@ -355,17 +355,10 @@ static int get_preferred_hardware_bus(JNIEnv *env, jobject inputDevice, const jn
 		return kPreferredHardwareBusNone;
 	}
 
-	static constexpr jfloat dialResolutions[] = {
-		114.603928f,
-		57.301964f,
-		38.203922f,
-		28.650982f
-	};
-	static constexpr jfloat dialResolutionTolerance = 0.01f;
-	for (int playerIdx = 0; playerIdx < 4; playerIdx++) {
-		if (std::fabs(dialResolution - dialResolutions[playerIdx]) < dialResolutionTolerance) {
-			return playerIdx;
-		}
+	// The dialResolution should about equal 2.0 / (player index + 1)
+	const int playerIdx = std::lround(2.0 / dialResolution) - 1;
+	if (playerIdx >= 0 && playerIdx < 4) {
+		return playerIdx;
 	}
 
 	ERROR_LOG(INPUT, "DreamPicoPort dial has unexpected resolution %f", dialResolution);
