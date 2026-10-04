@@ -34,6 +34,7 @@
 #include "switch_gamepad.h"
 #endif
 #include "dreamlink/dreamlinkgamepad.h"
+#include "oslib/resources.h"
 #include "oslib/i18n.h"
 #include <unordered_map>
 #include <algorithm>
@@ -896,16 +897,19 @@ bool sdl_recreate_window(u32 flags)
 
 #if !defined(GLES) && !defined(_WIN32) && !defined(__SWITCH__) && !defined(__APPLE__)
 	// Set the window icon
-	u32 pixels[48 * 48];
-	for (int i = 0; i < 48 * 48; i++)
-		pixels[i] = window_icon[i + 2];
-	SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(pixels, 48, 48, 32, 4 * 48, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
-	if (surface == NULL)
-	  INFO_LOG(COMMON, "Creating icon surface failed: %s", SDL_GetError());
-	else
-	{
-		SDL_SetWindowIcon(window, surface);
-		SDL_FreeSurface(surface);
+	size_t size;
+	auto data = resource::load("Hollycast48.bmp", size);
+	if (!data) {
+		ERROR_LOG(COMMON, "Failed to load window icon resource");
+	} else {
+		SDL_Surface *surface = SDL_LoadBMP_RW(SDL_RWFromConstMem(data.get(), size), 1);
+		if (surface == nullptr)
+			INFO_LOG(COMMON, "Creating icon surface failed: %s", SDL_GetError());
+		else
+		{
+			SDL_SetWindowIcon(window, surface);
+			SDL_FreeSurface(surface);
+		}
 	}
 #endif
 

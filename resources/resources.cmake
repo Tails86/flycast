@@ -58,3 +58,10 @@ cmrc_add_resources(Hollycast-resources
 	resources/i18n/zh_CN.po
 	resources/i18n/zh_HK.po
 	resources/i18n/zh_TW.po)
+
+if(UNIX AND NOT APPLE AND NOT ANDROID AND NOT LIBRETRO)
+    # Embed the Linux window icon
+    cmrc_add_resources(Hollycast-resources
+            WHENCE shell/linux
+            shell/linux/Hollycast48.bmp)
+endif()
