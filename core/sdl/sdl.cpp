@@ -23,9 +23,6 @@
 #include "imgui.h"
 #include "hw/naomi/card_reader.h"
 #include "hw/naomi/multiboard.h"
-#if !defined(_WIN32) && !defined(__APPLE__) && !defined(__SWITCH__)
-#include "linux-dist/icon.h"
-#endif
 #ifdef _WIN32
 #include "windows/rawinput.h"
 #endif
