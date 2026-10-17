@@ -45,9 +45,6 @@ void scrollWhenDraggingOnVoid(ImGuiMouseButton mouse_button = ImGuiMouseButton_L
 // Helper to display a little (?) mark which shows a tooltip when hovered.
 void ShowHelpMarker(const char* desc);
 
-void gui_Indent(float depth = 0.0f);
-void gui_Unindent(float depth = 0.0f);
-
 // Renders a checkbox with optional help text as a single row.
 bool CheckboxRow(const char* name, bool* value, const char* help = nullptr);
 
@@ -97,6 +94,18 @@ static inline void centerNextWindow()
 	ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x / 2.f, ImGui::GetIO().DisplaySize.y / 2.f),
 			ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 }
+
+class FolderList
+{
+public:
+	static void HeaderAddRefresh(const char* name, const char* help, bool& outAdd, bool& outRefresh);
+	static void HeaderAdd(const char* name, const char* help, bool enableAdd, bool& outAdd);
+	static void HeaderImportExport(const char* name, const char* help, bool useSafFilePicker, bool& outImport, bool& outExport);
+	static void Header(const char* name, const char* help);
+	static void Entry(const char* path);
+	static void Entry(const char* path, bool& outDelete);
+	static void End();
+};
 
 void fullScreenWindow(bool modal);
 void windowDragScroll();
@@ -152,6 +161,11 @@ static inline float uiScaled(float f) {
 	return f * settings.display.uiScale;
 }
 
+static inline float uiNormalFontSize()
+{
+	return uiScaled(17.0f);
+}
+
 static inline float uiLargeFontSize()
 {
 	return uiScaled(22.f);
@@ -202,6 +216,9 @@ public:
 	ImguiID(const std::string& id)
 		: ImguiID(id.c_str()) {}
 	ImguiID(const char *id) {
+		ImGui::PushID(id);
+	}
+	ImguiID(int id) {
 		ImGui::PushID(id);
 	}
 	~ImguiID() {
@@ -367,7 +384,7 @@ private:
 	std::mutex mutex;
 };
 
-std::string middleEllipsis(const std::string& s, float width);
+std::string middleEllipsis(std::string s, float width);
 
 bool beginFrame(const char *label, const ImVec2& size_arg = ImVec2(0, 0), ImVec2 *out_size = nullptr);
 void endFrame();

@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <future>
 #include <string>
 #include <vector>
@@ -241,24 +242,6 @@ void ShowHelpMarker(const char* desc)
     }
 }
 
-float gui_indentDepth;
-
-void gui_Indent(float depth)
-{
-	float xBefore = ImGui::GetCursorScreenPos().x;
-	ImGui::Indent(depth);
-	float xAfter = ImGui::GetCursorScreenPos().x;
-	gui_indentDepth += depth != 0.0f ? depth : ImGui::GetStyle().IndentSpacing;
-}
-
-void gui_Unindent(float depth)
-{
-	float xBefore = ImGui::GetCursorScreenPos().x;
-	ImGui::Unindent(depth);
-	float xAfter = ImGui::GetCursorScreenPos().x;
-	gui_indentDepth -= depth != 0.0f ? depth : ImGui::GetStyle().IndentSpacing;
-}
-
 float gui_centerIn(float containerSize, float itemSize)
 {
 	return (containerSize - itemSize) / 2;
@@ -318,19 +301,30 @@ float gui_RowMaxWidth()
 
 float gui_SelectableWidth()
 {
-	// This helper depends on the container having a stable width.
-	// It should not be used inside containers which decide their width based on size of their children.
-	// (This check doesn't catch all such situations but works as a starting point)
+	// Preconditions:
+	// - Should be called at the start of the row, otherwise indentation can't be detected accurately
+	// - Should not be called in a container which decides its width based on width of its children (e.g. popup)
+	//   (This check doesn't catch all such situations but works as a starting point)
 	verify((ImGui::GetCurrentWindowRead()->Flags & ImGuiWindowFlags_AlwaysAutoResize) == 0);
 
-	const float selectableWidth =
-		ImMax(0.0f,
-			ImMin(ImGui::GetContentRegionAvail().x, gui_RowMaxWidth())
-				- gui_RowHeight()
-				- ImGui::GetStyle().ItemSpacing.x
-				// Note: this is based on a simplistic helper which doesn't account for e.g. child windows.
-				// If this starts failing to scale to new use sites, we may want to invest in replacing this with a SetNextItemWidth()...CalcItemWidth()... based solution.
-				- gui_indentDepth);
+	// Calculate a width such that values and tooltips are aligned even for indented rows.
+	//    ┌─────────────────────────────────────────────────┐
+	//    │ ┌────────────────────────┐ ┌───┐                │
+	//    │ │ name             value │ │ i │                │
+	//    │ └────────────────────────┘ └───┘                │
+	//    │    ┌─────────────────────┐ ┌───┐                │
+	//    │    │ name          value │ │ i │                │
+	//    │    └─────────────────────┘ └───┘                │
+	//    └─────────────────────────────────────────────────┘
+	//    ▲                          ▲     ▲                ▲
+	//    │                          │     │                │
+	// startX            selectableEndX   rowEndX         endX
+	float startX = ImGui::GetWindowPos().x + ImGui::GetCursorStartPos().x;
+	float endX = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+
+	float rowEndX = startX + ImMin(endX - startX, gui_RowMaxWidth());
+	float selectableEndX = rowEndX - gui_RowHeight() - ImGui::GetStyle().ItemSpacing.x;
+	float selectableWidth = selectableEndX - ImGui::GetCursorScreenPos().x;
 	return selectableWidth;
 }
 
@@ -361,7 +355,7 @@ void renderRowTooltip(const char* help, float rowHeight)
 	ImGui::InvisibleButton("##tooltip", ImVec2(tooltipSize, tooltipSize));
 	if (ImGui::BeginItemTooltip())
 	{
-		ImGui::PushFont(settingsTitleFont, uiScaled(17.0f));
+		ImGui::PushFont(settingsTitleFont, uiNormalFontSize());
 
 		float tooltipWrapPos = ImMin(
 			ImGui::GetMainViewport()->Size.x,
@@ -688,6 +682,227 @@ void OptionComboBox(const char *name, config::Option<int, PerGameOption>& option
 // Explicit template instantiations
 template void OptionComboBox<true>(const char *name, config::Option<int, true>& option, const char *values[], int count, const char *help);
 template void OptionComboBox<false>(const char *name, config::Option<int, false>& option, const char *values[], int count, const char *help);
+
+static void renderHeaderAddRefresh(const char* name, const char* help, bool enableButtons, bool* outAdd, bool* outRefresh)
+{
+	ImGui::PushID(name);
+	float selectableWidth = gui_SelectableWidth();
+
+	ImGui::PushFont(regularFont, uiSettingTitleFontSize());
+	ImGui::Spacing();
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted(name);
+	ImGui::PopFont();
+
+	ImGui::PushFont(nullptr, uiLargeFontSize());
+	float buttonsWidth = ImGui::CalcTextSize(ICON_FA_FOLDER_PLUS).x
+		+ ImGui::GetStyle().FramePadding.x * 2;
+	if (outRefresh != nullptr)
+	{
+		buttonsWidth += ImGui::CalcTextSize(ICON_FA_ARROWS_ROTATE).x
+			+ ImGui::GetStyle().FramePadding.x * 2
+			+ ImGui::GetStyle().ItemSpacing.x;
+	}
+
+	ImGui::BeginDisabled(!enableButtons);
+	ImGui::SameLine(selectableWidth - buttonsWidth);
+	*outAdd = ImGui::Button(ICON_FA_FOLDER_PLUS);
+	ImGui::PushFont(settingsTitleFont, uiNormalFontSize());
+	ImGui::SetItemTooltip("%s", T("Add"));
+	ImGui::PopFont();
+
+	if (outRefresh != nullptr)
+	{
+		ImGui::SameLine();
+		*outRefresh = ImGui::Button(ICON_FA_ARROWS_ROTATE);
+		ImGui::PushFont(settingsTitleFont, uiNormalFontSize());
+		ImGui::SetItemTooltip("%s", T("Rescan Content"));
+		ImGui::PopFont();
+	}
+	ImGui::PopFont();
+	ImGui::EndDisabled();
+
+	if (help != nullptr)
+	{
+		ImGui::SameLine(selectableWidth + ImGui::GetStyle().ItemSpacing.x * 2);
+		renderRowTooltip(help, ImGui::GetFrameHeight());
+	}
+}
+
+void FolderList::HeaderAdd(const char* name, const char* help, bool enableAdd, bool& outAdd)
+{
+	renderHeaderAddRefresh(name, help, enableAdd, &outAdd, nullptr);
+}
+
+void FolderList::HeaderAddRefresh(const char* name, const char* help, bool& outAdd, bool& outRefresh)
+{
+	renderHeaderAddRefresh(name, help, true, &outAdd, &outRefresh);
+}
+
+void FolderList::HeaderImportExport(const char* name, const char* help, bool useSafFilePicker, bool& outImport, bool& outExport)
+{
+	ImGui::PushID(name);
+	float selectableWidth = gui_SelectableWidth();
+
+	ImGui::PushFont(regularFont, uiSettingTitleFontSize());
+	ImGui::Spacing();
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted(name);
+	ImGui::PopFont();
+
+	{
+		DisabledScope _(!useSafFilePicker);
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ScaledVec2(6.0f, 4.0f));
+		const char* labelImport = i18n::translateCtx("action", "Import");
+		const char* labelExport = i18n::translateCtx("action", "Export");
+		float buttonsWidth = ImGui::CalcTextSize(labelImport).x
+			+ ImGui::CalcTextSize(labelExport).x
+			+ ImGui::GetStyle().FramePadding.x * 4;
+
+		ImGui::SameLine(selectableWidth - buttonsWidth);
+		outImport = ImGui::Button(labelImport);
+
+		ImGui::SameLine();
+		outExport = ImGui::Button(labelExport);
+		ImGui::PopStyleVar();
+	}
+
+	if (help != nullptr)
+	{
+		ImGui::SameLine(selectableWidth + ImGui::GetStyle().ItemSpacing.x * 2);
+		renderRowTooltip(help, ImGui::GetFrameHeight());
+	}
+}
+
+void FolderList::Header(const char* name, const char* help)
+{
+	ImGui::PushID(name);
+	float selectableWidth = gui_SelectableWidth();
+
+	ImGui::PushFont(regularFont, uiSettingTitleFontSize());
+	ImGui::Spacing();
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted(name);
+	ImGui::PopFont();
+
+	if (help != nullptr)
+	{
+		ImGui::SameLine(selectableWidth + ImGui::GetStyle().ItemSpacing.x * 2);
+		renderRowTooltip(help, ImGui::GetFrameHeight());
+	}
+}
+
+static void renderFolderListEntry(const char* path, bool* outDelete)
+{
+	float selectableWidth = gui_SelectableWidth();
+
+	// A splitter allows us to draw the group widgets and get the overall size,
+	// then draw a background rectangle of that size underneath afterwards
+	ImDrawListSplitter splitter;
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	splitter.Split(drawList, 2);
+	splitter.SetCurrentChannel(drawList, 1);
+
+	ImGui::PushFont(regularFont, uiLargeFontSize());
+	ImGui::BeginGroup();
+	float groupPaddingV = uiScaled(4.0f);
+	ImGui::PushStyleVarY(ImGuiStyleVar_ItemSpacing, groupPaddingV);
+	ImGui::Dummy(ImVec2(0, 0)); // Top padding (via ItemSpacing)
+	ImGui::PopStyleVar();
+	float groupPaddingH = ImGui::GetFrameHeight() / 2;
+	ImGui::Indent(groupPaddingH); // Left padding
+
+	float buttonsWidth = 0;
+	if (os_OpenFolderSupported)
+	{
+		buttonsWidth += ImGui::CalcTextSize(ICON_FA_FOLDER_OPEN).x
+			+ ImGui::GetStyle().FramePadding.x * 2
+			+ ImGui::GetStyle().ItemSpacing.x;
+	}
+	if (outDelete != nullptr)
+	{
+		buttonsWidth += ImGui::CalcTextSize(ICON_FA_TRASH_CAN).x
+			+ ImGui::GetStyle().FramePadding.x * 2
+			+ ImGui::GetStyle().ItemSpacing.x;
+	}
+
+	float buttonHeight = ImGui::GetFrameHeight();
+	ImGui::PushFont(settingsTitleFont, uiNormalFontSize());
+	std::string pathEllipsis = middleEllipsis(std::string(path), selectableWidth - buttonsWidth - groupPaddingH);
+
+	float pathTextWidth = ImGui::CalcTextSize(pathEllipsis.c_str()).x;
+	ImVec2 beforePathPos = ImGui::GetCursorScreenPos();
+	ImGui::SetCursorScreenPos(beforePathPos - ImGui::GetStyle().FramePadding);
+	// This has 2 effects: makes the tooltip easier to hit, and gives the group the same height regardless of whether any visible buttons are present
+	ImGui::InvisibleButton("pathTooltip", ImVec2(pathTextWidth, buttonHeight) + ImGui::GetStyle().FramePadding * 2);
+	ImGui::SetItemTooltip("%s", path);
+
+	ImGui::SetCursorScreenPos(beforePathPos);
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted(pathEllipsis.c_str());
+	ImGui::PopFont();
+
+	if (os_OpenFolderSupported)
+	{
+		ImGui::SameLine();
+		if (ImGui::Button(ICON_FA_FOLDER_OPEN))
+		{
+			os_OpenFolder(path);
+		}
+		ImGui::PushFont(settingsTitleFont, uiNormalFontSize());
+		ImGui::SetItemTooltip("%s", T("Open Folder"));
+		ImGui::PopFont();
+	}
+
+	if (outDelete != nullptr)
+	{
+		ImGui::SameLine();
+		*outDelete = ImGui::Button(ICON_FA_TRASH_CAN);
+		ImGui::PushFont(settingsTitleFont, uiNormalFontSize());
+		ImGui::SetItemTooltip("%s", T("Remove"));
+		ImGui::PopFont();
+	}
+
+	ImGui::SameLine(0, 0);
+	ImGui::PushStyleVarY(ImGuiStyleVar_ItemSpacing, groupPaddingV);
+	ImGui::Dummy(ImVec2(groupPaddingH, 0)); // Right padding
+	ImGui::Dummy(ImVec2(0, 0)); // Bottom padding (via ItemSpacing)
+	ImGui::PopStyleVar();
+	ImGui::Unindent(groupPaddingH);
+	ImGui::EndGroup();
+
+	splitter.SetCurrentChannel(drawList, 0);
+	drawList->AddRectFilled(
+		ImGui::GetItemRectMin(),
+		ImGui::GetItemRectMax(),
+		ImGui::GetColorU32(ImGuiCol_FrameBg),
+		ImGui::GetItemRectSize().y / 2);
+	drawList->AddRect(
+		ImGui::GetItemRectMin(),
+		ImGui::GetItemRectMax(),
+		ImGui::GetColorU32(ImGuiCol_Border),
+		ImGui::GetItemRectSize().y / 2);
+	splitter.Merge(drawList);
+
+	ImGui::PopFont();
+}
+
+void FolderList::Entry(const char* path, bool& outDelete)
+{
+	renderFolderListEntry(path, &outDelete);
+}
+
+void FolderList::Entry(const char* path)
+{
+	renderFolderListEntry(path, nullptr);
+}
+
+void FolderList::End()
+{
+	ImGui::Spacing();
+	renderRowSeparator();
+	ImGui::PopID(); // name
+}
 
 void fullScreenWindow(bool modal)
 {
@@ -1055,8 +1270,24 @@ bool Toast::draw()
 	return true;
 }
 
-std::string middleEllipsis(const std::string& s, float width)
+std::string middleEllipsis(std::string s, float width)
 {
+#ifdef _WIN32
+	const char* home = std::getenv("USERPROFILE");
+#else
+	const char* home = std::getenv("HOME");
+#endif
+	if (home != nullptr && home[0] != '\0')
+	{
+		std::filesystem::path homePath(home);
+		std::filesystem::path path(s);
+		auto [homeIt, it] = std::mismatch(homePath.begin(), homePath.end(), path.begin(), path.end());
+		if (homeIt == homePath.end())
+		{
+			s.replace(0, strlen(home), "~");
+		}
+	}
+
 	float tw = ImGui::CalcTextSize(s.c_str()).x;
 	if (tw <= width)
 		return s;

@@ -84,6 +84,11 @@ TEST_F(HttpTest, test_urlencode)
 	EXPECT_EQ("%5B%5C%5D%5E_%60", http::urlEncode("[\\]^_`"));
 	EXPECT_EQ("abcdefghijklmnopqrstuvwxyz", http::urlEncode("abcdefghijklmnopqrstuvwxyz"));
 	EXPECT_EQ("%7B%7C%7D~%7F", http::urlEncode("{|}~\x7f"));
+
+	EXPECT_EQ("/Arcade%20%231", http::urlEncodePath("/Arcade #1"));
+	EXPECT_EQ("C:/Arcade%20%231", http::urlEncodePath("C:/Arcade #1"));
+	EXPECT_EQ("/Literal%20%252F%20Folder", http::urlEncodePath("/Literal %2F Folder"));
+	EXPECT_EQ("/Pok%C3%A9mon", http::urlEncodePath("/Pokémon"));
 }
 
 TEST_F(HttpTest, test_urldecode)

@@ -23,6 +23,7 @@
 #include "cfg/option.h"
 #include "nowide/fstream.hpp"
 #include "storage.h"
+#include "oslib/http_client.h"
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -44,6 +45,8 @@
 #include "input/gamepad_device.h"
 #include "input/dreampotato.h"
 #include "i18n.h"
+
+#include <filesystem>
 
 namespace hostfs
 {
@@ -530,6 +533,26 @@ void os_UpdateInputState()
 	input_sdl_handle();
 #elif defined(USE_EVDEV)
 	input_evdev_handle();
+#endif
+}
+
+int os_OpenFolder(const char* path)
+{
+#if !defined(USE_SDL)
+	return -1;
+#else
+	std::filesystem::path absolutePath = std::filesystem::absolute(path).lexically_normal();
+	std::string encodedPath = http::urlEncodePath(absolutePath.generic_string());
+	// A file url generally has the form 'file://<host>/<path>'.
+	// Since our file is on localhost, we can leave '<host>' blank.
+	// The absolute path on Windows does not start with '/', so an extra '/' is required in its prefix.
+	// We are also deliberately not handling Windows UNC paths here. The UI doesn't allow selecting them and it doesn't look like SDL_OpenURL works with them.
+#ifdef _WIN32
+ 	std::string fileUri = "file:///" + encodedPath;
+#else
+ 	std::string fileUri = "file://" + encodedPath;
+#endif
+	return SDL_OpenURL(fileUri.c_str());
 #endif
 }
 

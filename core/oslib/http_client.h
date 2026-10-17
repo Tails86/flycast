@@ -26,6 +26,7 @@
 #include <iomanip>
 #include <sstream>
 #include <locale>
+#include <string_view>
 
 namespace http {
 
@@ -59,7 +60,7 @@ static inline bool success(int status) {
 	return status >= 200 && status < 300;
 }
 
-static inline std::string urlEncode(const std::string& value)
+static inline std::string urlEncode(const std::string& value, std::string_view additionalSafeCharacters = {})
 {
 	std::ostringstream escaped;
 	escaped.imbue(std::locale::classic());
@@ -68,7 +69,9 @@ static inline std::string urlEncode(const std::string& value)
 
 	for (char c : value)
 	{
-		if (std::isalnum(static_cast<u8>(c)) || c == '-' || c == '_' || c == '.' || c == '~') {
+		if (std::isalnum(static_cast<u8>(c)) || c == '-' || c == '_' || c == '.' || c == '~'
+			|| additionalSafeCharacters.find(c) != std::string_view::npos)
+		{
 			// Keep alphanumeric and other accepted characters intact
 			// https://www.rfc-editor.org/rfc/rfc3986#section-2.3
 			escaped << c;
@@ -83,6 +86,11 @@ static inline std::string urlEncode(const std::string& value)
 	}
 
 	return escaped.str();
+}
+
+static inline std::string urlEncodePath(const std::string& value)
+{
+	return urlEncode(value, "/:");
 }
 
 static inline std::string getUserAgent() {
