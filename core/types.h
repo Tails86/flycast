@@ -48,7 +48,6 @@ typedef double f64;
 namespace nowide {
 FILE *fopen(char const *file_name, char const *mode);
 int remove(const char *pathname);
-int rename(const char* old_name, const char* new_name);
 }
 #endif
 
@@ -176,6 +175,7 @@ struct settings_t
 		std::string gameId;
 		std::string fileName;
 		std::string title;
+		bool windowsCE;
 
 		void reset()
 		{
@@ -183,6 +183,7 @@ struct settings_t
 			gameId.clear();
 			fileName.clear();
 			title.clear();
+			windowsCE = false;
 		}
 	} content;
 

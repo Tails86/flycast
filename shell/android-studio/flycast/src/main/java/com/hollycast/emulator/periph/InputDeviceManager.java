@@ -120,6 +120,7 @@ public final class InputDeviceManager implements InputManager.InputDeviceListene
 
     public void startListening(Context applicationContext)
     {
+        knownDevices.clear();
         maple_port = 0;
         hasTouchscreen = applicationContext.getPackageManager().hasSystemFeature("android.hardware.touchscreen");
         if (hasTouchscreen)

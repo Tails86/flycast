@@ -35,10 +35,9 @@ if(NOT LIBRETRO)
     cmrc_add_resources(Hollycast-resources
             fonts/Roboto-Medium.ttf.zip
             fonts/Roboto-Bold.ttf.zip
-            fonts/Roboto-Regular.ttf.zip
-            fonts/Jura-wght.ttf.zip
-            fonts/EncodeSans-wdth-wght.ttf.zip
-            fonts/fa-solid-900.ttf.zip)
+            fonts/fa-solid-900.ttf.zip
+            fonts/Jura-Regular.ttf.zip
+            fonts/EncodeSans-Light.ttf.zip)
     if(ANDROID OR IOS)
         cmrc_add_resources(Hollycast-resources
                 WHENCE resources
@@ -59,3 +58,10 @@ cmrc_add_resources(Hollycast-resources
 	resources/i18n/zh_CN.po
 	resources/i18n/zh_HK.po
 	resources/i18n/zh_TW.po)
+
+if(UNIX AND NOT APPLE AND NOT ANDROID AND NOT LIBRETRO)
+    # Embed the Linux window icon
+    cmrc_add_resources(Hollycast-resources
+            WHENCE shell/linux
+            shell/linux/Hollycast48.bmp)
+endif()

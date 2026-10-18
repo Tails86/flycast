@@ -364,12 +364,6 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_hollycast_emulator_emu_JNIdc_guiI
     return gui_is_open();
 }
 
-extern "C" JNIEXPORT jboolean JNICALL Java_com_hollycast_emulator_emu_JNIdc_guiShouldCaptureMenuTouch(JNIEnv *env, jobject obj,
-		jfloat x, jfloat y)
-{
-	return gui_is_menu_touch_target(x, y);
-}
-
 extern "C" JNIEXPORT jboolean JNICALL Java_com_hollycast_emulator_emu_JNIdc_guiIsContentBrowser(JNIEnv *env,jobject obj)
 {
     return gui_is_content_browser();

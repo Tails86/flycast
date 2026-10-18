@@ -1,6 +1,5 @@
 /*
 	Copyright 2021 flyinghead
-	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -22,7 +21,6 @@
 #include "hw/pvr/pvr_mem.h"
 #include "ui/gui.h"
 #include "rend/sorter.h"
-#include "rend/osd.h"
 #include "oslib/i18n.h"
 #include <glm/gtx/transform.hpp>
 
@@ -181,6 +179,8 @@ void D3DRenderer::preReset()
 	vertexBufferSize = 0;
 	framebufferSurface.reset();
 	framebufferTexture.reset();
+	secAccumSurface.reset();
+	secAccumTexture.reset();
 	frameRendered = false;
 	frameRenderedOnce = false;
 }
@@ -380,8 +380,9 @@ void D3DRenderer::setGPState(const PolyParam *gp)
 			// Trilinear pass A
 			trilinear_alpha = 1.f - trilinear_alpha;
 	}
-	else
+	else {
 		trilinear_alpha = 1.f;
+	}
 
 	bool color_clamp = gp->tsp.ColorClamp && (rendContext->fog_clamp_min.full != 0 || rendContext->fog_clamp_max.full != 0xffffffff);
 	int fog_ctrl = config::Fog ? gp->tsp.FogCtrl : 2;
@@ -398,6 +399,32 @@ void D3DRenderer::setGPState(const PolyParam *gp)
 		else if (config::TextureFiltering == 2)
 			gpuPalette = 2; // force linear
 	}
+	if (gp->tsp.DstSelect == 1)
+	{
+		if (!primAccumSurface)
+		{
+			device->EndScene();
+			device->SetTexture(3, nullptr);
+			makeSecAccumSurface();
+			device->GetRenderTarget(0, &primAccumSurface.get());
+			if (secAccumSurface)
+				device->SetRenderTarget(0, secAccumSurface);
+			device->BeginScene();
+		}
+	}
+	else if (primAccumSurface)
+	{
+		device->EndScene();
+		device->SetRenderTarget(0, primAccumSurface);
+		primAccumSurface.reset();
+		if (secAccumTexture)
+			device->SetTexture(3, secAccumTexture);
+		device->SetSamplerState(3, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+		device->SetSamplerState(3, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+		float textureSize[4] { (float)secAccumWidth, (float)secAccumHeight };
+		device->SetPixelShaderConstantF(10, textureSize, 1);
+		device->BeginScene();
+	}
 
 	devCache.SetPixelShader(shaders.getShader(
 			gp->pcw.Texture,
@@ -412,7 +439,8 @@ void D3DRenderer::setGPState(const PolyParam *gp)
 			gpuPalette,
 			gp->pcw.Gouraud,
 			clipmode == TileClipping::Inside,
-			dithering));
+			dithering,
+			gp->tsp.SrcSelect == 1));
 
 	if (trilinear_alpha != 1.f)
 	{
@@ -778,6 +806,7 @@ void D3DRenderer::drawModVols(int first, int count)
 
 void D3DRenderer::drawStrips()
 {
+	primAccumSurface.reset();
 	RenderPass previous_pass {};
     for (int render_pass = 0; render_pass < (int)rendContext->render_passes.size(); render_pass++)
     {
@@ -1182,21 +1211,17 @@ void D3DRenderer::displayFramebuffer()
 {
 	devCache.SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
 	device->ColorFill(backbuffer, 0, D3DCOLOR_COLORVALUE(VO_BORDER_COL.red(), VO_BORDER_COL.green(), VO_BORDER_COL.blue(), 1.f));
-
-	// Adjust 'rd.top', 'viewport.Y', and 'viewport.Height' to avoid framebuffer overlapping with the menu bar
-	int topInset = getScaledTopInset();
-	int outheight = settings.display.height - topInset;
-
+	
 	int dx = 0;
 	int dy = 0;
-	getWindowboxDimensions(settings.display.width, outheight, aspectRatio, dx, dy, config::Rotate90);
+	getWindowboxDimensions(settings.display.width, settings.display.height, aspectRatio, dx, dy, config::Rotate90);
 
 	float shiftX, shiftY;
 	getVideoShift(shiftX, shiftY);
 	if (!config::Rotate90 && shiftX == 0 && shiftY == 0)
 	{
 		RECT rs { 0, 0, (long)width, (long)height };
-		RECT rd { dx, dy + topInset, settings.display.width - dx, settings.display.height - dy };
+		RECT rd { dx, dy, settings.display.width - dx, settings.display.height - dy };
 		device->StretchRect(framebufferSurface, &rs, backbuffer, &rd,
 				config::LinearInterpolation ? D3DTEXF_LINEAR : D3DTEXF_POINT);	// This can fail if window is minimized
 	}
@@ -1223,9 +1248,9 @@ void D3DRenderer::displayFramebuffer()
 		device->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1);
 		D3DVIEWPORT9 viewport;
 		viewport.X = dx;
-		viewport.Y = dy + topInset;
+		viewport.Y = dy;
 		viewport.Width = settings.display.width - dx * 2;
-		viewport.Height = outheight - dy * 2;
+		viewport.Height = settings.display.height - dy * 2;
 		viewport.MinZ = 0;
 		viewport.MaxZ = 1;
 		bool rc = SUCCEEDED(device->SetViewport(&viewport));
@@ -1483,6 +1508,41 @@ bool D3DRenderer::GetLastFrame(std::vector<u8>& data, int& width, int& height)
 	device->SetRenderTarget(0, backbuffer);
 
 	return true;
+}
+
+void D3DRenderer::makeSecAccumSurface()
+{
+	u32 width, height;
+	if (rendContext->isRTT) {
+		width = rendContext->framebufferWidth;
+		height = rendContext->framebufferHeight;
+	}
+	else {
+		width = this->width;
+		height = this->height;
+	}
+	if (secAccumSurface != nullptr
+			&& (secAccumWidth != width || secAccumHeight != height)) {
+		secAccumSurface.reset();
+		secAccumTexture.reset();
+	}
+	if (secAccumSurface == nullptr)
+	{
+		HRESULT hr = device->CreateTexture(width, height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &secAccumTexture.get(), nullptr);
+		if (FAILED(hr)) {
+			ERROR_LOG(RENDERER, "Secondary accumulator texture creation failed: %x", hr);
+			return;
+		}
+		bool rc = SUCCEEDED(secAccumTexture->GetSurfaceLevel(0, &secAccumSurface.get()));
+		if (!rc)
+		{
+			ERROR_LOG(RENDERER, "Secondary accumulator GetSurfaceLevel failed: %x", hr);
+			secAccumTexture.reset();
+			return;
+		}
+		secAccumWidth = width;
+		secAccumHeight = height;
+	}
 }
 
 Renderer* rend_DirectX9()

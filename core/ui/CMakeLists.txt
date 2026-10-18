@@ -7,8 +7,6 @@ if(NOT LIBRETRO)
             gui.h
             gui_font.cpp
             gui_font.h
-            gui_menu.cpp
-            gui_menu.h
             gui_achievements.cpp
             vgamepad.cpp
             vgamepad.h
@@ -26,10 +24,6 @@ if(NOT LIBRETRO)
             settings_general.cpp
             settings_network.cpp
             settings_video.cpp
-            settings_new.cpp
-            settings_new.h
-            video_preset.cpp
-            video_preset.h
             boxart/arcade_scraper.h
             boxart/boxart.cpp
             boxart/boxart.h
@@ -37,9 +31,7 @@ if(NOT LIBRETRO)
             boxart/gamesdb.h
             boxart/pvrparser.h
             boxart/scraper.cpp
-            boxart/scraper.h
-            boxart/vmu_icon.cpp
-            boxart/vmu_icon.h)
+            boxart/scraper.h)
 
     if(USE_DISCORD)
         target_sources(${PROJECT_NAME} PRIVATE discord.cpp)

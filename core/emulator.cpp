@@ -48,9 +48,6 @@
 #include "ui/gui.h"
 #endif
 #include "oslib/i18n.h"
-#ifndef LIBRETRO
-#include <thread>
-#endif
 
 #include <algorithm>
 #include <chrono>
@@ -62,12 +59,6 @@
 
 settings_t settings;
 constexpr char const *BIOS_TITLE = "Dreamcast BIOS";
-static bool skipAutoSaveOnNextUnload = false;
-
-void dc_skipAutoSaveOnNextUnload()
-{
-	skipAutoSaveOnNextUnload = true;
-}
 
 static void loadSpecialSettings()
 {
@@ -273,7 +264,34 @@ static void loadSpecialSettings()
 				|| prod_id == "T1208M"	 // Gigawing (JP)
 				|| prod_id == "T1235M"   // Vampire Chronicle for Matching Service
 				|| prod_id == "T22901N"  // Roadsters (US)
-				|| prod_id == "T28202M"))// Shin Nihon Pro Wrestling 4
+				|| prod_id == "T28202M"  // Shin Nihon Pro Wrestling 4
+				|| prod_id == "T9512N"	 // The Grinch (US)
+				|| prod_id == "51034"	 // Generator Vol.1
+				|| prod_id == "MK-51057" // Generator Vol.2
+				|| prod_id == "T15128N"	 // Coaster Works
+				|| prod_id == "T9505N"	 // ESPN-NBA 2 Night
+				|| prod_id == "T-9703N"  // NFL Blitz 2000
+				|| prod_id == "T-8106N"  // Shadow Man
+				|| prod_id == "T15106N"	 // Slave Zero
+				|| prod_id == "T40402N"	 // Tom Clancy's Rainbow Six - Rouge Spear
+				|| prod_id == "T15125N"	 // Unreal Tournament
+				|| prod_id == "6107140"  // Dorimaga GD Vol.1
+				|| prod_id == "T41202M"	 // Boku no tennis jinsei
+				|| prod_id == "T9503M"	 // Eisei Meijin III
+				|| prod_id == "T41201M"	 // Jet Coaster Dream
+				|| prod_id == "T40902M"	 // Jet Coaster Dream 2
+				|| prod_id == "T20105M"	 // Kanon
+				|| prod_id == "T19702M"	 // Memories Off Complete
+				|| prod_id == "T17001M"	 // Pen Pen Tri Iceron (JP)
+				|| prod_id == "T1301M"	 // Revive - Sosei
+				|| prod_id == "T15003M"	 // Seitai Heiki Expendable
+				|| prod_id == "T38805M"	 // Sengoku Turb FID
+				|| prod_id == "T20104M"	 // Sentimental Graffiti 2
+				|| prod_id == "T16601M"	 // Shin Honkaku Hanafuda
+				|| prod_id == "T1236M"	 // Super Street Fighter IIX For Matching Service
+				|| prod_id == "T36501M"	 // Vigilante 8 (JP)
+				|| prod_id == "T5301M"	 // World Neverland Plus - Olerud Kingdom Story
+				|| prod_id == "HDR-0198")) // World Series Baseball 2K2 (JP)
 		{
 			NOTICE_LOG(BOOT, "Game doesn't support RGB. Using TV Composite instead");
 			config::Cable.override(3);
@@ -293,8 +311,7 @@ static void loadSpecialSettings()
 		}
 		else if (prod_id == "T17708N"	// Stupid Invaders (US)
 			|| prod_id == "T17711D"		// Stupid Invaders (EU)
-			|| prod_id == "T46509M"		// Suika (JP)
-			|| prod_id == "T36901M")	// Cool Boarders Burrrn (JP)
+			|| prod_id == "T46509M")	// Suika (JP)
 		{
 			NOTICE_LOG(BOOT, "Forcing HLE BIOS");
 			config::UseReios.override(true);
@@ -411,7 +428,8 @@ static void loadSpecialSettings()
 	}
 	else if (settings.platform.isArcade())
 	{
-		if (prod_id == "COSMIC SMASH IN JAPAN")
+		if (prod_id == "COSMIC SMASH IN JAPAN"
+				|| prod_id == "MONKEY BALL JAPAN VERSION")
 		{
 			INFO_LOG(BOOT, "Enabling translucent depth multipass for game %s", prod_id.c_str());
 			config::TranslucentPolygonDepthMask.override(true);
@@ -704,6 +722,8 @@ void Emulator::loadGame(const char *path, LoadProgress *progress)
 #ifndef LIBRETRO
 			if (config::GGPOEnable)
 				dc_loadstate(-1);
+			else if (config::AutoLoadState && !naomiNetworkSupported() && !settings.naomi.multiboard)
+				dc_loadstate(config::SavestateSlot);
 #endif
 		}
 
@@ -763,19 +783,17 @@ void Emulator::runInternal()
 	}
 }
 
-void Emulator::unloadGame(bool allowAutoSave)
+void Emulator::unloadGame()
 {
-	bool skipAutoSaveThisUnload = skipAutoSaveOnNextUnload;
-	skipAutoSaveOnNextUnload = false;
 	try {
 		stop();
 	} catch (...) { }
 	if (state == Loaded || state == Error)
 	{
 #ifndef LIBRETRO
-		if (allowAutoSave && state == Loaded && config::AutoSaveState && !skipAutoSaveThisUnload && !settings.content.path.empty()
+		if (state == Loaded && config::AutoSaveState && !settings.content.path.empty()
 				&& !settings.naomi.multiboard && !config::GGPOEnable && !naomiNetworkSupported())
-			gui_saveState(dc_getAutoSaveSlot(), false);
+			gui_saveState(false);
 #endif
 		try {
 			dc_reset(true);
@@ -1126,26 +1144,6 @@ void Emulator::vblank()
 {
 	EventManager::event(Event::VBlank);
 	runner.execTasks(sh4_sched_now64());
-#ifndef LIBRETRO
-	if (settings.input.fastForwardMode && config::FastForwardSpeedLimit < 300)
-	{
-		const double speedFactor = 1.0 + (double)config::FastForwardSpeedLimit / 100.0;
-		const auto frameDuration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-				std::chrono::duration<double>(1.0 / (60.0 * speedFactor)));
-		const auto now = std::chrono::steady_clock::now();
-		if (fastForwardThrottleDeadline.time_since_epoch().count() == 0)
-			fastForwardThrottleDeadline = now;
-		fastForwardThrottleDeadline += frameDuration;
-		if (fastForwardThrottleDeadline > now)
-			std::this_thread::sleep_until(fastForwardThrottleDeadline);
-		else
-			fastForwardThrottleDeadline = now;
-	}
-	else
-	{
-		fastForwardThrottleDeadline = {};
-	}
-#endif
 	// Time out if a frame hasn't been rendered for 50 ms
 	if (sh4_sched_now64() - startTime <= 50_sh4ms)
 		return;

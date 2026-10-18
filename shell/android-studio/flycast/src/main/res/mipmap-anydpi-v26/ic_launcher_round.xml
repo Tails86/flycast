@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher_background"/>
+    <foreground>
+        <inset android:drawable="@mipmap/ic_launcher_foreground"
+            android:insetLeft="1dp"
+            android:insetTop="2dp"/>
+    </foreground>
+    <monochrome>
+        <inset android:drawable="@mipmap/ic_launcher_monochrome"
+            android:insetLeft="1dp"
+            android:insetTop="2dp"/>
+    </monochrome>
+</adaptive-icon>

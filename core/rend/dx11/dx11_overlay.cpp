@@ -1,6 +1,5 @@
 /*
 	Copyright 2021 flyinghead
-	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -127,7 +126,7 @@ void DX11Overlay::draw(u32 width, u32 height, bool vmu, bool crosshair)
 			}
 			else
 			{
-				y = vmu_padding + getScaledTopInset();
+				y = vmu_padding;
 				if (i & 1)
 					y += vmu_padding + vmu_height;
 			}

@@ -21,7 +21,6 @@
 #include "mainui.h"
 #include "hw/pvr/Renderer_if.h"
 #include "gui.h"
-#include "gui_menu.h"
 #include "oslib/oslib.h"
 #include "wsi/context.h"
 #include "cfg/option.h"
@@ -65,8 +64,6 @@ bool mainui_rend_frame()
 				return false;
 			if (config::ProfilerEnabled && config::ProfilerDrawToGUI)
 				gui_display_profiler();
-			// OSD and menu bar are rendered together
-			gui_draw_osd();
 		} catch (const RendererException& e) {
 			gui_error(i18n::Ts("Renderer error:") + "\n" + e.what() + "\n\n"
 					+ i18n::Ts("The game has been paused but it is recommended to restart Hollycast"));

@@ -18,12 +18,100 @@
  */
 #include "settings.h"
 #include "gui.h"
-#include "settings_new.h"
+#include "IconsFontAwesome6.h"
+#include "mainui.h"
 #include "oslib/storage.h"
+#include "stdclass.h"
+#include "achievements/achievements.h"
+#include "imgui_stdlib.h"
 
-namespace {
+static std::vector<std::string>* g_currentPathList = nullptr;
+static void managePathListCallback(std::string selection)
+{
+    if (g_currentPathList != nullptr)
+    {
+        g_currentPathList->push_back(selection);
+        g_currentPathList = nullptr;
+    }
+}
 
-void addContentPathCallback(const std::string& path)
+static void manageSinglePath(const char* label, const char *popupName, config::Option<std::string, false>& pathOption, const char* helpText)
+{
+	bool hasValue = !pathOption.get().empty();
+	bool addPressed;
+	FolderList::HeaderAdd(label, helpText, !hasValue, addPressed);
+
+	if (hasValue)
+	{
+		bool deletePressed;
+		FolderList::Entry(pathOption.get().c_str(), deletePressed);
+		if (deletePressed)
+		{
+			pathOption.get().clear();
+		}
+	}
+	FolderList::End();
+
+    static std::string *pCurrentPath;
+    pCurrentPath = &pathOption.get();
+    select_file_popup(popupName, [](bool cancelled, std::string selection) {
+    	if (!cancelled)
+    		*pCurrentPath = selection;
+    	return true;
+    });
+    if (addPressed)
+        ImGui::OpenPopup(T(popupName));
+}
+
+static void managePathList(const char* label, const char *popupName, std::vector<std::string>& paths, const char* helpText)
+{
+	bool addPressed;
+	FolderList::HeaderAdd(label, helpText, true, addPressed);
+
+	auto toDelete = paths.end();
+	for (auto it = paths.begin(); it != paths.end(); ++it)
+	{
+		ImguiID id(it - paths.begin());
+		bool deletePressed;
+		FolderList::Entry(it->c_str(), deletePressed);
+
+		if (deletePressed)
+		{
+			toDelete = it;
+		}
+	}
+	FolderList::End();
+
+	if (toDelete != paths.end())
+	{
+		paths.erase(toDelete);
+	}
+
+    // Handle file selection popup (following the same pattern as addContentPath)
+    if (addPressed)
+	    g_currentPathList = &paths;
+    select_file_popup(popupName, [](bool cancelled, std::string selection) {
+    	if (!cancelled)
+    		managePathListCallback(selection);
+    	return true;
+    });
+#ifdef __ANDROID__
+    if (addPressed)
+    {
+		bool supported = hostfs::addStorage(true, false, T(popupName), [](bool cancelled, std::string selection) {
+			if (!cancelled)
+				managePathListCallback(selection);
+		});
+		if (!supported)
+			ImGui::OpenPopup(T(popupName));
+    }
+#else
+    if (addPressed)
+        ImGui::OpenPopup(T(popupName));
+#endif
+}
+
+static void addContentPathCallback(const std::string& path)
 {
 	auto& contentPath = config::ContentPath.get();
 	if (std::count(contentPath.begin(), contentPath.end(), path) == 0)
@@ -31,81 +119,410 @@ void addContentPathCallback(const std::string& path)
 		scanner.stop();
 		contentPath.push_back(path);
 		if (gui_state == GuiState::Main)
+			// when adding content path from empty game list
 			SaveSettings();
 		scanner.refresh();
 	}
 }
 
-} // namespace
-
 void addContentPath(bool start)
 {
-	const char* title = "Select a Content Folder";
-	select_file_popup(title, [](bool cancelled, std::string selection) {
+    const char *title = T("Select a Content Folder");
+    select_file_popup(title, [](bool cancelled, std::string selection) {
 		if (!cancelled)
 			addContentPathCallback(selection);
 		return true;
-	});
+    });
 #ifdef __ANDROID__
-	if (start)
-	{
-		bool supported = hostfs::addStorage(true, false, title, [](bool cancelled, std::string selection) {
-			if (!cancelled)
-				addContentPathCallback(selection);
-		});
-		if (!supported)
-			ImGui::OpenPopup(title);
-	}
+    if (start)
+    {
+    	bool supported = hostfs::addStorage(true, false, title, [](bool cancelled, std::string selection) {
+    		if (!cancelled)
+    			addContentPathCallback(selection);
+    	});
+    	if (!supported)
+    		ImGui::OpenPopup(title);
+    }
 #else
-	if (start)
-		ImGui::OpenPopup(title);
+    if (start)
+    	ImGui::OpenPopup(title);
 #endif
 }
 
-// Legacy compatibility entry point. The active General settings tab is implemented
-// in settings_new.cpp; this symbol is preserved for compatibility and merge stability.
+void gui_RescanContent();
+void gui_ContentLocations();
+void gui_DataFolder();
+void gui_HomeFolder();
+#if defined(__ANDROID__)
+void gui_HomeFolderAndroid();
+#endif
+void gui_Appearance();
+void gui_Misc();
+void gui_Achievements();
+void gui_CustomPaths();
+
 void gui_settings_general()
 {
-	SettingsNew::renderGeneralTab();
+	struct
+	{
+		const char* label;
+		const char* value;
+	}
+	UILanguages[] = {
+		{ T("System Default"), "" },
+		{ "English", "en" },
+		{ "Français", "fr" },
+		{ "Magyar", "hu" },
+		{ "日本語", "ja" },
+		{ "Português (Brasil)", "pt_BR" },
+		{ "Svenska", "sv" },
+		{ "Türkçe", "tr" },
+		{ "简体中文", "zh_CN" },
+		{ "正體中文", "zh_TW" },
+	};
+
+	// Determine the preview text
+	const std::string currentLanguage = config::UILanguage.get();
+	std::string preview;
+	for (const auto& it : UILanguages)
+	{
+		if (currentLanguage == it.value) {
+			preview = it.label;
+			break;
+		}
+	}
+
+	if (ComboBoxRow::BeginCombo(T("UI Language"), preview.c_str()))
+	{
+		for (const auto& lang : UILanguages)
+		{
+			const bool selected = (currentLanguage == lang.value);
+
+			if (ComboBoxRow::Selectable(lang.label, selected)) {
+				config::UILanguage = lang.value;
+				i18n::reloadLanguage();
+			}
+			if (selected)
+				ImGui::SetItemDefaultFocus();
+		}
+
+		ComboBoxRow::EndCombo();
+	}
+
+	{
+		DisabledScope scope(settings.platform.isArcade());
+
+		const char *languages[] = { T("Japanese"), T("English"), T("German"), T("French"), T("Spanish"), T("Italian"), T("Default") };
+		OptionComboBox(T("Dreamcast Language"), config::Language, languages, std::size(languages),
+				T("The language as configured in the Dreamcast BIOS"));
+
+		const char *broadcast[] = { "NTSC", "PAL", "PAL/M", "PAL/N", T("Default") };
+		OptionComboBox(T("Broadcast"), config::Broadcast, broadcast, std::size(broadcast),
+				T("TV broadcasting standard for non-VGA modes"));
+	}
+
+	const char *consoleRegion[] = { T("Japan"), T("USA"), T("Europe"), T("Default") };
+	const char *arcadeRegion[] = { T("Japan"), T("USA"), i18n::translateCtx("region", "Export"), T("Korea") };
+	const char **region = settings.platform.isArcade() ? arcadeRegion : consoleRegion;
+	OptionComboBox(T("Region"), config::Region, region, std::size(consoleRegion),
+			T("BIOS region"));
+
+	const char *cable[] = { T("VGA"), T("RGB Component"), T("TV Composite") };
+	{
+		DisabledScope scope(config::Cable.isReadOnly() || settings.platform.isArcade());
+
+		const char *value = config::Cable == 0 ? cable[0]
+				: config::Cable > 0 && config::Cable <= (int)std::size(cable) ? cable[config::Cable - 1]
+				: "?";
+		if (ComboBoxRow::BeginCombo(T("Cable"), value, T("Video connection type")))
+		{
+			for (int i = 0; i < IM_ARRAYSIZE(cable); i++)
+			{
+				bool is_selected = i == 0 ? config::Cable <= 1 : config::Cable - 1 == i;
+				if (ComboBoxRow::Selectable(cable[i], &is_selected))
+					config::Cable = i == 0 ? 0 : i + 1;
+				if (is_selected)
+					ImGui::SetItemDefaultFocus();
+			}
+			ComboBoxRow::EndCombo();
+		}
+	}
+
+#if defined(TARGET_IPHONE)
+	gui_RescanContent();
+#else
+	gui_ContentLocations();
+#endif
+
+#if defined(__ANDROID__)
+	gui_HomeFolderAndroid();
+#elif defined(__linux__)
+	gui_DataFolder();
+#elif !defined(TARGET_IPHONE)
+	gui_HomeFolder();
+#endif
+
+	gui_Appearance();
+	gui_Misc();
+	gui_Achievements();
+	gui_CustomPaths();
+}
+
+void gui_RescanContent()
+{
+	ImguiStyleVar _(ImGuiStyleVar_FramePadding, ScaledVec2(24, 3));
+	if (ImGui::Button(T("Rescan Content")))
+		scanner.refresh();
+}
+
+void gui_ContentLocations()
+{
+	bool addPressed, refreshPressed;
+	FolderList::HeaderAddRefresh(T("Content Location"), T("The folders where your games are stored"), addPressed, refreshPressed);
+
+	addContentPath(addPressed);
+	if (refreshPressed)
+	{
+		scanner.refresh();
+	}
+
+	auto& contentPaths = config::ContentPath.get();
+	auto toDelete = contentPaths.end();
+	for (auto it = contentPaths.begin(); it != contentPaths.end(); ++it)
+	{
+		ImguiID id(it - contentPaths.begin());
+		bool deletePressed;
+        FolderList::Entry(it->c_str(), deletePressed);
+
+		if (deletePressed)
+		{
+			toDelete = it;
+		}
+	}
+
+	if (toDelete != contentPaths.end())
+	{
+		scanner.stop();
+		contentPaths.erase(toDelete);
+		scanner.refresh();
+	}
+
+	FolderList::End();
+}
+
+void gui_DataFolder()
+{
+	FolderList::Header(T("Data Folder"), T("The folder containing BIOS files, as well as saved VMUs and states"));
+	FolderList::Entry(get_writable_data_path("").c_str());
+	FolderList::End();
+}
+
+void gui_HomeFolder()
+{
+	FolderList::Header(T("Home Folder"), T("The folder where Flycast saves configuration files and VMUs. BIOS files should be in a subfolder named \"data\""));
+	FolderList::Entry(get_writable_config_path("").c_str());
+	FolderList::End();
+}
+
+#if defined(__ANDROID__)
+void gui_HomeFolderAndroid()
+{
+	bool importPressed, exportPressed;
+	FolderList::HeaderImportExport(
+		T("Home Folder"),
+		T("The folder where Flycast saves configuration files and VMUs. BIOS files should be in a subfolder named \"data\""),
+		config::UseSafFilePicker,
+		importPressed,
+		exportPressed);
+
+	if (importPressed)
+	{
+		hostfs::importHomeDirectory();
+	}
+
+	if (exportPressed)
+	{
+		hostfs::exportHomeDirectory();
+	}
+
+	FolderList::Entry(get_writable_config_path("").c_str());
+	FolderList::End();
+}
+#endif
+
+void gui_Appearance()
+{
+	OptionCheckbox(T("Box Art Game List"), config::BoxartDisplayMode,
+			T("Display game cover art in the game list."));
+	OptionCheckbox(T("Fetch Box Art"), config::FetchBoxart,
+			T("Fetch cover images from TheGamesDB.net."));
+	if (OptionSlider(T("UI Scaling"), config::UIScaling, 50, 200, T("Adjust the size of UI elements and fonts."), "%d%%"))
+	{
+		uiUserScaleUpdated = true;
+	}
+	if (uiUserScaleUpdated)
+	{
+		ImGui::Spacing();
+		if (ImGui::Button(T("Apply"))) {
+			mainui_reinit();
+			uiUserScaleUpdated = false;
+		}
+	}
+
+	const char *themes[] = { T("Dark"), T("Light"), T("Dreamcast"), T("High Contrast"), T("Nintendo"), T("Aqua Chill") };
+	int previousUITheme = config::UITheme;
+	OptionComboBox(T("UI Theme"), config::UITheme, themes, std::size(themes),
+			T("Select the UI color theme."));
+	// Auto-apply theme when selection changes
+	if (previousUITheme != config::UITheme) {
+		applyCurrentTheme();
+	}
+}
+
+void gui_Misc()
+{
+	if (OptionCheckbox(T("Hide Legacy Naomi Roms"), config::HideLegacyNaomiRoms,
+			T("Hide .bin, .dat and .lst files from the content browser")))
+		scanner.refresh();
+#ifdef __ANDROID__
+	OptionCheckbox(T("Use SAF File Picker"), config::UseSafFilePicker,
+			T("Use Android Storage Access Framework file picker to select folders and files. Ignored on Android 10 and later."));
+#endif
+
+	ImGui::Text("%s", T("Automatic State:"));
+	ImGui::Indent();
+	OptionCheckbox(T("Load"), config::AutoLoadState,
+			T("Load the last saved state of the game when starting"));
+	OptionCheckbox(T("Save"), config::AutoSaveState,
+			T("Save the state of the game when stopping"));
+	ImGui::Unindent();
+	OptionCheckbox(T("Naomi Free Play"), config::ForceFreePlay, T("Configure Naomi games in Free Play mode."));
+#if USE_DISCORD
+	OptionCheckbox(T("Discord Presence"), config::DiscordPresence, T("Show which game you are playing on Discord"));
+#endif
+}
+
+void gui_Achievements()
+{
+#ifdef USE_RACHIEVEMENTS
+	OptionCheckbox(T("Enable RetroAchievements"), config::EnableAchievements, T("Track your game achievements using RetroAchievements.org"));
+	{
+		DisabledScope _(!config::EnableAchievements);
+		ImGui::Indent();
+		OptionCheckbox(T("Hardcore Mode"), config::AchievementsHardcoreMode,
+				T("Enable RetroAchievements hardcore mode. Using cheats and loading a state are not allowed in this mode."));
+		InputText(T("Username"), &config::AchievementsUserName.get(),
+				achievements::isLoggedOn() ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
+		if (config::EnableAchievements)
+		{
+			static std::future<void> futureLogin;
+			achievements::init();
+			if (achievements::isLoggedOn())
+			{
+				ImGui::Text("%s", T("Authentication successful"));
+				if (futureLogin.valid())
+					futureLogin.get();
+				if (ImGui::Button(T("Logout"), ScaledVec2(100, 0)))
+					achievements::logout();
+			}
+			else
+			{
+				static char password[256];
+				InputText(T("Password"), password, sizeof(password), ImGuiInputTextFlags_Password);
+				if (futureLogin.valid())
+				{
+					if (futureLogin.wait_for(std::chrono::seconds::zero()) == std::future_status::timeout) {
+						ImGui::Text("%s", T("Authenticating..."));
+					}
+					else
+					{
+						try {
+							futureLogin.get();
+						} catch (const FlycastException& e) {
+							gui_error(e.what());
+						}
+					}
+				}
+				{
+					DisabledScope _(config::AchievementsUserName.get().empty() || password[0] == '\0');
+					if (ImGui::Button(T("Login"), ScaledVec2(100, 0)) && !futureLogin.valid())
+					{
+						futureLogin = achievements::login(config::AchievementsUserName.get().c_str(), password);
+						memset(password, 0, sizeof(password));
+					}
+				}
+			}
+		}
+		ImGui::Unindent();
+	}
+#endif
+}
+
+void gui_CustomPaths()
+{
+// Custom Paths section - hidden on Android and iOS
+#if !defined(TARGET_IPHONE)
+    header(T("Custom Paths"));
+
+    managePathList(T("BIOS Folders"), T("Select a BIOS folder"), config::BiosPath.get(),
+    		T("Folders containing BIOS files (e.g. dc_boot.bin or dc_bios.bin) and arcade BIOS"));
+
+#if !defined(__ANDROID__)
+    manageSinglePath(T("VMU Folder"), T("Select the VMU folder"), config::VMUPath,
+    		T("Folder where VMU (.bin) saves are stored"));
+
+#ifdef DREAMPOTATO_INTEGRATED_MODE
+	manageSinglePath("DreamPotato Path", T("Select the DreamPotato folder"), config::DreamPotatoFolderPath,
+		T("Folder where DreamPotato executable is stored"));
+	ImGui::Spacing();
+#endif
+
+    managePathList(T("Savestate Folders"), T("Select a savestate folder"), config::SavestatePath.get(),
+    		T("Folders for save states. First path is used for new states; all are searched when loading"));
+
+    manageSinglePath(T("Game Save Folder"), T("Select the game save folder"), config::SavePath,
+    		T("Folder for game save data (e.g. arcade NVRAM)"));
+#endif
+
+    managePathList(T("Texture Pack Folders"), T("Select a texture pack folder"), config::TexturePath.get(),
+    		T("Folders containing textures/<gameId> or <gameId> under a textures subfolder"));
+
+#if !defined(__ANDROID__)
+    manageSinglePath(T("Texture Dump Folder"), T("Select the texture dump folder"), config::TextureDumpPath,
+    		T("Folder where texture dumps are saved. Game-specific subfolders will be created automatically"));
+    
+    manageSinglePath(T("Box Art Folder"), T("Select the box art folder"), config::BoxartPath,
+    		T("Folder containing box art images (png/jpg). If empty, Flycast will use the default Home Folder/boxart for downloads and generated art"));
+
+    managePathList(T("Controller Mapping Folders"), T("Select a controller mapping folder"), config::MappingsPath.get(),
+    		T("Folders containing controller mapping files (.cfg). The emulator also looks in Home Folder/mappings. Per-game mappings are suffixed with _<gameId>.cfg"));
+
+    managePathList(T("Cheat Folders"), T("Select a cheat folder"), config::CheatPath.get(),
+    		T("Folders containing cheat files (.cht/.txt) named with the game ID. Flycast will auto-load matching files if present"));
+#endif  // !ANDROID
+#endif  // !IPHONE
 }
 
 static void applyDarkTheme()
 {
-	// Reset style state before applying the theme palette.
+	// Reset style first, then apply dark colors - exactly like original Flycast
 	ImGui::GetStyle() = ImGuiStyle{};
 	ImGui::StyleColorsDark();
 
-	// Theme-specific style adjustments.
+	// Apply original Flycast styling to match exactly how it was
 	ImGuiStyle& style = ImGui::GetStyle();
+
+	// Use opaque background for popups for improved visibility
+	style.Colors[ImGuiCol_PopupBg].w = 1.00f;
+
 	style.TabRounding = 5.0f;
 	style.FrameRounding = 3.0f;
-	style.ItemSpacing = ImVec2(8, 8);
-	style.ItemInnerSpacing = ImVec2(4, 6);
+	style.ItemSpacing = ImVec2(8, 8);		// from 8,4
+	style.ItemInnerSpacing = ImVec2(4, 6);	// from 4,4
 
 	// Reset style properties to defaults to ensure clean theme switching
-	style.TabBorderSize = 0.0f;
-	style.FrameBorderSize = 0.0f;
-
-	// Ensure menu bar uses dark theme colors
-	style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_Border] = ImVec4(0.30f, 0.30f, 0.35f, 0.50f);
-
-	// High-contrast text colors.
-	style.Colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-	style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.70f, 0.70f, 1.00f);
-
-	// Darker blue highlight/hover color for better text readability
-	style.Colors[ImGuiCol_Header] = ImVec4(0.10f, 0.25f, 0.45f, 0.80f);
-	style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.15f, 0.35f, 0.55f, 1.00f);
-	style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.20f, 0.40f, 0.60f, 1.00f);
-
-	// Popup background - solid dark
-	style.Colors[ImGuiCol_PopupBg] = ImVec4(0.12f, 0.12f, 0.14f, 1.00f);
-
-	// Frame backgrounds
-	style.Colors[ImGuiCol_FrameBg] = ImVec4(0.20f, 0.20f, 0.24f, 1.00f);
-	style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.15f, 0.35f, 0.55f, 1.00f);
-	style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.20f, 0.40f, 0.60f, 1.00f);
+	style.TabBorderSize = 0.0f;        // Revert to default
+	style.FrameBorderSize = 0.0f;      // Revert to default
 }
 
 static void applyLightTheme()
@@ -113,75 +530,57 @@ static void applyLightTheme()
 	ImGui::StyleColorsLight();
 	ImGuiStyle& style = ImGui::GetStyle();
 
-	// High-contrast text colors for light background.
-	style.Colors[ImGuiCol_Text] = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);
-	style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);
+	// Improved light theme with better contrast
+	style.Colors[ImGuiCol_Text] = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);           // Black text
+	style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);   // Darker gray for disabled text
 
-	// Neutral light gray background. This keeps the light theme from looking
-	// white-washed while still giving dark text a clear surface.
-	style.Colors[ImGuiCol_WindowBg] = ImVec4(0.88f, 0.88f, 0.89f, 1.00f);
-	style.Colors[ImGuiCol_ChildBg] = ImVec4(0.88f, 0.88f, 0.89f, 1.00f);
+	style.Colors[ImGuiCol_WindowBg] = ImVec4(0.94f, 0.94f, 0.97f, 1.00f);       // Very light blue-gray
+	style.Colors[ImGuiCol_PopupBg] = ImVec4(0.98f, 0.98f, 1.00f, 1.00f);        // Almost white for popups (fully opaque)
 
-	// Keep dialogs on the light side too. PopupStyleScope derives popup text from
-	// this surface, so a mid/dark popup color can make theme-switched dialogs look
-	// muddy or leave text with poor contrast.
-	style.Colors[ImGuiCol_PopupBg] = ImVec4(0.92f, 0.91f, 0.94f, 1.00f);
+	style.Colors[ImGuiCol_Border] = ImVec4(0.70f, 0.70f, 0.80f, 0.50f);         // Medium blue-gray borders (semi-transparent ok)
+	style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);   // No border shadows
 
-	style.Colors[ImGuiCol_Border] = ImVec4(0.56f, 0.56f, 0.64f, 0.60f);
-	style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+	// Darker frame backgrounds (unchecked boxes, etc.)
+	style.Colors[ImGuiCol_FrameBg] = ImVec4(0.70f, 0.70f, 0.80f, 1.00f);        // Darker blue-gray backgrounds
+	style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.60f, 0.60f, 0.75f, 1.00f); // Slightly darker when hovered
+	style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.50f, 0.50f, 0.70f, 1.00f);  // Even darker when active
 
-	// Light lavender controls preserve the theme accent while staying safely
-	// behind dark text in rows, inputs, sliders, and popup selections.
-	style.Colors[ImGuiCol_FrameBg] = ImVec4(0.82f, 0.82f, 0.91f, 1.00f);
-	style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.76f, 0.77f, 0.88f, 1.00f);
-	style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.68f, 0.70f, 0.82f, 1.00f);
+	style.Colors[ImGuiCol_TitleBg] = ImVec4(0.70f, 0.70f, 0.85f, 1.00f);        // Light blue-gray title bar
+	style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.60f, 0.60f, 0.80f, 1.00f);  // Darker title bar when active
+	style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.80f, 0.80f, 0.90f, 0.75f); // Lighter when collapsed (transparency ok)
 
-	style.Colors[ImGuiCol_TitleBg] = ImVec4(0.70f, 0.70f, 0.85f, 1.00f);
-	style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.60f, 0.60f, 0.80f, 1.00f);
-	style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.80f, 0.80f, 0.90f, 0.75f);
+	style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.80f, 0.80f, 0.90f, 1.00f);      // Light blue-gray menu bar
 
-	// Menu bar - lighter purple (top toolbar color).
-	style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.76f, 0.76f, 0.88f, 1.00f);
+	style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.85f, 0.85f, 0.90f, 1.00f);    // Very light scrollbar background
+	style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.65f, 0.65f, 0.80f, 1.00f);  // Medium blue-gray scrollbar (fully opaque)
+	style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.55f, 0.55f, 0.75f, 1.00f); // Darker when hovered (fully opaque)
+	style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.45f, 0.45f, 0.70f, 1.00f);  // Even darker when active (fully opaque)
 
-	style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.84f, 0.84f, 0.85f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.58f, 0.58f, 0.72f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.50f, 0.52f, 0.68f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.42f, 0.46f, 0.62f, 1.00f);
+	style.Colors[ImGuiCol_CheckMark] = ImVec4(0.00f, 0.45f, 0.90f, 1.00f);      // Bright blue checkmarks
 
-	style.Colors[ImGuiCol_CheckMark] = ImVec4(0.00f, 0.35f, 0.75f, 1.00f);
+	style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.50f, 0.50f, 0.80f, 1.00f);     // Medium blue-gray slider (fully opaque)
+	style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.40f, 0.40f, 0.70f, 1.00f); // Darker when active (fully opaque)
 
-	style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.36f, 0.45f, 0.78f, 1.00f);
-	style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.24f, 0.34f, 0.66f, 1.00f);
+	style.Colors[ImGuiCol_Button] = ImVec4(0.67f, 0.67f, 0.83f, 1.00f);         // Medium blue-gray buttons (fully opaque)
+	style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.57f, 0.57f, 0.77f, 1.00f);  // Darker when hovered (fully opaque)
+	style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.47f, 0.47f, 0.73f, 1.00f);   // Even darker when active (fully opaque)
 
-	style.Colors[ImGuiCol_Button] = ImVec4(0.78f, 0.78f, 0.90f, 1.00f);
-	style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.70f, 0.72f, 0.86f, 1.00f);
-	style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.60f, 0.64f, 0.80f, 1.00f);
+	style.Colors[ImGuiCol_Header] = ImVec4(0.60f, 0.60f, 0.80f, 0.80f);         // Medium blue-gray headers (semi-transparent ok)
+	style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.50f, 0.50f, 0.75f, 1.00f);  // Darker when hovered (fully opaque)
+	style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.45f, 0.45f, 0.70f, 1.00f);   // Even darker when active (fully opaque)
 
-	// Header colors are row fills under normal text, including popup choices.
-	style.Colors[ImGuiCol_Header] = ImVec4(0.78f, 0.80f, 0.91f, 1.00f);
-	style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.68f, 0.72f, 0.86f, 1.00f);
-	style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.56f, 0.62f, 0.78f, 1.00f);
+	style.Colors[ImGuiCol_Separator] = ImVec4(0.60f, 0.60f, 0.70f, 0.60f);      // Visible separators (semi-transparent ok)
 
-	style.Colors[ImGuiCol_Separator] = ImVec4(0.58f, 0.58f, 0.70f, 0.70f);
+	style.Colors[ImGuiCol_Tab] = ImVec4(0.65f, 0.65f, 0.80f, 1.00f);            // Medium blue-gray tabs (fully opaque)
+	style.Colors[ImGuiCol_TabHovered] = ImVec4(0.55f, 0.55f, 0.75f, 1.00f);     // Darker when hovered (fully opaque)
+	style.Colors[ImGuiCol_TabActive] = ImVec4(0.50f, 0.50f, 0.70f, 1.00f);      // Even darker when active (fully opaque)
+	style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.75f, 0.75f, 0.85f, 1.00f);   // Lighter when unfocused (fully opaque)
+	style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.65f, 0.65f, 0.80f, 1.00f); // Medium when unfocused but active (fully opaque)
 
-	// Tabs - using lighter purple for active tabs
-	style.Colors[ImGuiCol_Tab] = ImVec4(0.80f, 0.80f, 0.90f, 1.00f);
-	style.Colors[ImGuiCol_TabHovered] = ImVec4(0.70f, 0.72f, 0.86f, 1.00f);
-	style.Colors[ImGuiCol_TabActive] = ImVec4(0.64f, 0.68f, 0.84f, 1.00f);
-	style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.84f, 0.84f, 0.86f, 1.00f);
-	style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.74f, 0.76f, 0.86f, 1.00f);
+	style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.45f, 0.45f, 0.85f, 0.35f); // Visible selection background (transparency ok)
 
-	style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.58f, 0.66f, 0.88f, 0.45f);
-
-	// Table colors
-	style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(0.76f, 0.76f, 0.88f, 1.00f);
-	style.Colors[ImGuiCol_TableBorderStrong] = ImVec4(0.56f, 0.56f, 0.72f, 1.00f);
-	style.Colors[ImGuiCol_TableBorderLight] = ImVec4(0.70f, 0.70f, 0.82f, 0.80f);
-	style.Colors[ImGuiCol_TableRowBg] = ImVec4(0.88f, 0.88f, 0.89f, 1.00f);
-	style.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.84f, 0.84f, 0.86f, 1.00f);
-
-	style.TabBorderSize = 0.0f;
-	style.FrameBorderSize = 0.0f;
+	style.TabBorderSize = 0.0f;        // Revert to default
+	style.FrameBorderSize = 0.0f;      // Revert to default
 }
 
 static void applyDreamcastTheme()
@@ -189,60 +588,61 @@ static void applyDreamcastTheme()
 	ImGui::StyleColorsDark();
 	ImGuiStyle& style = ImGui::GetStyle();
 
-	// Dreamcast-inspired palette.
-	style.Colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-	style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.70f, 0.70f, 0.50f);
+	// Dreamcast-inspired theme with higher contrast
+	// Pure white text - maximum brightness
+	style.Colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);           // Pure white text
+	style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.70f, 0.70f, 0.50f);   // More transparent for disabled text (transparency ok)
 
-	// Background and frame colors.
-	style.Colors[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.07f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_ChildBg] = ImVec4(0.05f, 0.07f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_TitleBg] = ImVec4(0.13f, 0.16f, 0.40f, 1.00f);
-	style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.18f, 0.22f, 0.50f, 1.00f);
-	style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.43f, 0.73f, 0.70f);
-	style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.10f, 0.12f, 0.15f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.05f, 0.07f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.95f, 0.95f, 0.95f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.95f, 0.95f, 0.95f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.95f, 0.95f, 0.95f, 1.00f);
+	// Darker backgrounds for higher contrast
+	style.Colors[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.07f, 0.10f, 1.00f);      // Much darker DC Menu Background for contrast
+	style.Colors[ImGuiCol_ChildBg] = ImVec4(0.05f, 0.07f, 0.10f, 1.00f);       // Match window background
+	style.Colors[ImGuiCol_TitleBg] = ImVec4(0.13f, 0.16f, 0.40f, 1.00f);      // DC Logo Blue (fully opaque)
+	style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.18f, 0.22f, 0.50f, 1.00f);  // Brighter DC Blue when active
+	style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.43f, 0.73f, 0.70f); // More transparent when collapsed (transparency ok)
+	style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.10f, 0.12f, 0.15f, 1.00f);     // Dark but slightly lighter than window
+	style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.05f, 0.07f, 0.10f, 1.00f);   // Darker, same as window background
+	style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.95f, 0.95f, 0.95f, 1.00f); // DC Shell White (fully opaque)
+	style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.95f, 0.95f, 0.95f, 1.00f); // Fully opaque when hovered
+	style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.95f, 0.95f, 0.95f, 1.00f); // Fully opaque when active
 
 	// Controller button colors - more vibrant
-	style.Colors[ImGuiCol_Button] = ImVec4(0.90f, 0.50f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_ButtonHovered] = ImVec4(1.00f, 0.70f, 0.40f, 1.00f);
-	style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.95f, 0.45f, 0.00f, 1.00f);
+	style.Colors[ImGuiCol_Button] = ImVec4(0.90f, 0.50f, 0.10f, 1.00f);        // Brighter orange buttons
+	style.Colors[ImGuiCol_ButtonHovered] = ImVec4(1.00f, 0.70f, 0.40f, 1.00f); // Brighter when hovered
+	style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.95f, 0.45f, 0.00f, 1.00f);  // Brighter when active
 
-	style.Colors[ImGuiCol_PopupBg] = ImVec4(0.05f, 0.07f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_FrameBg] = ImVec4(0.15f, 0.17f, 0.22f, 1.00f);
-	style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.10f, 0.70f, 0.50f, 1.00f);
-	style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.06f, 0.60f, 0.35f, 1.00f);
+	style.Colors[ImGuiCol_PopupBg] = ImVec4(0.05f, 0.07f, 0.10f, 1.00f);       // Darker DC Menu Background (100% opaque)
+	style.Colors[ImGuiCol_FrameBg] = ImVec4(0.15f, 0.17f, 0.22f, 1.00f);       // Darker DC Menu (fully opaque)
+	style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.10f, 0.70f, 0.50f, 1.00f); // Brighter Y Button (Green) (fully opaque)
+	style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.06f, 0.60f, 0.35f, 1.00f);  // Y Button (Green) (fully opaque)
 
-	style.Colors[ImGuiCol_Header] = ImVec4(0.15f, 0.18f, 0.45f, 1.00f);
-	style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.20f, 0.23f, 0.55f, 1.00f);
-	style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.10f, 0.13f, 0.33f, 1.00f);
+	style.Colors[ImGuiCol_Header] = ImVec4(0.15f, 0.18f, 0.45f, 1.00f);        // Brighter B Button (Blue) (fully opaque)
+	style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.20f, 0.23f, 0.55f, 1.00f); // Even brighter B Button (Blue) (fully opaque)
+	style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.10f, 0.13f, 0.33f, 1.00f);  // B Button darker
 
 	// A Button Red - more vibrant
-	style.Colors[ImGuiCol_CheckMark] = ImVec4(1.00f, 0.30f, 0.30f, 1.00f);
-	style.Colors[ImGuiCol_SliderGrab] = ImVec4(1.00f, 0.30f, 0.30f, 1.00f);
-	style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.90f, 0.20f, 0.20f, 1.00f);
+	style.Colors[ImGuiCol_CheckMark] = ImVec4(1.00f, 0.30f, 0.30f, 1.00f);     // Brighter A Button (Red) - fully opaque
+	style.Colors[ImGuiCol_SliderGrab] = ImVec4(1.00f, 0.30f, 0.30f, 1.00f);    // Brighter A Button (Red) (fully opaque)
+	style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.90f, 0.20f, 0.20f, 1.00f); // A Button darker
 
 	// Tabs - using X Button Blue - more vibrant
-	style.Colors[ImGuiCol_Tab] = ImVec4(0.13f, 0.16f, 0.40f, 1.00f);
-	style.Colors[ImGuiCol_TabHovered] = ImVec4(0.25f, 0.30f, 0.60f, 1.00f);
-	style.Colors[ImGuiCol_TabActive] = ImVec4(0.30f, 0.35f, 0.65f, 1.00f);
-	style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.13f, 0.16f, 0.40f, 1.00f);
-	style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.25f, 0.30f, 0.60f, 1.00f);
+	style.Colors[ImGuiCol_Tab] = ImVec4(0.13f, 0.16f, 0.40f, 1.00f);           // X Button Blue
+	style.Colors[ImGuiCol_TabHovered] = ImVec4(0.25f, 0.30f, 0.60f, 1.00f);    // Brighter when hovered (fully opaque)
+	style.Colors[ImGuiCol_TabActive] = ImVec4(0.30f, 0.35f, 0.65f, 1.00f);     // Much brighter & whiter when active
+	style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.13f, 0.16f, 0.40f, 1.00f);  // Same blue but fully opaque
+	style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.25f, 0.30f, 0.60f, 1.00f); // Brighter for unfocused active (fully opaque)
 
 	// Other elements - more vibrant
-	style.Colors[ImGuiCol_Border] = ImVec4(1.00f, 0.85f, 0.25f, 0.70f);
-	style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-	style.Colors[ImGuiCol_Separator] = ImVec4(0.00f, 0.50f, 0.80f, 0.75f);
-	style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(1.00f, 0.50f, 0.00f, 0.35f);
+	style.Colors[ImGuiCol_Border] = ImVec4(1.00f, 0.85f, 0.25f, 0.70f);         // Brighter DC "X" yellow borders (some transparency ok)
+	style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);   // No border shadows
+	style.Colors[ImGuiCol_Separator] = ImVec4(0.00f, 0.50f, 0.80f, 0.75f);      // Brighter DC Logo Blue separators (some transparency ok)
+	style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(1.00f, 0.50f, 0.00f, 0.35f); // DC Swirl Orange selection (transparency ok)
 
 	// Table colors - more vibrant
-	style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(0.15f, 0.18f, 0.45f, 1.00f);
-	style.Colors[ImGuiCol_TableBorderStrong] = ImVec4(0.00f, 0.50f, 0.80f, 1.00f);
-	style.Colors[ImGuiCol_TableBorderLight] = ImVec4(0.00f, 0.50f, 0.80f, 0.70f);
-	style.Colors[ImGuiCol_TableRowBg] = ImVec4(0.05f, 0.07f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.10f, 0.12f, 0.15f, 1.00f);
+	style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(0.15f, 0.18f, 0.45f, 1.00f);  // Brighter X Button Blue for headers (fully opaque)
+	style.Colors[ImGuiCol_TableBorderStrong] = ImVec4(0.00f, 0.50f, 0.80f, 1.00f); // Brighter DC Logo Blue borders
+	style.Colors[ImGuiCol_TableBorderLight] = ImVec4(0.00f, 0.50f, 0.80f, 0.70f);  // Brighter borders (some transparency ok)
+	style.Colors[ImGuiCol_TableRowBg] = ImVec4(0.05f, 0.07f, 0.10f, 1.00f);     // Same as window bg
+	style.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.10f, 0.12f, 0.15f, 1.00f);  // Slightly lighter for alt rows
 }
 
 static void applyHighContrastTheme()
@@ -250,73 +650,74 @@ static void applyHighContrastTheme()
 	ImGui::StyleColorsDark();
 	ImGuiStyle& style = ImGui::GetStyle();
 
-	// High-contrast theme with Dreamcast accent colors.
-	style.Colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-	style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.70f, 0.70f, 1.00f);
+	// High contrast theme with Dreamcast color accents
+	// Base colors - extreme contrast
+	style.Colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);           // Pure white text
+	style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.75f, 0.75f, 0.75f, 1.00f);   // Light gray for disabled text
 
-	style.Colors[ImGuiCol_WindowBg] = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);
-	style.Colors[ImGuiCol_ChildBg] = ImVec4(0.05f, 0.05f, 0.05f, 1.00f);
-	style.Colors[ImGuiCol_PopupBg] = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
+	style.Colors[ImGuiCol_WindowBg] = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);       // Pure black background
+	style.Colors[ImGuiCol_ChildBg] = ImVec4(0.05f, 0.05f, 0.05f, 1.00f);        // Very dark gray child windows
+	style.Colors[ImGuiCol_PopupBg] = ImVec4(0.07f, 0.07f, 0.09f, 1.00f);        // Very dark for popups
 
-	style.Colors[ImGuiCol_Border] = ImVec4(0.00f, 0.43f, 0.73f, 0.50f);
-	style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+	style.Colors[ImGuiCol_Border] = ImVec4(0.00f, 0.43f, 0.73f, 0.50f);         // DC Logo Blue borders (semi-transparent ok)
+	style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);   // No shadows
 
-	// Frame elements (checkboxes, input fields) - darker blue for better text readability
-	style.Colors[ImGuiCol_FrameBg] = ImVec4(0.15f, 0.15f, 0.20f, 1.00f);
-	style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.10f, 0.30f, 0.50f, 1.00f);
-	style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.15f, 0.35f, 0.55f, 1.00f);
+	// Frame elements (checkboxes, input fields)
+	style.Colors[ImGuiCol_FrameBg] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);        // Dark gray frame backgrounds
+	style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.30f, 0.30f, 0.30f, 1.00f); // Medium gray when hovered
+	style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);  // Darker gray when active
 
 	// Title bars
-	style.Colors[ImGuiCol_TitleBg] = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.00f, 0.43f, 0.73f, 1.00f);
-	style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.43f, 0.73f, 0.50f);
+	style.Colors[ImGuiCol_TitleBg] = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);        // Dark gray title bar
+	style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.00f, 0.43f, 0.73f, 1.00f);  // DC Logo Blue active title
+	style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.43f, 0.73f, 0.50f); // Semi-transparent when collapsed (transparency ok)
 
-	style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
+	style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);      // Dark gray menu bar
 
 	// Scrollbars
-	style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.56f, 0.56f, 0.56f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.00f, 0.65f, 0.90f, 1.00f);
+	style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);    // Dark scrollbar background
+	style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);  // Medium gray scrollbar
+	style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.56f, 0.56f, 0.56f, 1.00f); // Lighter when hovered
+	style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.00f, 0.65f, 0.90f, 1.00f);  // DC Highlight Blue when active
 
 	// Interactive elements
-	style.Colors[ImGuiCol_CheckMark] = ImVec4(1.00f, 0.50f, 0.00f, 1.00f);
+	style.Colors[ImGuiCol_CheckMark] = ImVec4(1.00f, 0.50f, 0.00f, 1.00f);      // DC Swirl Orange for checkmarks
 
-	style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.00f, 0.65f, 0.90f, 1.00f);
-	style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.50f, 0.00f, 1.00f);
+	style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.00f, 0.65f, 0.90f, 1.00f);     // DC Highlight Blue for sliders
+	style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.50f, 0.00f, 1.00f); // DC Swirl Orange when active
 
 	// Buttons
-	style.Colors[ImGuiCol_Button] = ImVec4(0.00f, 0.43f, 0.73f, 1.00f);
-	style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.00f, 0.65f, 0.90f, 1.00f);
-	style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.00f, 0.33f, 0.60f, 1.00f);
+	style.Colors[ImGuiCol_Button] = ImVec4(0.00f, 0.43f, 0.73f, 1.00f);         // DC Logo Blue buttons
+	style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.00f, 0.65f, 0.90f, 1.00f);  // DC Highlight Blue when hovered
+	style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.00f, 0.33f, 0.60f, 1.00f);   // Darker blue when active
 
-	// Headers (settings screen highlights) - use DC Logo Blue (same as selected tab)
-	style.Colors[ImGuiCol_Header] = ImVec4(0.00f, 0.43f, 0.73f, 0.90f);
-	style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.00f, 0.50f, 0.80f, 1.00f);
-	style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.00f, 0.43f, 0.73f, 1.00f);
+	// Headers (collapsing headers, tree nodes)
+	style.Colors[ImGuiCol_Header] = ImVec4(0.00f, 0.43f, 0.73f, 0.80f);         // Semi-transparent DC Logo Blue (some transparency ok)
+	style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.00f, 0.65f, 0.90f, 1.00f);  // DC Highlight Blue when hovered (fully opaque)
+	style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.00f, 0.43f, 0.73f, 1.00f);   // Solid DC Logo Blue when active
 
 	// Tables
-	style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
-	style.Colors[ImGuiCol_TableBorderStrong] = ImVec4(0.00f, 0.43f, 0.73f, 1.00f);
-	style.Colors[ImGuiCol_TableBorderLight] = ImVec4(0.00f, 0.43f, 0.73f, 0.50f);
+	style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);  // Dark gray table headers
+	style.Colors[ImGuiCol_TableBorderStrong] = ImVec4(0.00f, 0.43f, 0.73f, 1.00f); // DC Logo Blue table borders
+	style.Colors[ImGuiCol_TableBorderLight] = ImVec4(0.00f, 0.43f, 0.73f, 0.50f);  // Lighter DC Logo Blue inner borders (semi-transparent ok)
 
 	// Tabs
-	style.Colors[ImGuiCol_Tab] = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
-	style.Colors[ImGuiCol_TabHovered] = ImVec4(0.00f, 0.65f, 0.90f, 1.00f);
-	style.Colors[ImGuiCol_TabActive] = ImVec4(0.00f, 0.43f, 0.73f, 1.00f);
-	style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
-	style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.00f, 0.43f, 0.73f, 1.00f);
+	style.Colors[ImGuiCol_Tab] = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);            // Dark gray tabs
+	style.Colors[ImGuiCol_TabHovered] = ImVec4(0.00f, 0.65f, 0.90f, 1.00f);     // DC Highlight Blue when hovered
+	style.Colors[ImGuiCol_TabActive] = ImVec4(0.00f, 0.43f, 0.73f, 1.00f);      // DC Logo Blue when active
+	style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);   // Dark gray when unfocused
+	style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.00f, 0.43f, 0.73f, 1.00f); // DC Logo Blue when unfocused but active (fully opaque)
 
 	// Other UI elements
-	style.Colors[ImGuiCol_Separator] = ImVec4(1.00f, 1.00f, 1.00f, 0.40f);
-	style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(1.00f, 0.50f, 0.00f, 0.35f);
+	style.Colors[ImGuiCol_Separator] = ImVec4(1.00f, 1.00f, 1.00f, 0.40f);      // Semi-transparent white separators (transparency ok)
+	style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(1.00f, 0.50f, 0.00f, 0.35f); // Semi-transparent DC Swirl Orange selection (transparency ok)
 
 	// Increase contrast even more
-	style.Alpha = 1.0f;
-	style.FrameBorderSize = 1.0f;
-	style.WindowBorderSize = 1.0f;
-	style.PopupBorderSize = 1.0f;
-	style.TabBorderSize = 1.0f;
+	style.Alpha = 1.0f;                // No transparency
+	style.FrameBorderSize = 1.0f;      // Add borders to frames
+	style.WindowBorderSize = 1.0f;     // Add borders to windows
+	style.PopupBorderSize = 1.0f;      // Add borders to popups
+	style.TabBorderSize = 1.0f;        // Add borders to tabs
 }
 
 static void applyNintendoTheme()
@@ -325,78 +726,78 @@ static void applyNintendoTheme()
 	ImGuiStyle& style = ImGui::GetStyle();
 
 	// Nintendo color palette
-	ImVec4 nintendoRed = ImVec4(0.90f, 0.10f, 0.10f, 1.00f);
-	ImVec4 nintendoRedLight = ImVec4(1.00f, 0.30f, 0.30f, 1.00f);
-	ImVec4 nintendoRedDark = ImVec4(0.65f, 0.05f, 0.05f, 1.00f);
+	ImVec4 nintendoRed = ImVec4(0.90f, 0.10f, 0.10f, 1.00f);            // Nintendo logo/Switch red
+	ImVec4 nintendoRedLight = ImVec4(1.00f, 0.30f, 0.30f, 1.00f);       // Lighter red
+	ImVec4 nintendoRedDark = ImVec4(0.65f, 0.05f, 0.05f, 1.00f);        // Darker red
 
-	ImVec4 luigiGreen = ImVec4(0.00f, 0.65f, 0.00f, 1.00f);
-	ImVec4 luigiGreenLight = ImVec4(0.30f, 0.85f, 0.30f, 1.00f);
+	ImVec4 luigiGreen = ImVec4(0.00f, 0.65f, 0.00f, 1.00f);             // Luigi green
+	ImVec4 luigiGreenLight = ImVec4(0.30f, 0.85f, 0.30f, 1.00f);        // Lighter green
 
-	ImVec4 gameboy = ImVec4(0.70f, 0.80f, 0.15f, 1.00f);
-	ImVec4 gamecubePurple = ImVec4(0.35f, 0.20f, 0.65f, 1.00f);
+	ImVec4 gameboy = ImVec4(0.70f, 0.80f, 0.15f, 1.00f);                // GameBoy screen color
+	ImVec4 gamecubePurple = ImVec4(0.35f, 0.20f, 0.65f, 1.00f);         // GameCube purple
 
 	// Text colors
-	style.Colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-	style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.70f, 0.70f, 0.65f);
+	style.Colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);           // Pure white text
+	style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.70f, 0.70f, 0.65f);   // Light gray for disabled (keep transparency)
 
 	// Window background and elements - darker blue-black like classic consoles
-	style.Colors[ImGuiCol_WindowBg] = ImVec4(0.03f, 0.03f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_ChildBg] = ImVec4(0.03f, 0.03f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_PopupBg] = ImVec4(0.02f, 0.02f, 0.08f, 1.00f);
+	style.Colors[ImGuiCol_WindowBg] = ImVec4(0.03f, 0.03f, 0.10f, 1.00f);       // Dark blue-black background (fully opaque)
+	style.Colors[ImGuiCol_ChildBg] = ImVec4(0.03f, 0.03f, 0.10f, 1.00f);        // Match window background (fully opaque)
+	style.Colors[ImGuiCol_PopupBg] = ImVec4(0.02f, 0.02f, 0.08f, 1.00f);        // Slightly darker for popup (fully opaque)
 
 	// Frame elements - using GameCube purple for frames
-	style.Colors[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.08f, 0.20f, 1.00f);
-	style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.20f, 0.14f, 0.35f, 1.00f);
-	style.Colors[ImGuiCol_FrameBgActive] = gamecubePurple;
+	style.Colors[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.08f, 0.20f, 1.00f);        // Dark purple-ish background (fully opaque)
+	style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.20f, 0.14f, 0.35f, 1.00f); // Lighter purple when hovered (fully opaque)
+	style.Colors[ImGuiCol_FrameBgActive] = gamecubePurple;                      // GameCube purple when active
 
 	// Title elements - using Nintendo red
-	style.Colors[ImGuiCol_TitleBg] = ImVec4(0.05f, 0.05f, 0.12f, 1.00f);
-	style.Colors[ImGuiCol_TitleBgActive] = nintendoRed;
-	style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.05f, 0.05f, 0.12f, 0.75f);
-	style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.08f, 0.08f, 0.15f, 1.00f);
+	style.Colors[ImGuiCol_TitleBg] = ImVec4(0.05f, 0.05f, 0.12f, 1.00f);        // Dark blue background (fully opaque)
+	style.Colors[ImGuiCol_TitleBgActive] = nintendoRed;                         // Nintendo red for active title
+	style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.05f, 0.05f, 0.12f, 0.75f); // Keep semi-transparent when collapsed
+	style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.08f, 0.08f, 0.15f, 1.00f);      // Dark menu bar (fully opaque)
 
 	// Scrollbars - GameBoy inspired
-	style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.04f, 0.04f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.30f, 0.40f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.50f, 0.60f, 0.15f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrabActive] = gameboy;
+	style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.04f, 0.04f, 0.10f, 1.00f);    // Dark scrollbar background (fully opaque)
+	style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.30f, 0.40f, 0.10f, 1.00f);  // GameBoy green-yellow (fully opaque)
+	style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.50f, 0.60f, 0.15f, 1.00f); // Brighter GameBoy color (fully opaque)
+	style.Colors[ImGuiCol_ScrollbarGrabActive] = gameboy;                       // Full GameBoy color when active
 
 	// Button elements - Nintendo red
-	style.Colors[ImGuiCol_Button] = nintendoRed;
-	style.Colors[ImGuiCol_ButtonHovered] = nintendoRedLight;
-	style.Colors[ImGuiCol_ButtonActive] = nintendoRedDark;
+	style.Colors[ImGuiCol_Button] = nintendoRed;                                // Nintendo red button
+	style.Colors[ImGuiCol_ButtonHovered] = nintendoRedLight;                    // Lighter red when hovered
+	style.Colors[ImGuiCol_ButtonActive] = nintendoRedDark;                      // Darker red when active
 
 	// Interactive elements - Luigi green for checkmarks and sliders
-	style.Colors[ImGuiCol_CheckMark] = luigiGreenLight;
-	style.Colors[ImGuiCol_SliderGrab] = luigiGreen;
-	style.Colors[ImGuiCol_SliderGrabActive] = luigiGreenLight;
+	style.Colors[ImGuiCol_CheckMark] = luigiGreenLight;                         // Bright Luigi green for checkmarks
+	style.Colors[ImGuiCol_SliderGrab] = luigiGreen;                             // Luigi green for sliders
+	style.Colors[ImGuiCol_SliderGrabActive] = luigiGreenLight;                  // Lighter when active
 
 	// Headers (collapsing headers, tree nodes) - GameCube purple
-	style.Colors[ImGuiCol_Header] = ImVec4(0.20f, 0.12f, 0.35f, 1.00f);
-	style.Colors[ImGuiCol_HeaderHovered] = gamecubePurple;
-	style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.45f, 0.25f, 0.75f, 1.00f);
+	style.Colors[ImGuiCol_Header] = ImVec4(0.20f, 0.12f, 0.35f, 1.00f);         // GameCube purple (fully opaque)
+	style.Colors[ImGuiCol_HeaderHovered] = gamecubePurple;                      // Full purple when hovered
+	style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.45f, 0.25f, 0.75f, 1.00f);   // Brighter purple when active
 
 	// Tab elements - Red/green for Mario/Luigi contrast
-	style.Colors[ImGuiCol_Tab] = ImVec4(0.15f, 0.10f, 0.30f, 1.00f);
-	style.Colors[ImGuiCol_TabHovered] = luigiGreenLight;
-	style.Colors[ImGuiCol_TabActive] = nintendoRed;
-	style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.10f, 0.08f, 0.20f, 1.00f);
-	style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.40f, 0.10f, 0.10f, 1.00f);
+	style.Colors[ImGuiCol_Tab] = ImVec4(0.15f, 0.10f, 0.30f, 1.00f);            // Dark purple tabs (fully opaque)
+	style.Colors[ImGuiCol_TabHovered] = luigiGreenLight;                        // Luigi green when hovered
+	style.Colors[ImGuiCol_TabActive] = nintendoRed;                             // Mario red when active
+	style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.10f, 0.08f, 0.20f, 1.00f);   // Darker when unfocused (fully opaque)
+	style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.40f, 0.10f, 0.10f, 1.00f); // Darker red when unfocused but active (fully opaque)
 
 	// Border and separator
-	style.Colors[ImGuiCol_Border] = ImVec4(0.40f, 0.40f, 0.50f, 0.50f);
-	style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-	style.Colors[ImGuiCol_Separator] = nintendoRed;
+	style.Colors[ImGuiCol_Border] = ImVec4(0.40f, 0.40f, 0.50f, 0.50f);         // Keep subtle border transparency
+	style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);   // No shadows
+	style.Colors[ImGuiCol_Separator] = nintendoRed;                             // Nintendo red separators
 
 	// Table elements
-	style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(0.15f, 0.10f, 0.25f, 1.00f);
-	style.Colors[ImGuiCol_TableBorderStrong] = nintendoRed;
-	style.Colors[ImGuiCol_TableBorderLight] = ImVec4(0.40f, 0.10f, 0.10f, 0.70f);
-	style.Colors[ImGuiCol_TableRowBg] = ImVec4(0.03f, 0.03f, 0.10f, 1.00f);
-	style.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.06f, 0.06f, 0.14f, 1.00f);
+	style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(0.15f, 0.10f, 0.25f, 1.00f);      // Dark purple headers (fully opaque)
+	style.Colors[ImGuiCol_TableBorderStrong] = nintendoRed;                         // Nintendo red strong borders
+	style.Colors[ImGuiCol_TableBorderLight] = ImVec4(0.40f, 0.10f, 0.10f, 0.70f);   // Lighter red inner borders (keep transparency)
+	style.Colors[ImGuiCol_TableRowBg] = ImVec4(0.03f, 0.03f, 0.10f, 1.00f);         // Match window background (fully opaque)
+	style.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.06f, 0.06f, 0.14f, 1.00f);      // Slightly lighter for alt rows (fully opaque)
 
 	// Selected text - keep transparency for selection highlight
-	style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(luigiGreen.x, luigiGreen.y, luigiGreen.z, 0.35f);
+	style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(luigiGreen.x, luigiGreen.y, luigiGreen.z, 0.35f); // Semi-transparent Luigi green
 
 	// Reset to defaults for these
 	style.TabBorderSize = 0.0f;
@@ -410,63 +811,63 @@ static void applySoftTheme()
 
 	// Soft, blue/turquoise theme that's easy on the eyes
 	// Soft text colors
-	style.Colors[ImGuiCol_Text] = ImVec4(0.85f, 0.90f, 0.92f, 1.00f);
-	style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.55f, 0.60f, 0.65f, 0.70f);
+	style.Colors[ImGuiCol_Text] = ImVec4(0.85f, 0.90f, 0.92f, 1.00f);           // Soft blue-white text
+	style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.55f, 0.60f, 0.65f, 0.70f);   // Muted blue-gray for disabled text (some transparency)
 
 	// Soft dark backgrounds with turquoise tint
-	style.Colors[ImGuiCol_WindowBg] = ImVec4(0.15f, 0.18f, 0.20f, 1.00f);
-	style.Colors[ImGuiCol_ChildBg] = ImVec4(0.15f, 0.18f, 0.20f, 1.00f);
-	style.Colors[ImGuiCol_TitleBg] = ImVec4(0.10f, 0.25f, 0.30f, 1.00f);
-	style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.15f, 0.35f, 0.45f, 1.00f);
-	style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.10f, 0.25f, 0.30f, 0.75f);
-	style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.17f, 0.21f, 0.24f, 1.00f);
+	style.Colors[ImGuiCol_WindowBg] = ImVec4(0.15f, 0.18f, 0.20f, 1.00f);      // Soft dark background with blue tint (fully opaque)
+	style.Colors[ImGuiCol_ChildBg] = ImVec4(0.15f, 0.18f, 0.20f, 1.00f);       // Match window background (fully opaque)
+	style.Colors[ImGuiCol_TitleBg] = ImVec4(0.10f, 0.25f, 0.30f, 1.00f);       // Deep turquoise title bar (fully opaque)
+	style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.15f, 0.35f, 0.45f, 1.00f); // Brighter turquoise when active (fully opaque)
+	style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.10f, 0.25f, 0.30f, 0.75f); // Keep some transparency when collapsed
+	style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.17f, 0.21f, 0.24f, 1.00f);     // Slightly lighter than background (fully opaque)
 
 	// Soft scrollbars
-	style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.15f, 0.18f, 0.20f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.25f, 0.45f, 0.50f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.30f, 0.55f, 1.00f, 1.00f);
-	style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.35f, 0.65f, 1.00f, 1.00f);
+	style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.15f, 0.18f, 0.20f, 1.00f);   // Match window background (fully opaque)
+	style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.25f, 0.45f, 0.50f, 1.00f); // Soft turquoise (fully opaque)
+	style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.30f, 0.55f, 1.00f, 1.00f); // Brighter when hovered (fully opaque)
+	style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.35f, 0.65f, 1.00f, 1.00f);  // Even brighter when active (fully opaque)
 
 	// Soft, muted button colors
-	style.Colors[ImGuiCol_Button] = ImVec4(0.20f, 0.40f, 0.45f, 1.00f);
-	style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.25f, 0.50f, 0.55f, 1.00f);
-	style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.30f, 0.60f, 0.65f, 1.00f);
+	style.Colors[ImGuiCol_Button] = ImVec4(0.20f, 0.40f, 0.45f, 1.00f);        // Muted turquoise (fully opaque)
+	style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.25f, 0.50f, 0.55f, 1.00f); // Slightly brighter when hovered (fully opaque)
+	style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.30f, 0.60f, 0.65f, 1.00f);  // Even brighter when active (fully opaque)
 
-	style.Colors[ImGuiCol_PopupBg] = ImVec4(0.15f, 0.18f, 0.20f, 1.00f);
+	style.Colors[ImGuiCol_PopupBg] = ImVec4(0.15f, 0.18f, 0.20f, 1.00f);       // Match window background (fully opaque)
 
 	// Frames (checkboxes, input fields)
-	style.Colors[ImGuiCol_FrameBg] = ImVec4(0.20f, 0.28f, 0.33f, 1.00f);
-	style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.25f, 0.35f, 0.40f, 1.00f);
-	style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.30f, 0.45f, 0.50f, 1.00f);
+	style.Colors[ImGuiCol_FrameBg] = ImVec4(0.20f, 0.28f, 0.33f, 1.00f);       // Soft blue-gray frames (fully opaque)
+	style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.25f, 0.35f, 0.40f, 1.00f); // Slightly brighter when hovered (fully opaque)
+	style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.30f, 0.45f, 0.50f, 1.00f);  // Even brighter when active (fully opaque)
 
 	// Headers (collapsing headers, tree nodes)
-	style.Colors[ImGuiCol_Header] = ImVec4(0.20f, 0.35f, 0.45f, 1.00f);
-	style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.25f, 0.40f, 0.50f, 1.00f);
-	style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.30f, 0.50f, 0.60f, 1.00f);
+	style.Colors[ImGuiCol_Header] = ImVec4(0.20f, 0.35f, 0.45f, 1.00f);        // Soft blue headers (fully opaque)
+	style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.25f, 0.40f, 0.50f, 1.00f); // Slightly brighter when hovered (fully opaque)
+	style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.30f, 0.50f, 0.60f, 1.00f);  // Even brighter when active (fully opaque)
 
 	// Accent colors - light turquoise
-	style.Colors[ImGuiCol_CheckMark] = ImVec4(0.40f, 0.80f, 0.90f, 1.00f);
-	style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.35f, 0.65f, 0.75f, 1.00f);
-	style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.45f, 0.75f, 0.85f, 1.00f);
+	style.Colors[ImGuiCol_CheckMark] = ImVec4(0.40f, 0.80f, 0.90f, 1.00f);     // Light turquoise checkmarks (fully opaque)
+	style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.35f, 0.65f, 0.75f, 1.00f);    // Turquoise sliders (fully opaque)
+	style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.45f, 0.75f, 0.85f, 1.00f); // Brighter when active (fully opaque)
 
 	// Tabs - soft blue palette
-	style.Colors[ImGuiCol_Tab] = ImVec4(0.15f, 0.30f, 0.40f, 1.00f);
-	style.Colors[ImGuiCol_TabHovered] = ImVec4(0.25f, 0.40f, 0.50f, 1.00f);
-	style.Colors[ImGuiCol_TabActive] = ImVec4(0.30f, 0.50f, 0.60f, 1.00f);
-	style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.10f, 0.25f, 0.35f, 1.00f);
-	style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.20f, 0.35f, 0.45f, 1.00f);
+	style.Colors[ImGuiCol_Tab] = ImVec4(0.15f, 0.30f, 0.40f, 1.00f);           // Soft blue tabs (fully opaque)
+	style.Colors[ImGuiCol_TabHovered] = ImVec4(0.25f, 0.40f, 0.50f, 1.00f);    // Slightly brighter when hovered (fully opaque)
+	style.Colors[ImGuiCol_TabActive] = ImVec4(0.30f, 0.50f, 0.60f, 1.00f);     // Turquoise blue when active (fully opaque)
+	style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.10f, 0.25f, 0.35f, 1.00f);  // More muted when unfocused (fully opaque)
+	style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.20f, 0.35f, 0.45f, 1.00f); // In-between for unfocused active (fully opaque)
 
 	// Other elements
-	style.Colors[ImGuiCol_Border] = ImVec4(0.20f, 0.35f, 0.45f, 0.60f);
-	style.Colors[ImGuiCol_Separator] = ImVec4(0.20f, 0.35f, 0.45f, 0.75f);
-	style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.30f, 0.50f, 0.60f, 0.35f);
+	style.Colors[ImGuiCol_Border] = ImVec4(0.20f, 0.35f, 0.45f, 0.60f);         // Soft blue borders (some transparency ok)
+	style.Colors[ImGuiCol_Separator] = ImVec4(0.20f, 0.35f, 0.45f, 0.75f);      // Soft blue separators (some transparency ok)
+	style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.30f, 0.50f, 0.60f, 0.35f); // Soft blue selection (keep transparency)
 
 	// Table colors
-	style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(0.15f, 0.30f, 0.40f, 1.00f);
-	style.Colors[ImGuiCol_TableBorderStrong] = ImVec4(0.20f, 0.35f, 0.45f, 1.00f);
-	style.Colors[ImGuiCol_TableBorderLight] = ImVec4(0.20f, 0.35f, 0.45f, 0.70f);
-	style.Colors[ImGuiCol_TableRowBg] = ImVec4(0.15f, 0.18f, 0.20f, 1.00f);
-	style.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.17f, 0.21f, 0.24f, 1.00f);
+	style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(0.15f, 0.30f, 0.40f, 1.00f);  // Soft blue headers (fully opaque)
+	style.Colors[ImGuiCol_TableBorderStrong] = ImVec4(0.20f, 0.35f, 0.45f, 1.00f); // Soft blue borders (fully opaque)
+	style.Colors[ImGuiCol_TableBorderLight] = ImVec4(0.20f, 0.35f, 0.45f, 0.70f);  // Lighter borders (some transparency)
+	style.Colors[ImGuiCol_TableRowBg] = ImVec4(0.15f, 0.18f, 0.20f, 1.00f);     // Match window bg (fully opaque)
+	style.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.17f, 0.21f, 0.24f, 1.00f);  // Slightly lighter for alt rows (fully opaque)
 
 	// Reset to defaults for these
 	style.TabBorderSize = 0.0f;
@@ -485,9 +886,9 @@ void applyCurrentTheme()
 	else if (config::UITheme == 3)
 		applyHighContrastTheme();
 	else if (config::UITheme == 4)
-		applyNintendoTheme();
+		applyNintendoTheme();      // Fixed ordering - was High Contrast
 	else if (config::UITheme == 5)
-		applySoftTheme();
+		applySoftTheme();          // New "Aqua Chill" theme
 	else
 		applyDarkTheme();
 }

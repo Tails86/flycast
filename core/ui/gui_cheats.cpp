@@ -131,8 +131,7 @@ void gui_cheats()
 			return true;
 		}, true, "cht");
 
-	ImGui::BeginChild(ImGui::GetID("cheats"), ImVec2(0, 0),
-		ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_DragScrolling);
+	ImGui::BeginChild(ImGui::GetID("cheats"), ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_DragScrolling | ImGuiChildFlags_NavFlattened);
     {
 		if (cheatManager.cheatCount() == 0)
 			ImGui::Text("%s", T("(No cheat loaded)"));

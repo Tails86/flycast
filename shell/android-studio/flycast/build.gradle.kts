@@ -20,7 +20,7 @@ android {
     defaultConfig {
         applicationId = "com.hollycast.emulator"
         minSdk = 21
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 8
         versionName = gitVersionName()
         vectorDrawables.useSupportLibrary = true

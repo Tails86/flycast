@@ -1,6 +1,5 @@
 /*
-	Copyright 2024 flyinghead
-	Portions Copyright 2026 The Hollycast Authors
+	Copyright 2019 flyinghead
 
 	This file is part of Flycast.
 
@@ -32,53 +31,81 @@
 #include <algorithm>
 #include <chrono>
 #include <future>
-#include <functional>
+#include <initializer_list>
 #include <string>
 #include <mutex>
 
-using StringCallback = std::function<bool(bool cancelled, const std::string& selection)>;
+typedef bool (*StringCallback)(bool cancelled, std::string selection);
 
-void select_file_popup(const char *prompt, const StringCallback& callback,
+void select_file_popup(const char *prompt, StringCallback callback,
 		bool selectFile = false, const std::string& extension = "");
-
-enum class StoragePopupResult
-{
-	Supported,
-	Unsupported,
-	CallbackAlreadySet,
-};
-
-StoragePopupResult select_storage_popup(bool isDirectory, bool writeAccess, const std::string& description,
-		const StringCallback& callback, const std::string& mimeType = {});
 
 void scrollWhenDraggingOnVoid(ImGuiMouseButton mouse_button = ImGuiMouseButton_Left);
 
 // Helper to display a little (?) mark which shows a tooltip when hovered.
 void ShowHelpMarker(const char* desc);
+
+// Renders a checkbox with optional help text as a single row.
+bool CheckboxRow(const char* name, bool* value, const char* help = nullptr);
+
 template<bool PerGameOption>
 bool OptionCheckbox(const char *name, config::Option<bool, PerGameOption>& option, const char *help = nullptr);
+
+// Renders a slider with optional help text as a single row.
+bool SliderIntRow(const char* name, int* v, int v_min, int v_max, const char* format = "%d", const char* help = nullptr);
+
 template<bool PerGameOption>
 bool OptionSlider(const char *name, config::Option<int, PerGameOption>& option, int min, int max, const char *help = nullptr, const char *format = nullptr);
-template<typename T>
-bool OptionRadioButton(const char *name, config::Option<T>& option, T value, const char *help = nullptr);
+
+// Renders a combo box with optional help text as a single row.
+class ComboBoxRow
+{
+public:
+	static bool BeginCombo(const char* name, const char* value, const char* help = nullptr);
+	static void EndCombo();
+
+	static bool Selectable(const char* label, bool* selected, const ImVec2& size = ImVec2(0, 0));
+	static bool Selectable(const char* label, bool selected, const ImVec2& size = ImVec2(0, 0));
+};
+
+// Similar to ComboBoxRow except the combo items are arranged in 2-column table layout.
+// This is roughly a replacement for radio button groups where the individual items have help text
+class ComboBox2Col
+{
+public:
+	static const char* Preview(int selected, std::initializer_list<const char*> values);
+	static bool BeginCombo(const char* name, const char* value, const char* help = nullptr);
+	static void EndCombo();
+
+	template<typename T>
+	static bool Selectable(const char* label, T* v, T v_button, const char* help = nullptr);
+
+	template<typename T, bool PerGameOption>
+	static bool Selectable(const char *label, config::Option<T, PerGameOption>& option, T value, const char *help = nullptr);
+};
+
 template<bool PerGameOption>
 void OptionComboBox(const char *name, config::Option<int, PerGameOption>& option, const char *values[], int count,
 			const char *help = nullptr);
 bool OptionArrowButtons(const char *name, config::Option<int>& option, int min, int max, const char *help = nullptr, const char *format = "%d");
-
-// Helper to render a clickable settings row with label and current value
-// Returns true if the row was clicked
-bool SettingsRow(const char* label, const char* currentValue, const char* helpText = nullptr);
-
-// Helper to render a centered selection popup for options
-// Returns the index of selected option, or -1 if cancelled/none selected
-int SelectionPopup(const char* popupId, const char* title, const char* options[], int optionCount, int currentSelection);
 
 static inline void centerNextWindow()
 {
 	ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x / 2.f, ImGui::GetIO().DisplaySize.y / 2.f),
 			ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 }
+
+class FolderList
+{
+public:
+	static void HeaderAddRefresh(const char* name, const char* help, bool& outAdd, bool& outRefresh);
+	static void HeaderAdd(const char* name, const char* help, bool enableAdd, bool& outAdd);
+	static void HeaderImportExport(const char* name, const char* help, bool useSafFilePicker, bool& outImport, bool& outExport);
+	static void Header(const char* name, const char* help);
+	static void Entry(const char* path);
+	static void Entry(const char* path, bool& outDelete);
+	static void End();
+};
 
 void fullScreenWindow(bool modal);
 void windowDragScroll();
@@ -134,6 +161,11 @@ static inline float uiScaled(float f) {
 	return f * settings.display.uiScale;
 }
 
+static inline float uiNormalFontSize()
+{
+	return uiScaled(17.0f);
+}
+
 static inline float uiLargeFontSize()
 {
 	return uiScaled(22.f);
@@ -186,6 +218,9 @@ public:
 	ImguiID(const char *id) {
 		ImGui::PushID(id);
 	}
+	ImguiID(int id) {
+		ImGui::PushID(id);
+	}
 	~ImguiID() {
 		ImGui::PopID();
 	}
@@ -228,7 +263,7 @@ public:
 	void draw(ImDrawList *drawList, const ImVec2& pos, const ImVec2& size,
 			const ImVec2& uv0 = ImVec2(0, 0), const ImVec2& uv1 = ImVec2(1, 1), const ImVec4& color = ImVec4(1, 1, 1, 1));
 	bool button(const char* str_id, const ImVec2& image_size, const std::string& title = {}, const ImVec4& bg_col = ImVec4(0, 0, 0, 0),
-			const ImVec4& tint_col = ImVec4(1, 1, 1, 1), float fallbackTitleSize = 0.0f);
+			const ImVec4& tint_col = ImVec4(1, 1, 1, 1));
 
 	operator ImTextureID() {
 		return getId();
@@ -267,7 +302,6 @@ private:
 class ImguiStateTexture : public ImguiTexture
 {
 public:
-	ImguiStateTexture(int slot = config::SavestateSlot) : slot(slot) {}
 	ImTextureID getId() override;
 
 	bool exists();
@@ -280,7 +314,6 @@ private:
 		int width;
 		int height;
 	};
-	int slot;
 	static std::future<LoadedPic> asyncLoad;
 };
 
@@ -351,7 +384,7 @@ private:
 	std::mutex mutex;
 };
 
-std::string middleEllipsis(const std::string& s, float width);
+std::string middleEllipsis(std::string s, float width);
 
 bool beginFrame(const char *label, const ImVec2& size_arg = ImVec2(0, 0), ImVec2 *out_size = nullptr);
 void endFrame();
@@ -359,164 +392,7 @@ void endFrame();
 bool InputText(const char *label, std::string *str, ImGuiInputTextFlags flags = 0, ImGuiInputTextCallback callback = nullptr, void* user_data = nullptr);
 bool InputText(const char *label, char *str, size_t size, ImGuiInputTextFlags flags = 0, ImGuiInputTextCallback callback = nullptr, void* user_data = nullptr);
 bool InputTextMultiline(const char* label, char* buf, size_t buf_size, const ImVec2& size, ImGuiInputTextFlags flags = 0, ImGuiInputTextCallback callback = nullptr, void* user_data = nullptr);
-
-// Phase 0 Widget Infrastructure Components
-
-// SectionDivider - Visual separator with optional text label
-void SectionDivider(const char* text = nullptr);
-
-// SectionHeaderWithIcon - Display icon and text header with highlighted color and separator
-void SectionHeaderWithIcon(const char* icon, const char* text);
-
-// SettingIcon - Display settings icon with proper scaling
-void SettingIcon(const char* icon, const ImVec2& size = ImVec2(0, 0));
-
-// SettingsRowParams - Parameters for BeginSettingsRow
-struct SettingsRowParams {
-	const char* label;
-	const char* description;
-	const char* icon;
-	const char* helpText;
-	float minHeight;
+struct TextFilter : public ImGuiTextFilter
+{
+	bool Draw(const char* label = "Filter (inc,-exc)", float width = 0.0f);
 };
-
-// BeginSettingsRow/EndSettingsRow - Settings row container with icon, label, control layout
-void BeginSettingsRow(const SettingsRowParams& params);
-void EndSettingsRow();
-
-// ToggleSwitch - iOS-style toggle switch with animation support
-bool ToggleSwitch(const char* label, bool* value, const char* helpText = nullptr);
-
-// SettingsOption - Complete settings row with toggle for boolean options
-template<bool PerGameOption>
-bool SettingsOption(const char* label, config::Option<bool, PerGameOption>& option,
-                   const char* description = nullptr, const char* icon = nullptr,
-                   const char* helpText = nullptr);
-
-// Unified Popup Widget API for Settings UI
-namespace SettingsUI {
-
-// Popup widget types
-enum class PopupType : int {
-    Options,    // Multi-option selection (Language, Region, etc.)
-    Slider      // Percentage/value slider (UI Scaling)
-};
-
-// Configuration for option-based popups
-struct PopupOptionsConfig {
-    // Text labels
-    const char* label = nullptr;
-    const char* icon = nullptr;
-    const char* tooltip = nullptr;
-    const char* popupID = nullptr;
-    const char* title = nullptr;
-    const char* description = nullptr;
-
-    // Option data
-    const char* const* options = nullptr;
-    int optionCount = 0;
-    int* currentValue = nullptr;
-
-    // Optional: Custom value-to-string conversion
-    std::function<const char*(int)> valueToString = nullptr;
-
-    // Optional: Custom index-to-storage mapping
-    std::function<int(int)> storageIndexMap = nullptr;
-
-    // Optional: Callback when value changes
-    std::function<bool(int)> onChange = nullptr;
-    // Optional: Called when an option is hovered/focused/selected in the popup.
-    // Params: storage index, option label text.
-    std::function<void(int, const char*)> onOptionHighlight = nullptr;
-
-    // Optional: Disabled state
-    bool disabled = false;
-    const char* disabledPrefix = nullptr;
-    bool valueClickable = true;
-    bool showHeaderDivider = true;
-
-    // Spacing/sizing (defaults)
-    float iconSize = 20.0f;
-    float iconSpacing = 8.0f;
-    float valueWidth = 150.0f;
-    float valueRightPadding = 28.0f;
-    // Vertical offset for the right-side value text (in current ImGui units).
-    // Used to align value text with the description line when needed.
-    float valueVerticalOffset = 0.0f;
-};
-
-// Configuration for slider-based popups
-struct PopupSliderConfig {
-    // Text labels
-    const char* label = nullptr;
-    const char* icon = nullptr;
-    const char* tooltip = nullptr;
-    const char* popupID = nullptr;
-    const char* description = nullptr;
-
-    // Slider range
-    int* currentValue = nullptr;
-    int minValue = 0;
-    int maxValue = 100;
-    int defaultValue = 100;  // Default value for display
-    const char* format = "%d%%";
-    std::function<std::string(int)> valueFormatter = nullptr;
-
-    // Optional: Custom apply button
-    const char* applyButtonText = "Apply";
-    std::function<void()> onApply = nullptr;
-
-    // Optional: Callback for value change
-    std::function<void()> onValueChange = nullptr;
-
-    // Spacing/sizing values are base UI units. RenderSliderPopup() applies uiScaled()
-    // when these fields are consumed, so call sites should not pre-scale them.
-    float iconSize = 20.0f;
-    float iconSpacing = 8.0f;
-    float valueWidth = 100.0f;
-    float sliderWidth = 300.0f;
-    float buttonWidth = 100.0f;
-    // Vertical offset for the right-side current value text (in current ImGui units).
-    float valueVerticalOffset = 0.0f;
-
-    // Internal state management for apply button
-    bool* showApplyFlag = nullptr;  // External flag to control apply button visibility
-    bool hasPendingChanges = false; // Internal flag tracking if value changed
-    bool preferTextEntry = false;   // Open popup in text-entry mode (mouse flow)
-};
-
-// Unified configuration struct
-struct PopupConfig {
-    PopupType type;
-    PopupOptionsConfig options;
-    PopupSliderConfig slider;
-};
-
-// Main entry point function
-bool SettingPopup(PopupConfig& config);
-
-// Convenience overloads
-bool SettingPopup(
-    const char* label,
-    const char* icon,
-    const char* popupID,
-    const char* const* options,
-    int optionCount,
-    int* currentValue,
-    bool disabled = false,
-    const char* disabledPrefix = nullptr
-);
-
-bool SettingPopup(
-    const char* label,
-    const char* icon,
-    const char* popupID,
-    const char* description,
-    int* currentValue,
-    int minValue,
-    int maxValue,
-    const char* format = "%d%%",
-    std::function<void()> onApply = nullptr
-);
-
-} // namespace SettingsUI

@@ -83,6 +83,7 @@ Disc* cue_parse(const char* file, std::vector<u8> *digest)
 	u32 currentFAD = 150;
 	// SESSION context
 	u32 session_number = 0;
+	bool firstTrackOfSession = false;
 	// FILE context
 	std::string track_filename;
 	u32 fileStartFAD = 0;
@@ -91,6 +92,7 @@ Disc* cue_parse(const char* file, std::vector<u8> *digest)
 	std::string track_type;
 	u32 track_secsize = 0;
 	std::string track_isrc;
+	u32 pregap = 0;
 
 	std::string line;
 	while (std::getline(istream, line))
@@ -113,9 +115,11 @@ Disc* cue_parse(const char* file, std::vector<u8> *digest)
 				else if (cur_session != session_number)
 				{
 					session_number = cur_session;
-					if (session_number == 2)
+					if (session_number == 2) {
 						// session 1 lead-out: 01:30:00, session 2 lead-in: 01:00:00, pregap: 00:02:00
-						currentFAD += 11400;
+						currentFAD += 6750 + 4500 + 150;
+						firstTrackOfSession = true;
+					}
 
 					Session ses;
 					ses.FirstTrack = (u8)disc->tracks.size() + 1;
@@ -154,14 +158,16 @@ Disc* cue_parse(const char* file, std::vector<u8> *digest)
 			track_filename.clear();
 			char last;
 			do {
-				cuesheet >> last;
-			} while (isspace(last));
+				if (!(cuesheet >> last))
+					throw FlycastException(i18n::T("Invalid CUE file"));
+			} while (isspace((unsigned char)last));
 
 			if (last == '"')
 			{
 				cuesheet >> std::noskipws;
 				for (;;) {
-					cuesheet >> last;
+					if (!(cuesheet >> last))
+						throw FlycastException(i18n::T("Invalid CUE file"));
 					if (last == '"')
 						break;
 					track_filename += last;
@@ -192,6 +198,15 @@ Disc* cue_parse(const char* file, std::vector<u8> *digest)
 			track_type.clear();
 			track_isrc.clear();
 			track_secsize = 0;
+		}
+		else if (token == "PREGAP")
+		{
+			cuesheet >> token;
+			int min = 0, sec = 0, frame = 0;
+			if (sscanf(token.c_str(), "%d:%d:%d", &min, &sec, &frame) == 3)
+				pregap = frame + 75 * (sec + 60 * min);
+			else
+				throw FlycastException(i18n::T("Invalid PREGAP in CUE file"));
 		}
 		else if (token == "TRACK")
 		{
@@ -227,11 +242,27 @@ Disc* cue_parse(const char* file, std::vector<u8> *digest)
 				int min = 0, sec = 0, frame = 0;
 				if (sscanf(token.c_str(), "%d:%d:%d", &min, &sec, &frame) == 3)
 					indexFAD = frame + 75 * (sec + 60 * min);
+				if (firstTrackOfSession && indexFAD > 0) {
+					// The session gap above already includes this track's pregap so don't
+					// count the sectors stored before INDEX 01 twice.
+					const u32 pregap = std::min(indexFAD, 150);
+					fileStartFAD -= pregap;
+					currentFAD -= pregap;
+				}
+				firstTrackOfSession = false;
 				Track t;
 				t.StartFAD = fileStartFAD + indexFAD;
 				t.CTRL = (track_type == "AUDIO" || track_type == "CDG") ? 0 : 4;
 				t.EndFAD = currentFAD - 1;
 				t.isrc = track_isrc;
+
+				if (pregap > 0) 
+				{
+					t.StartFAD += pregap;
+					t.EndFAD += pregap;
+					pregap = 0; // reset pregap after track is added
+				}
+
 				DEBUG_LOG(GDROM, "file[%zd] \"%s\": session %d type %s FAD:%d -> %d %s", disc->tracks.size() + 1, track_filename.c_str(),
 						session_number, track_type.c_str(), t.StartFAD, t.EndFAD, t.isrc.empty() ? "" : ("ISRC " + t.isrc).c_str());
 				hostfs::File *track_file = hostfs::storage().openFile(track_filename, "rb");

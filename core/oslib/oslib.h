@@ -22,6 +22,14 @@ void os_RunInstance(int argc, const char *argv[]);
 void os_SetThreadName(const char *name);
 void os_notify(const char *msg, int durationMs = 2000, const char *details = nullptr);
 
+#if defined(USE_SDL)
+constexpr bool os_OpenFolderSupported = true;
+#else
+constexpr bool os_OpenFolderSupported = false;
+#endif
+
+int os_OpenFolder(const char* path);
+
 #ifdef DREAMPOTATO_INTEGRATED_MODE
 //! Get the containing directory of the current '.app'/'AppImage' bundle, if applicable, or of the current executable
 std::string os_GetAppContainingDir();
@@ -81,7 +89,6 @@ u32 static inline bitscanrev(u32 v)
 
 namespace hostfs
 {
-	bool isConfiguredVmuFileNameValid(const std::string& name);
 	std::string getVmuPath(const std::string& port, bool save);
 #ifdef DREAMPOTATO_INTEGRATED_MODE
 	std::string getDreamPotatoPath();

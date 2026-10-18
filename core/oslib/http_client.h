@@ -1,6 +1,5 @@
 /*
 	Copyright 2022 flyinghead
-	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -27,6 +26,7 @@
 #include <iomanip>
 #include <sstream>
 #include <locale>
+#include <string_view>
 
 namespace http {
 
@@ -60,7 +60,7 @@ static inline bool success(int status) {
 	return status >= 200 && status < 300;
 }
 
-static inline std::string urlEncode(const std::string& value)
+static inline std::string urlEncode(const std::string& value, std::string_view additionalSafeCharacters = {})
 {
 	std::ostringstream escaped;
 	escaped.imbue(std::locale::classic());
@@ -69,7 +69,9 @@ static inline std::string urlEncode(const std::string& value)
 
 	for (char c : value)
 	{
-		if (std::isalnum(static_cast<u8>(c)) || c == '-' || c == '_' || c == '.' || c == '~') {
+		if (std::isalnum(static_cast<u8>(c)) || c == '-' || c == '_' || c == '.' || c == '~'
+			|| additionalSafeCharacters.find(c) != std::string_view::npos)
+		{
 			// Keep alphanumeric and other accepted characters intact
 			// https://www.rfc-editor.org/rfc/rfc3986#section-2.3
 			escaped << c;
@@ -86,13 +88,14 @@ static inline std::string urlEncode(const std::string& value)
 	return escaped.str();
 }
 
+static inline std::string urlEncodePath(const std::string& value)
+{
+	return urlEncode(value, "/:");
+}
+
 static inline std::string getUserAgent() {
 	std::string uaVersion(GIT_VERSION);
-	if (!uaVersion.empty() && (uaVersion[0] == 'v' || uaVersion[0] == 'V'))
-		uaVersion.erase(0, 1);
-	if (uaVersion.empty() || !std::isdigit(static_cast<u8>(uaVersion[0])) || uaVersion.find('.') == std::string::npos)
-		uaVersion = "2.6-dev-" + std::string(GIT_HASH);
-	return "Flycast/" + uaVersion;
+	return "Flycast/" + uaVersion.substr(1); // skip 'v'
 }
 
 static inline std::string urlDecode(const std::string& encoded)

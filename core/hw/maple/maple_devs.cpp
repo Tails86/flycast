@@ -857,7 +857,6 @@ void maple_microphone::deserialize(Deserializer& deser)
 	deser >> gain;
 	deser >> sampling;
 	deser >> eight_khz;
-	deser.skip(480 - sizeof(u32) - sizeof(bool) * 2, Deserializer::V23);
 	if (sampling)
 		StartAudioRecording(eight_khz);
 }

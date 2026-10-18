@@ -1,6 +1,5 @@
 /*
 	Copyright 2021 flyinghead
-	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -142,7 +141,6 @@ CONFIG_ACCESSORS(Broadcast);
 CONFIG_ACCESSORS(Language);
 CONFIG_ACCESSORS(AutoLoadState);
 CONFIG_ACCESSORS(AutoSaveState);
-CONFIG_ACCESSORS(SaveProtection);
 CONFIG_ACCESSORS(SavestateSlot);
 // TODO Option<std::vector<std::string>, false> ContentPath;
 CONFIG_ACCESSORS(HideLegacyNaomiRoms)
@@ -430,6 +428,26 @@ static void luaRegister(lua_State *L)
 	  		.beginNamespace("emulator")
 				.addFunction("startGame", gui_start_game)	// FIXME threading!
 				.addFunction("stopGame", std::function<void()>([]() { gui_stop_game(""); }))
+				.addFunction("openGdrom", std::function<void()>([]() {
+					bool restart = false;
+					if (gui_state == GuiState::Closed) {
+						gui_open_settings();
+						restart = true;
+					}
+					emu.openGdrom();
+					if (restart)
+						gui_open_settings();
+				}))
+				.addFunction("insertGdrom", std::function<void(const std::string&)>([](const std::string& path) {
+					bool restart = false;
+					if (gui_state == GuiState::Closed) {
+						gui_open_settings();
+						restart = true;
+					}
+					emu.insertGdrom(path);
+					if (restart)
+						gui_open_settings();
+				}))
 				.addFunction("pause", std::function<void()>([]() {
 					if (gui_state == GuiState::Closed)
 						gui_open_settings();
@@ -471,7 +489,6 @@ static void luaRegister(lua_State *L)
 					CONFIG_PROPERTY(Language, int)
 					CONFIG_PROPERTY(AutoLoadState, bool)
 					CONFIG_PROPERTY(AutoSaveState, bool)
-					CONFIG_PROPERTY(SaveProtection, bool)
 					CONFIG_PROPERTY(SavestateSlot, int)
 					CONFIG_PROPERTY(HideLegacyNaomiRoms, bool)
 				.endNamespace()

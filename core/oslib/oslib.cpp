@@ -23,6 +23,7 @@
 #include "cfg/option.h"
 #include "nowide/fstream.hpp"
 #include "storage.h"
+#include "oslib/http_client.h"
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -45,31 +46,10 @@
 #include "input/dreamlink/dreampotato.h"
 #include "i18n.h"
 
+#include <filesystem>
+
 namespace hostfs
 {
-
-static bool getVmuSlotIndex(const std::string& port, int& bus, int& slot)
-{
-	if (port.size() != 2 || port[0] < 'A' || port[0] > 'D' || port[1] < '1' || port[1] > '2')
-		return false;
-	bus = port[0] - 'A';
-	slot = port[1] - '1';
-	return true;
-}
-
-bool isConfiguredVmuFileNameValid(const std::string& name)
-{
-	if (name.empty() || name.find_first_of("/\\:*?|<>\"") != std::string::npos)
-		return false;
-
-	std::string lower = name;
-	string_tolower(lower);
-	if (lower == "dc_nvmem.bin" || lower == "dc_flash.bin" || lower.size() < 4)
-		return false;
-
-	return lower.compare(lower.size() - 4, 4, ".bin") == 0
-		|| lower.compare(lower.size() - 4, 4, ".vmu") == 0;
-}
 
 std::string getVmuPath(const std::string& port, bool save)
 {
@@ -89,20 +69,6 @@ std::string getVmuPath(const std::string& port, bool save)
 		else if (!settings.content.path.empty())
 		{
 			return get_game_save_prefix() + "_vmu_save_A1.bin";
-		}
-	}
-
-	if (vmuName.empty())
-	{
-		int bus;
-		int slot;
-		if (getVmuSlotIndex(port, bus, slot))
-		{
-			// Manual VMU slot selections persist in config. Per-game A1 above is intentionally
-			// resolved first so a game-owned VMU can still override the shared A1 card.
-			const std::string selectedName = config::MapleVmuSlotFileNames[bus][slot].get();
-			if (isConfiguredVmuFileNameValid(selectedName))
-				vmuName = selectedName;
 		}
 	}
 
@@ -567,6 +533,26 @@ void os_UpdateInputState()
 	input_sdl_handle();
 #elif defined(USE_EVDEV)
 	input_evdev_handle();
+#endif
+}
+
+int os_OpenFolder(const char* path)
+{
+#if !defined(USE_SDL)
+	return -1;
+#else
+	std::filesystem::path absolutePath = std::filesystem::absolute(path).lexically_normal();
+	std::string encodedPath = http::urlEncodePath(absolutePath.generic_string());
+	// A file url generally has the form 'file://<host>/<path>'.
+	// Since our file is on localhost, we can leave '<host>' blank.
+	// The absolute path on Windows does not start with '/', so an extra '/' is required in its prefix.
+	// We are also deliberately not handling Windows UNC paths here. The UI doesn't allow selecting them and it doesn't look like SDL_OpenURL works with them.
+#ifdef _WIN32
+ 	std::string fileUri = "file:///" + encodedPath;
+#else
+ 	std::string fileUri = "file://" + encodedPath;
+#endif
+	return SDL_OpenURL(fileUri.c_str());
 #endif
 }
 

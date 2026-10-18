@@ -19,7 +19,6 @@
 #include "wsi/context.h"
 #include "ui/gui.h"
 #include "emulator.h"
-#include "ui/gui.h"
 #include "stdclass.h"
 #include "imgui.h"
 #include "hw/naomi/card_reader.h"
@@ -35,6 +34,7 @@
 #include "switch_gamepad.h"
 #endif
 #include "dreamlink/dreamlink_sdl_gamepad.h"
+#include "oslib/resources.h"
 #include "oslib/i18n.h"
 #include <unordered_map>
 #include <algorithm>
@@ -46,6 +46,8 @@
 static SDL_Window* window = NULL;
 static u32 windowFlags;
 
+// Used only when no saved desktop window size exists.
+// These should match DEFAULT_WINDOW_WIDTH and DEFAULT_WINDOW_HEIGHT in core/linux-dist/x11.cpp
 #define WINDOW_WIDTH  640
 #define WINDOW_HEIGHT  480
 
@@ -65,53 +67,6 @@ static bool handleBarcodeScanner(const SDL_Event& event);
 void sdl_stopHaptic(int port);
 static void pauseHaptic();
 static void resumeHaptic();
-
-static bool isWindowFullscreen()
-{
-	if (window == nullptr)
-		return window_fullscreen;
-
-	const u32 flags = SDL_GetWindowFlags(window);
-	if ((flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != 0)
-		return true;
-
-#ifdef __APPLE__
-	// macOS uses the native system menu instead of Hollycast's ImGui menu bar,
-	// but fullscreen state still drives cursor auto-hide. SDL can miss the
-	// fullscreen flag for a display-sized macOS window, so keep a narrow bounds
-	// fallback here for cursor/state behavior without affecting normal windows.
-	int displayIndex = SDL_GetWindowDisplayIndex(window);
-	SDL_Rect displayBounds;
-	if (displayIndex >= 0 && SDL_GetDisplayBounds(displayIndex, &displayBounds) == 0)
-	{
-		SDL_Rect windowBounds;
-		SDL_GetWindowPosition(window, &windowBounds.x, &windowBounds.y);
-		SDL_GetWindowSize(window, &windowBounds.w, &windowBounds.h);
-		const int tolerance = 2;
-		return std::abs(windowBounds.x - displayBounds.x) <= tolerance
-				&& std::abs(windowBounds.y - displayBounds.y) <= tolerance
-				&& std::abs(windowBounds.w - displayBounds.w) <= tolerance
-				&& std::abs(windowBounds.h - displayBounds.h) <= tolerance;
-	}
-#endif
-
-	return false;
-}
-
-static void updateFullscreenCursorVisibility(int mouseY)
-{
-	if (!isWindowFullscreen() || !gameRunning || mouseCaptured)
-		return;
-
-	const ImGuiContext* context = ImGui::GetCurrentContext();
-	const float revealHeight = (context != nullptr ? ImGui::GetFrameHeight() : 20.0f) * 1.75f;
-	SDL_ShowCursor(mouseY <= revealHeight || gui_mouse_captured() ? SDL_ENABLE : SDL_DISABLE);
-}
-
-bool sdl_is_fullscreen()
-{
-	return isWindowFullscreen();
-}
 
 static struct SDLDeInit
 {
@@ -389,7 +344,7 @@ void input_sdl_handle()
 		switch (event.type)
 		{
 			case SDL_QUIT:
-				gui_request_exit_emulator();
+				dc_exit();
 				break;
 
 			case SDL_KEYDOWN:
@@ -397,6 +352,27 @@ void input_sdl_handle()
 				checkRawInput();
 				if (event.key.repeat == 0)
 				{
+					// Alt-Return and F11 toggle full screen
+					if (event.type == SDL_KEYDOWN
+							&& ((event.key.keysym.sym == SDLK_RETURN && (event.key.keysym.mod & KMOD_ALT))
+								|| (event.key.keysym.sym == SDLK_F11 && (event.key.keysym.mod & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT | KMOD_GUI)) == 0)))
+					{
+						if (window_fullscreen)
+						{
+							SDL_SetWindowFullscreen(window, 0);
+							if (!gameRunning || !mouseCaptured)
+								SDL_ShowCursor(SDL_ENABLE);
+						}
+						else
+						{
+							SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+							if (gameRunning)
+								SDL_ShowCursor(SDL_DISABLE);
+						}
+						window_fullscreen = !window_fullscreen;
+						break;
+					}
+					// Route other keyboard events to master in multiboard mode
 					if (settings.naomi.slave) {
 						Multiboard::keyboardEvent(event.key.keysym.scancode, event.type == SDL_KEYDOWN);
 						break;
@@ -426,25 +402,6 @@ void input_sdl_handle()
 
 					if (event.type == SDL_KEYDOWN)
 					{
-						// Alt-Return and F11 toggle full screen
-						if ((event.key.keysym.sym == SDLK_RETURN && (event.key.keysym.mod & KMOD_ALT))
-								|| (event.key.keysym.sym == SDLK_F11 && (event.key.keysym.mod & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT | KMOD_GUI)) == 0))
-						{
-							if (window_fullscreen)
-							{
-								SDL_SetWindowFullscreen(window, 0);
-								if (!gameRunning || !mouseCaptured)
-									SDL_ShowCursor(SDL_ENABLE);
-							}
-							else
-							{
-								SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-								if (gameRunning)
-									SDL_ShowCursor(SDL_DISABLE);
-							}
-							window_fullscreen = !window_fullscreen;
-							break;
-						}
 						// Left-Alt + Left-CTRL toggles mouse capture
 						if ((event.key.keysym.mod & KMOD_LALT) && (event.key.keysym.mod & KMOD_LCTRL)
 								&& !(is_key_mapped(SDL_SCANCODE_LALT) || is_key_mapped(SDL_SCANCODE_LCTRL)))
@@ -549,7 +506,6 @@ void input_sdl_handle()
 
 			case SDL_MOUSEMOTION:
 				gui_set_mouse_position(event.motion.x, event.motion.y, false);
-				updateFullscreenCursorVisibility(event.motion.y);
 				checkRawInput();
 				if (!config::UseRawInput)
 				{
@@ -627,6 +583,7 @@ void input_sdl_handle()
 
 			case SDL_DROPFILE:
 				gui_start_game(event.drop.file);
+				SDL_free(event.drop.file);
 				break;
 
 			// Switch touchscreen support
@@ -940,16 +897,19 @@ bool sdl_recreate_window(u32 flags)
 
 #if !defined(GLES) && !defined(_WIN32) && !defined(__SWITCH__) && !defined(__APPLE__)
 	// Set the window icon
-	u32 pixels[48 * 48];
-	for (int i = 0; i < 48 * 48; i++)
-		pixels[i] = window_icon[i + 2];
-	SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(pixels, 48, 48, 32, 4 * 48, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
-	if (surface == NULL)
-	  INFO_LOG(COMMON, "Creating icon surface failed: %s", SDL_GetError());
-	else
-	{
-		SDL_SetWindowIcon(window, surface);
-		SDL_FreeSurface(surface);
+	size_t size;
+	auto data = resource::load("Hollycast48.bmp", size);
+	if (!data) {
+		ERROR_LOG(COMMON, "Failed to load window icon resource");
+	} else {
+		SDL_Surface *surface = SDL_LoadBMP_RW(SDL_RWFromConstMem(data.get(), size), 1);
+		if (surface == nullptr)
+			INFO_LOG(COMMON, "Creating icon surface failed: %s", SDL_GetError());
+		else
+		{
+			SDL_SetWindowIcon(window, surface);
+			SDL_FreeSurface(surface);
+		}
 	}
 #endif
 
@@ -1023,7 +983,7 @@ static int suspendEventFilter(void *userdata, SDL_Event *event)
             try {
                 emu.stop();
                 if (config::AutoSaveState)
-                    dc_savestate(dc_getAutoSaveSlot());
+                    dc_savestate(config::SavestateSlot);
             } catch (const FlycastException& e) { }
         }
         return 0;

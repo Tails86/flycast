@@ -49,6 +49,11 @@ enum PlainJoystickTriggerId
 	PJTI_Count = 4
 };
 
+enum class MaplePortType {
+	user_accessible,
+	built_in,
+};
+
 struct PlainJoystickState
 {
 	PlainJoystickState()
@@ -135,10 +140,12 @@ void mcfg_SerializeDefaultDevice(Serializer& ser, MapleDeviceType forType, u32 b
 //! @param[in] playerNum The player number to deserialize
 void mcfg_DeserializeDiscardDevice(Deserializer& deser, MapleDeviceType forType, u32 bus, u32 port, int playerNum = -1);
 
-constexpr int maple_getPortCount(MapleDeviceType type)
+constexpr int maple_getPortCount(MapleDeviceType type, MaplePortType port)
 {
 	switch (type)
 	{
+		case MDT_FishingController:
+			return port == MaplePortType::user_accessible ? 0 : 1;
 		case MDT_SegaController:
 		case MDT_SegaControllerXL:
 			return 2;

@@ -1,6 +1,5 @@
 /*
 	Copyright 2021 flyinghead
-	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -23,7 +22,6 @@
 #include "hw/pvr/pvr_mem.h"
 #include "ui/gui.h"
 #include "rend/sorter.h"
-#include "rend/osd.h"
 
 #include <memory>
 
@@ -191,6 +189,9 @@ void DX11Renderer::Term()
 	fbScaledRenderTarget.reset();
 	fbScaledTextureView.reset();
 	fbScaledTexture.reset();
+	fbSecondAccum.reset();
+	fbSecondAccumView.reset();
+	fbSecondAccumTex.reset();
 	quad.reset();
 	deviceContext.reset();
 	device.reset();
@@ -583,12 +584,6 @@ void DX11Renderer::displayFramebuffer()
 		std::swap(shiftX, shiftY);
 		renderAR = 1 / renderAR;
 	}
-
-	// Adjust 'h' or 'w' to avoid overlapping with the menu bar
-	int topInset = getScaledTopInset();
-	int leftInset = 0;
-	if (config::Rotate90)
-		std::swap(topInset, leftInset);
 	
 	int dy = 0;
 	int dx = 0;
@@ -597,8 +592,8 @@ void DX11Renderer::displayFramebuffer()
 	
 	float x = (float)dx;
 	float y = (float)dy;
-	float w = (float)(outwidth - leftInset - 2 * dx);
-	float h = (float)(outheight - topInset - 2 * dy);
+	float w = (float)(outwidth - 2 * dx);
+	float h = (float)(outheight - 2 * dy);
 
 	// Normalize
 	x = x * 2.f / outwidth - 1.f;
@@ -658,8 +653,9 @@ void DX11Renderer::setRenderState(const PolyParam *gp)
 			// Trilinear pass A
 			constants.trilinearAlpha = 1.f - constants.trilinearAlpha;
 	}
-	else
+	else {
 		constants.trilinearAlpha = 1.f;
+	}
 
 	bool color_clamp = gp->tsp.ColorClamp && (rendContext->fog_clamp_min.full != 0 || rendContext->fog_clamp_max.full != 0xffffffff);
 	int fog_ctrl = config::Fog ? gp->tsp.FogCtrl : 2;
@@ -675,6 +671,27 @@ void DX11Renderer::setRenderState(const PolyParam *gp)
 			gpuPalette = 1; // force nearest
 		else if (config::TextureFiltering == 2)
 			gpuPalette = 2; // force linear
+	}
+
+	if (gp->tsp.DstSelect == 1)
+	{
+		if (!renderingToSecAccum)
+		{
+			renderingToSecAccum = true;
+			makeSecondAccumFB();
+			ID3D11ShaderResourceView * const nullView = nullptr;
+			deviceContext->PSSetShaderResources(6, 1, &nullView);
+			deviceContext->OMSetRenderTargets(1, &fbSecondAccum.get(), depthTexView);
+		}
+	}
+	else if (renderingToSecAccum)
+	{
+		renderingToSecAccum = false;
+		if (rendContext->isRTT)
+			deviceContext->OMSetRenderTargets(1, &rttRenderTarget.get(), depthTexView);
+		else
+			deviceContext->OMSetRenderTargets(1, &fbRenderTarget.get(), depthTexView);
+		deviceContext->PSSetShaderResources(6, 1, &fbSecondAccumView.get());
 	}
 
 	ComPtr<ID3D11VertexShader> vertexShader = shaders->getVertexShader(gp->pcw.Gouraud, gp->isNaomi2());
@@ -693,7 +710,8 @@ void DX11Renderer::setRenderState(const PolyParam *gp)
 			gp->pcw.Gouraud,
 			Type == ListType_Punch_Through,
 			clipmode == TileClipping::Inside,
-			dithering);
+			dithering,
+			gp->tsp.SrcSelect == 1);
 	deviceContext->PSSetShader(pixelShader, nullptr, 0);
 
 	if (gpuPalette != 0)
@@ -826,6 +844,7 @@ void DX11Renderer::drawSorted(int first, int count, bool multipass)
 				true,
 				false,
 				false,
+				false,
 				false);
 		deviceContext->PSSetShader(pixelShader, nullptr, 0);
 
@@ -933,6 +952,7 @@ void DX11Renderer::drawModVols(int first, int count)
 
 void DX11Renderer::drawStrips()
 {
+	renderingToSecAccum = false;
 	RenderPass previous_pass {};
     for (int render_pass = 0; render_pass < (int)rendContext->render_passes.size(); render_pass++)
     {
@@ -1499,6 +1519,40 @@ void DX11Renderer::renderVideoRouting()
 		os_VideoRoutingTermDX();
 	}
 #endif
+}
+
+void DX11Renderer::makeSecondAccumFB()
+{
+	u32 width, height;
+	if (rendContext->isRTT) {
+		width = rendContext->framebufferWidth;
+		height = rendContext->framebufferHeight;
+	}
+	else {
+		width = this->width;
+		height = this->height;
+	}
+	if (fbSecondAccumTex != nullptr)
+	{
+		D3D11_TEXTURE2D_DESC desc;
+		fbSecondAccumTex->GetDesc(&desc);
+		if (desc.Width != width || desc.Height != height)
+		{
+			fbSecondAccumTex.reset();
+			fbSecondAccum.reset();
+			fbSecondAccumView.reset();
+		}
+	}
+	if (fbSecondAccumTex == nullptr)
+	{
+		createTexAndRenderTarget(fbSecondAccumTex, fbSecondAccum, width, height);
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc{};
+		viewDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+		viewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		viewDesc.Texture2D.MipLevels = 1;
+		device->CreateShaderResourceView(fbSecondAccumTex, &viewDesc, &fbSecondAccumView.get());
+	}
 }
 
 Renderer *rend_DirectX11()
