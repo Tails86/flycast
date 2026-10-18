@@ -18,9 +18,16 @@
  */
 #pragma once
 #include "types.h"
+#include <stdexcept>
 
 namespace net::modbba
 {
+
+class ConnectionClosed : public std::exception
+{
+public:
+	ConnectionClosed() = default;
+};
 
 bool start();
 void stop();
@@ -44,5 +51,7 @@ public:
 
 	virtual void receiveEthFrame(const u8 *frame, u32 size) = 0;
 };
+
+void setCustomService(Service *service);
 
 }

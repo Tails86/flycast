@@ -151,7 +151,7 @@ static u16 calcCrc16(const std::vector<u8>& data, size_t len = 0)
 	return crc ^ 0xffff;
 }
 
-void HdlcEncoder::sendFrame(const std::vector<u8>& data)
+void HdlcEncoder::sendFrame(const std::vector<u8>& data, int crc)
 {
 	// opening flag
 	sendFlag();
@@ -159,7 +159,8 @@ void HdlcEncoder::sendFrame(const std::vector<u8>& data)
 	for (u8 b : data)
 		sendByte(b);
 	// crc
-	u16 crc = calcCrc16(data);
+	if (crc < 0)
+		crc = calcCrc16(data);
 	sendByte(crc & 0xff);
 	sendByte(crc >> 8);
 	// closing flag
@@ -221,7 +222,7 @@ void HdlcDecoder::write(u8 v)
 				if (rxOnes == 6)
 				{
 					// we have a flag
-					if (!rxFrame.empty())
+					if (rxFrame.size() >= 4)
 					{
 						u16 crc = calcCrc16(rxFrame, rxFrame.size() - 2);
 						if (crc != *(u16 *)(&rxFrame.back() - 1)) {
@@ -229,10 +230,16 @@ void HdlcDecoder::write(u8 v)
 						}
 						else
 						{
-							rxFrame.pop_back();
-							rxFrame.pop_back();
+							if (!keepCrc) {
+								rxFrame.pop_back();
+								rxFrame.pop_back();
+							}
 							frames.push_back(std::move(rxFrame));
 						}
+						rxFrame.clear();
+					}
+					else if (!rxFrame.empty()) {
+						WARN_LOG(MODEM, "Invalid ~empty frame: size %zd [%02x]", rxFrame.size(), rxFrame[0]);
 						rxFrame.clear();
 					}
 					rxCurByte = 0;
@@ -359,6 +366,8 @@ void V42Protocol::handleFrame()
 		handleSabme(rxFrame[0], rxFrame[1]);
 		break;
 	case 0x0f:	// DM
+		WARN_LOG(MODEM, "Received DM");
+		phase = Release;
 		break;
 	case 0x03:	// UI
 		WARN_LOG(MODEM, "Received UI");
@@ -367,7 +376,17 @@ void V42Protocol::handleFrame()
 		handleDisc(rxFrame[0]);
 		break;
 	case 0x63:	// UA
-		receiverReady = true;
+		DEBUG_LOG(MODEM, "Received UA");
+		if (!originator && phase == Establish) {
+			phase = Connected;
+		}
+		else if (phase == DiscSent) {
+			INFO_LOG(MODEM, "Received UA of DISC");
+			phase = Release;
+		}
+		else {
+			receiverReady = true;
+		}
 		break;
 	case 0x87:	// FRMR
 		WARN_LOG(MODEM, "Received FRMR");
@@ -391,6 +410,18 @@ void V42Protocol::handleFrame()
 		handleIFrame(rxFrame);
 		break;
 	}
+}
+
+void V42Protocol::sendSabme() {
+	std::vector<u8> sabme { 3, 0x7f };
+	sendFrame(sabme);
+}
+
+void V42Protocol::sendDisc()
+{
+	std::vector<u8> disc { (u8)(1 | (!originator << 1)), 0x53 };
+	sendFrame(disc);
+	phase = DiscSent;
 }
 
 void V42Protocol::handleSabme(u8 address, u8 control)
@@ -442,10 +473,7 @@ void V42Protocol::handleIFrame(const std::vector<u8>& rxFrame)
 				outputStream.write(c);
 			}
 		} catch (const v42b::Exception& e) {
-			// send DISC
-			std::vector<u8> disc { 1, 0x43 };
-			sendFrame(disc);
-			phase = Release;
+			sendDisc();
 			sentIFrames.clear();
 			return;
 		}
@@ -462,6 +490,29 @@ void V42Protocol::handleIFrame(const std::vector<u8>& rxFrame)
 		std::vector<u8> rr { rxFrame[0], 1, u8((rxSeqNum << 1) | (rxFrame[2] & 1)) };
 		sendFrame(rr);
 	}
+}
+
+void V42Protocol::sendXid()
+{
+	// 03 af 82
+	// [
+	// 		gid, sz_msb, sz_lsb
+	// 		[
+	//			paramId, valueSize, value...
+	//		]
+	// ]
+	// As sent when originator
+	std::vector<u8> xid { 0x03, 0xaf, 0x82,
+		0x80, 0x00, 0x13,
+			0x03, 0x03, 0x8a, 0x89, 0x00,
+			0x05, 0x02, 0x02, 0x00,
+			0x06, 0x02, 0x02, 0x00,
+			0x07, 0x01, 0x0f,
+			0x08, 0x01, 0x0f,
+		0xff, 0x00, 0x05,
+			0x01, 0x03, 0x4d, 0x4d, 0x41
+	};
+	sendFrame(xid);
 }
 
 void V42Protocol::handleXid(std::vector<u8> rxFrame)
@@ -634,10 +685,12 @@ void V42Protocol::handleXid(std::vector<u8> rxFrame)
 			i += paramSize;
 		}
 	}
-	if (userDataOffset != 0)
-		rxFrame.resize(userDataOffset);
-	sendFrame(rxFrame);
-
+	if (originator)
+	{
+		if (userDataOffset != 0)
+			rxFrame.resize(userDataOffset);
+		sendFrame(rxFrame);
+	}
 	if (compressionEnabled)
 	{
 		NOTICE_LOG(MODEM, "V.42bis compression enabled: max dictionary size %d", maxCodeWords);
@@ -722,8 +775,24 @@ void V42Protocol::sendIFrame()
 
 int V42Protocol::read()
 {
-	if (phase == None || phase == Detection) {
-		v14Encoder.flush();
+	if (phase == None || phase == Detection)
+	{
+		if (originator) {
+			v14Encoder.flush();
+		}
+		else if (!v14Encoder.available())
+		{
+			if (odpCount <= 20)
+			{
+				// send ODP: DC1
+				v14Encoder.setStopBits(9);
+				v14Encoder.write(0x91);
+				v14Encoder.write(0x11);
+				v14Encoder.setStopBits(1);
+				v14Encoder.flush();
+			}
+			v14Encoder.flush();
+		}
 		return v14Encoder.read();
 	}
 	else if (phase == V14)
@@ -734,7 +803,7 @@ int V42Protocol::read()
 	}
 	if (hdlcEncoder.available() == 0)
 	{
-		if (phase == Connected)
+		if (phase == Connected || phase == DiscSent)
 		{
 			sendIFrame();
 			if (hdlcEncoder.available() != 0)
@@ -748,7 +817,17 @@ int V42Protocol::read()
 					return hdlcEncoder.read();
 			}
 		}
-		sendFlag();
+		else if (phase == Establish && !originator)
+		{
+			for (int i = 0; i < 16; i++)
+				sendFlag();
+			sendXid();
+			sendSabme();
+			if (hdlcEncoder.available() != 0)
+				return hdlcEncoder.read();
+		}
+		if (phase != Release)
+			sendFlag();
 	}
 	return hdlcEncoder.read();
 }
@@ -757,12 +836,19 @@ void V42Protocol::write(u8 v)
 {
 	if (phase == None || phase == Detection)
 	{
-		if (detectionTimer.expired()) {
+		if (originator && detectionTimer.expired())
+		{
+			// V14 isn't currently used in answering mode. If needed, the detectionTimer should probably be reset
+			// on first write since it's already expired by then.
 			INFO_LOG(MODEM, "Switching to V.14 mode");
 			phase = V14;
 		}
 		else
 		{
+			if (!originator && phase == None) {
+				phase = Detection;
+				odpCount = 0;
+			}
 			v14Decoder.write(v);
 			int c = v14Decoder.read();
 			if (c == -1)
@@ -770,49 +856,81 @@ void V42Protocol::write(u8 v)
 			v = c;
 		}
 	}
-	if (phase == None)
+	switch (phase)
 	{
-		if ((v == 0x11 || v == 0x91)
-				&& (v14Decoder.receivedStopBits() == 9 || v14Decoder.receivedStopBits() == 17))
+	case None:
+		if (originator)
 		{
-			phase = Detection;
-			lastRx = v;
-			odpCount = 1;
+			if ((v == 0x11 || v == 0x91)
+					&& (v14Decoder.receivedStopBits() >= 9 && v14Decoder.receivedStopBits() <= 17))
+			{
+				phase = Detection;
+				lastRx = v;
+				odpCount = 1;
+			}
 		}
-	}
-	else if (phase == Detection)
-	{
-		// V.42 ODP: DC1 with alternating parity followed by 8+1 or 16+1 ones
-		if ((v == 0x11 || v == 0x91)
-				&& (v14Decoder.receivedStopBits() == 9 || v14Decoder.receivedStopBits() == 17)
-				&& v != lastRx)
+		break;
+
+	case Detection:
+		if (originator)
 		{
-			odpCount++;
-			if (odpCount == 4)
+			// V.42 ODP: DC1 with alternating parity followed by 8+1 or 16+1 ones
+			if ((v == 0x11 || v == 0x91)
+					&& (v14Decoder.receivedStopBits() >= 9 && v14Decoder.receivedStopBits() <= 17)
+					&& v != lastRx)
+			{
+				odpCount++;
+				if (odpCount == 4)
+				{
+					odpCount = 0;
+					// send ADP
+					v14Encoder.setStopBits(9);
+					v14Encoder.write('E');
+					v14Encoder.write('C');
+					//v14Encoder.write(0);	// switches to v14 only and start ppp nego
+					v14Encoder.setStopBits(1);
+				}
+			}
+			else
 			{
 				odpCount = 0;
-				// send ADP
-				v14Encoder.setStopBits(9);
-				v14Encoder.write('E');
-				v14Encoder.write('C');
-				//v14Encoder.write(0);	// switches to v14 only and start ppp nego
-				v14Encoder.setStopBits(1);
+				if (v == 0x7e)
+					phase = Establish;
 			}
 		}
 		else
 		{
-			odpCount = 0;
-			if (v == 0x7e)
-				phase = Establish;
+			// Answerer
+			if ((v == 'E' || v == 'C')
+					&& (v14Decoder.receivedStopBits() >= 9 && v14Decoder.receivedStopBits() <= 17)
+					&& v != lastRx)
+			{
+				++odpCount;
+			}
+			else
+			{
+				if (odpCount >= 10)
+					phase = Establish;
+				else
+					odpCount = 0;
+			}
 		}
 		lastRx = v;
-	}
-	else if (phase == Establish || phase == Connected) {
+		break;
+
+	case Establish:
+	case Connected:
+	case DiscSent:
 		hdlcDecoder.write(v);
 		handleFrame();
-	}
-	else if (phase == V14) {
+		break;
+
+	case V14:
 		v14PipeOut.write(v);
+		break;
+
+	default:
+		break;
 	}
 }
 
@@ -848,6 +966,210 @@ void V42Protocol::ackIFrame(int seqNum)
 	else {
 		WARN_LOG(MODEM, "Ack seq# %d < prev acked %d", seqNum, txSeqAck);
 	}
+}
+
+int HdlcSyncAsync::read()
+{
+	if (phase == None || phase == Detection)
+	{
+		if (originator) {
+			v14Encoder.flush();
+		}
+		else if (!v14Encoder.available())
+		{
+			if (odpCount <= 20)
+			{
+				// send ODP: DC1
+				v14Encoder.setStopBits(9);
+				v14Encoder.write(0x91);
+				v14Encoder.write(0x11);
+				v14Encoder.setStopBits(1);
+				v14Encoder.flush();
+			}
+			v14Encoder.flush();
+		}
+		return v14Encoder.read();
+	}
+	if (hdlcEncoder.available() == 0)
+	{
+		if (phase == Connected)
+		{
+			if (hdlcEncoder.available() == 0)
+				handleAsyncFrame();
+			if (hdlcEncoder.available() != 0)
+				return hdlcEncoder.read();
+		}
+		if (phase != Release)
+			hdlcEncoder.sendFlag();
+	}
+	return hdlcEncoder.read();
+}
+
+void HdlcSyncAsync::write(u8 v)
+{
+	if (phase == None || phase == Detection)
+	{
+		if (!originator && phase == None) {
+			phase = Detection;
+			odpCount = 0;
+		}
+		v14Decoder.write(v);
+		int c = v14Decoder.read();
+		if (c == -1)
+			return;
+		v = c;
+	}
+	switch (phase)
+	{
+	case None:
+		if (originator)
+		{
+			if ((v == 0x11 || v == 0x91)
+					&& (v14Decoder.receivedStopBits() >= 9 && v14Decoder.receivedStopBits() <= 17))
+			{
+				phase = Detection;
+				lastRx = v;
+				odpCount = 1;
+			}
+		}
+		break;
+
+	case Detection:
+		if (originator)
+		{
+			// V.42 ODP: DC1 with alternating parity followed by 8+1 or 16+1 ones
+			if ((v == 0x11 || v == 0x91)
+					&& (v14Decoder.receivedStopBits() >= 9 && v14Decoder.receivedStopBits() <= 17)
+					&& v != lastRx)
+			{
+				odpCount++;
+				if (odpCount == 4)
+				{
+					odpCount = 0;
+					// send ADP
+					v14Encoder.setStopBits(9);
+					v14Encoder.write('E');
+					v14Encoder.write('C');
+					v14Encoder.setStopBits(1);
+				}
+			}
+			else
+			{
+				odpCount = 0;
+				if (v == 0x7e)
+					phase = Connected;
+			}
+		}
+		else
+		{
+			// Answerer
+			if ((v == 'E' || v == 'C')
+					&& (v14Decoder.receivedStopBits() >= 9 && v14Decoder.receivedStopBits() <= 17)
+					&& v != lastRx)
+			{
+				++odpCount;
+			}
+			else
+			{
+				if (odpCount >= 10)
+					phase = Connected;
+				else
+					odpCount = 0;
+			}
+		}
+		lastRx = v;
+		break;
+
+	case Connected:
+		hdlcDecoder.write(v);
+		handleSyncFrame();
+		break;
+
+	default:
+		break;
+	}
+}
+
+void HdlcSyncAsync::handleSyncFrame()
+{
+	if (!hdlcDecoder.frameAvailable())
+		return;
+	outputStream.write(FLAG);
+	std::vector<u8> frame = hdlcDecoder.getFrame();
+	for (u8 b : frame)
+	{
+		if (b == FLAG || b == ESCAPE) {
+			outputStream.write(ESCAPE);
+			b ^= 0x20;
+		}
+		outputStream.write(b);
+	}
+	outputStream.write(FLAG);
+}
+
+void HdlcSyncAsync::handleAsyncFrame()
+{
+	if (inputStream.available() == 0)
+		return;
+	bool frameComplete = false;
+	for (;;)
+	{
+		int c = inputStream.read();
+		if (c == -1)
+			break;
+		if (c == FLAG)
+		{
+			if (inFrame.empty())
+				continue;
+			frameComplete = true;
+			break;
+		}
+		else if (c == ESCAPE) {
+			escapeSeen = true;
+			continue;
+		}
+		if (escapeSeen) {
+			c ^= 0x20;
+			escapeSeen = false;
+		}
+		inFrame.push_back(c & 0xff);
+	}
+	if (!frameComplete)
+		return;
+
+	if (inFrame.size() >= 4)
+	{
+		u16 crc = *(u16 *)&inFrame[inFrame.size() - 2];
+		inFrame.pop_back();
+		inFrame.pop_back();
+		/*
+		if ((inFrame[0] & 0xfd) == 1)
+		{
+			if (inFrame[1] == 9)
+				WARN_LOG(MODEM, "[%d] Received REJ %d", originator, inFrame[2] >> 1);
+			else if (inFrame[1] == 0xd)
+				WARN_LOG(MODEM, "[%d] Received SREJ %d", originator, inFrame[2] >> 1);
+		}
+		*/
+		hdlcEncoder.sendFrame(inFrame, crc);
+	}
+	else if (!inFrame.empty()) {
+		WARN_LOG(MODEM, "Small frame (%d) received", (int)inFrame.size());
+	}
+	inFrame.clear();
+}
+
+void HdlcSyncAsync::reset()
+{
+	phase = None;
+	lastRx = 0;
+	odpCount = 0;
+	v14Encoder.reset();
+	v14Decoder.reset();
+	hdlcEncoder.reset();
+	hdlcDecoder.reset();
+	inFrame.clear();
+	escapeSeen = false;
 }
 
 u8 V8bisProtocol::detectTone()

@@ -82,13 +82,24 @@ enum ConnectState
 	HANDSHAKING,
 	PRE_CONNECTED,
 	CONNECTED,
-	NEGO_COMPLETE
+	NEGO_COMPLETE,
+	RINGING_IN,
 };
 static ConnectState connect_state = DISCONNECTED;
 static float txFifoSize = 0.f;
 static std::deque<u8> rxFifo;
 static int cyclesPerByte;
 static float txRxRatio = 1.f;
+static std::string numberDialed;
+static std::function<void()> onAnswerCallback;
+static std::function<void()> onHandshakeCallback;
+static std::function<void(const std::string&)> onDialCallback;
+static std::function<void()> periodicCallback;
+static u32 periodicCycles;
+static u64 lastDSPRamWrite;
+static u64 ringStart;
+static bool peer2peerRawMode;
+static bool keepRinging;
 
 static void schedule_callback(int ms);
 static const char *getDSPRamLabel(u32 addr);
@@ -166,6 +177,7 @@ static InStream *curInput = &netIn;
 static OutStream *curOutput = &netOut;
 
 static V42Protocol v42Proto { netIn, netOut };
+static HdlcSyncAsync hdlcProto { netIn, netOut };
 
 static bool v8bis;
 static V8bisProtocol v8bisProto;
@@ -196,9 +208,16 @@ static void configureStreams()
 		curInput = &v8bisProto;
 		curOutput = &v8bisProto;
 	}
-	else if (modem_regs.reg08.ASYN == 0) {
-		curInput = &v42Proto;
-		curOutput = &v42Proto;
+	else if (modem_regs.reg08.ASYN == 0)
+	{
+		if (peer2peerRawMode) {
+			curInput = &hdlcProto;
+			curOutput = &hdlcProto;
+		}
+		else {
+			curInput = &v42Proto;
+			curOutput = &v42Proto;
+		}
 	}
 	else {
 		curInput = &netIn;
@@ -334,6 +353,16 @@ static bool setModemSpeedFromCONF()
 	return speed != 0;
 }
 
+static void hangUp()
+{
+	INFO_LOG(MODEM, "Hanging up modem");
+	modem_regs.ABCODE = 0x96;
+	modem_regs.reg1f.NEWS = 1;
+	modem_regs.CONF = 0xC0;
+	dspram[0x2e4] = 0;
+	connect_state = DISCONNECTED;
+}
+
 static int modem_sched_func(int tag, int cycles, int jitter, void *arg)
 {
 #ifndef NDEBUG
@@ -362,6 +391,11 @@ static int modem_sched_func(int tag, int cycles, int jitter, void *arg)
 		break;
 	case MS_END_DSP:
 		DSPTestEnd();
+		if (ringStart != 0) {
+			// The game resets the modem before answering a call so restore the correct state
+			connect_state = RINGING;
+			ringStart = 0;
+		}
 		break;
 	case MS_NORMAL:
 		modem_regs.reg1f.NEWC = 0;		// Not needed when state is CONNECTED but who cares
@@ -369,18 +403,24 @@ static int modem_sched_func(int tag, int cycles, int jitter, void *arg)
 		switch (connect_state)
 		{
 		case DIALING:
-			if (last_dial_time != 0 && sh4_sched_now64() - last_dial_time >= SH4_MAIN_CLOCK)
+			if (last_dial_time == 0)
+				last_dial_time = sh4_sched_now64();
+			if (sh4_sched_now64() - last_dial_time >= SH4_MAIN_CLOCK)
 			{
 				LOG("Switching to RINGING state");
 				connect_state = RINGING;
 				schedule_callback(100);
+				if (!numberDialed.empty())
+				{
+					NOTICE_LOG(MODEM, "Dialing %s", numberDialed.c_str());
+					if (onDialCallback)
+						onDialCallback(numberDialed);
+					numberDialed.clear();
+				}
 			}
-			else
-			{
-				last_dial_time = sh4_sched_now64();
-
+			else {
 				modem_regs.reg1e.TDBE = 1;
-				schedule_callback(1000);	// To switch to Ringing state
+				callback_cycles = 1000_sh4ms;	// To switch to Ringing state
 			}
 			break;
 		case RINGING:
@@ -388,11 +428,8 @@ static int modem_sched_func(int tag, int cycles, int jitter, void *arg)
 			last_dial_time = 0;
 			LOG("\t\t *** %s STATE ***", connect_state == RINGING ? "RINGING" : "NEGO COMPLETE");
 			modem_regs.reg1f.NEWS = 1;
-			if (!modem_regs.reg09.DATA && connect_state == RINGING)
-			{
-				SET_STATUS_BIT(0x0f, modem_regs.reg0f.RI, 1);
+			if (!modem_regs.reg09.DATA && connect_state == RINGING && modem_regs.reg09.ORG)
 				SET_STATUS_BIT(0x0b, modem_regs.reg0b.ATV25, 1);
-			}
 			break;
 		case HANDSHAKING:
 			LOG("\t\t *** HANDSHAKING STATE ***");
@@ -410,8 +447,7 @@ static int modem_sched_func(int tag, int cycles, int jitter, void *arg)
 			break;
 
 		case PRE_CONNECTED:
-			if (modem_regs.reg03.RLSDE)
-				SET_STATUS_BIT(0x0f, modem_regs.reg0f.RLSD, 1);
+			SET_STATUS_BIT(0x0f, modem_regs.reg0f.RLSD, 1);
 			bool validConfig;
 			if (modem_regs.CONF == 0xAA)
 			{
@@ -493,8 +529,11 @@ static int modem_sched_func(int tag, int cycles, int jitter, void *arg)
 			dspram[0x208] = 0xff;	// 2.4 - 19.2 kpbs supported
 			dspram[0x209] = 0xbf;	// 21.6 - 33.6 kpbs supported, asymmetric supported
 
-			callback_cycles = SH4_MAIN_CLOCK / 1000000 * 238;	// 238 us
+			callback_cycles = 238_sh4us;
 			v42Proto.reset();
+			v42Proto.setOriginator(modem_regs.reg09.ORG);
+			hdlcProto.reset();
+			hdlcProto.setOriginator(modem_regs.reg09.ORG);
 
 			break;
 
@@ -519,13 +558,45 @@ static int modem_sched_func(int tag, int cycles, int jitter, void *arg)
 			}
 			if (rxFifo.size() < 16)
 			{
-				int c = curInput->read();
-				if (c >= 0) {
-					rxFifo.push_back(c);
-					updateRxFifoStatus();
+				try {
+					int c = curInput->read();
+					if (c >= 0) {
+						rxFifo.push_back(c);
+						updateRxFifoStatus();
+					}
+				} catch (const net::modbba::ConnectionClosed& e) {
+					hangUp();
 				}
 			}
 			break;
+
+		case DISCONNECTED:
+			if (onAnswerCallback)
+			{
+				callback_cycles = SH4_MAIN_CLOCK;
+				if (lastDSPRamWrite != 0
+						&& sh4_sched_now64() - lastDSPRamWrite >= (u64)5 * SH4_MAIN_CLOCK)
+				{
+					INFO_LOG(MODEM, "Answer mode detected");
+					onAnswerCallback();
+					lastDSPRamWrite = 0;
+					callback_cycles = 0;
+				}
+			}
+			break;
+
+		case RINGING_IN:
+			{
+				// Japan standard: 1 s on, 2 s off
+				u64 v = (sh4_sched_now64() - ringStart) % ((u64)3 * SH4_MAIN_CLOCK);
+				bool ri = v < SH4_MAIN_CLOCK;
+				if (ri != modem_regs.reg0f.RI) {
+					modem_regs.reg1f.NEWS = 1;
+					SET_STATUS_BIT(0x0f, modem_regs.reg0f.RI, ri);
+				}
+				callback_cycles = SH4_MAIN_CLOCK;
+				break;
+			}
 
 		default:
 			break;
@@ -536,6 +607,13 @@ static int modem_sched_func(int tag, int cycles, int jitter, void *arg)
 		break;
 	}
 	update_interrupt();
+
+	if (periodicCallback)
+	{
+		periodicCallback();
+		if (callback_cycles == 0 || callback_cycles > (int)periodicCycles)
+			callback_cycles = periodicCycles;
+	}
 
 	return callback_cycles;
 }
@@ -548,6 +626,15 @@ void ModemInit()
 void ModemReset()
 {
 	net::modbba::stop();
+	onAnswerCallback = {};
+	onHandshakeCallback = {};
+	onDialCallback = {};
+	periodicCallback = {};
+	periodicCycles = 0;
+	lastDSPRamWrite = 0;
+	ringStart = 0;
+	peer2peerRawMode = false;;
+	keepRinging = false;
 }
 
 void ModemTerm()
@@ -660,6 +747,8 @@ static void modem_reset(u32 v)
 		state = MS_RESET;
 		LOG("Modem reset start ...");
 		net::modbba::stop();
+		lastDSPRamWrite = 0;
+		keepRinging = false;
 	}
 	else
 	{
@@ -678,11 +767,14 @@ static void check_start_handshake()
 {
 	if (modem_regs.reg09.DTR
 			&& (modem_regs.reg09.DATA || modem_regs.reg15.AUTO)
-			&& (connect_state == RINGING || connect_state == NEGO_COMPLETE))
+			&& (connect_state == RINGING || connect_state == NEGO_COMPLETE)
+			&& !keepRinging)
 	{
 		LOG("DTR asserted. starting handshaking");
 		connect_state = HANDSHAKING;
 		schedule_callback(1);
+		if (onHandshakeCallback)
+			onHandshakeCallback();
 	}
 }
 
@@ -748,7 +840,7 @@ static void ModemNormalWrite(u32 reg, u32 data)
 		{
 			download_crc = (download_crc << 1) + ((download_crc & 0x80) >> 7) + (data & 0xFF);
 		}
-		else if (connect_state == DISCONNECTED || connect_state == DIALING)
+		else if ((connect_state == DISCONNECTED || connect_state == DIALING) && !modem_regs.reg09.DATA)
 		{
 			//LOG("ModemNormalWrite : TBUFFER = %X", data);
 			if (connect_state == DISCONNECTED)
@@ -756,7 +848,10 @@ static void ModemNormalWrite(u32 reg, u32 data)
 				INFO_LOG(MODEM, "MODEM Dialing");
 				connect_state = DIALING;
 				modem_regs.SECRXB = 0;
+				numberDialed.clear();
 			}
+			if (data <= 9)
+				numberDialed += '0' + data;
 			schedule_callback(100);
 		}
 		else if (connect_state == CONNECTED && modem_regs.reg08.RTS)
@@ -765,7 +860,12 @@ static void ModemNormalWrite(u32 reg, u32 data)
 #ifndef NDEBUG
 			sent_bytes++;
 #endif
-			curOutput->write(data);
+			try {
+				curOutput->write(data);
+			} catch (const net::modbba::ConnectionClosed& e) {
+				hangUp();
+				break;
+			}
 
 			modem_regs.reg1e.TDBE = 0;
 			txFifoSize += 1.f;
@@ -860,6 +960,10 @@ static void ModemNormalWrite(u32 reg, u32 data)
 				}
 				if ((dspram_addr == 0x26B || dspram_addr == 0x26c) && (modem_regs.MEDA & 0xFF) != 0)
 					dspram[0x26F] = 1; // Saved Filtered EQM
+				if (connect_state == DISCONNECTED && onAnswerCallback) {
+					lastDSPRamWrite = sh4_sched_now64();
+					schedule_callback(1000);
+				}
 			}
 			else
 			{
@@ -1058,6 +1162,7 @@ void ModemDeserialize(Deserializer& deser)
 
 	rxFifo.clear();
 	v42Proto.reset();
+	hdlcProto.reset();
 	v8bis = false;
 	v8bisProto.reset();
 	configureStreams();
@@ -1207,4 +1312,43 @@ static const char *getDSPRamLabel(u32 addr)
 		return "?";
 	else
 		return it->second;
+}
+
+void modemOnAnswerMode(std::function<void()> callback) {
+	onAnswerCallback = callback;
+}
+void modemOnDial(std::function<void(const std::string&)> callback) {
+	onDialCallback = callback;
+}
+void modemOnHandshake(std::function<void()> callback) {
+	onHandshakeCallback = callback;
+}
+
+void modemPeriodicCallback(u32 cycles, std::function<void()> callback)
+{
+	periodicCallback = callback;
+	periodicCycles = cycles;
+	if (cycles != 0 && !sh4_sched_is_scheduled(modem_sched))
+		sh4_sched_request(modem_sched, cycles);
+}
+
+void modemPeer2Peer(bool enabled) {
+	peer2peerRawMode = enabled;
+	configureStreams();
+}
+
+void modemKeepRinging(bool enabled)
+{
+	keepRinging = enabled;
+	if (!enabled)
+		check_start_handshake();
+}
+
+void modemIncomingCall()
+{
+	connect_state = RINGING_IN;
+	modem_regs.reg1f.NEWS = 1;
+	SET_STATUS_BIT(0x0f, modem_regs.reg0f.RI, 1);
+	ringStart = sh4_sched_now64();
+	schedule_callback(1000);
 }
