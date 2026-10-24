@@ -32,28 +32,11 @@ jobs:
       - name: Package app
         run: |
           mkdir build\artifact
-          cd build\AppPackages\flycast\flycast_*_Test
+          cd build\AppPackages\Hollycast\Hollycast_*_Test
           mkdir tmp
-          ren *.msix flycast.msix
-          makeappx unpack /p .\flycast.msix /d tmp
+          ren *.msix Hollycast.msix
+          makeappx unpack /p .\Hollycast.msix /d tmp
           copy ..\..\..\Release\*.dll tmp
-          makeappx pack /d tmp /p ..\..\..\artifact\flycast.appx
+          makeappx pack /d tmp /p ..\..\..\artifact\Hollycast.appx
 
-      - name: Sign app
-        run: signtool sign /f shell\uwp\sign_cert.pfx /p '${{ secrets.SIGN_CERT_PWD }}' /v /fd SHA256 build\artifact\flycast.appx
-        if: github.repository == 'OrangeFox86/Hollycast' && github.event_name == 'push'
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: flycast-uwp-${{ matrix.arch }}
-          path: build/artifact
-
-      - name: Setup Rclone
-        uses: AnimMouse/setup-rclone@v1
-        with:
-          rclone_config: ${{ secrets.RCLONE_CONFIG }}
-
-      - name: Upload to S3
-        run: rclone copy build/artifact scaleway:flycast-builds/xbox/${GITHUB_REF#refs/}-$GITHUB_SHA
-        shell: bash
-        if: github.repository == 'OrangeFox86/Hollycast' && github.event_name == 'push' && matrix.arch == 'x64'
+      # Package signing and upload steps have been removed until a proper signing certificate is obtained
