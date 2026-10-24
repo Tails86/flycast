@@ -6,12 +6,13 @@
 #include <cctype>
 #include <condition_variable>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <thread>
 #include <vector>
 #include <functional>
 #include <cassert>
-#include <time.h>
+#include <ctime>
 
 #if defined(__ANDROID__)
 #undef PAGE_MASK
@@ -103,6 +104,9 @@ public:
 	void zero() {
 		std::memset(data, 0, size);
 	}
+	size_t getSize() const {
+		return size;
+	}
 
 	u8& operator [](size_t i) {
 		return data[i];
@@ -176,6 +180,16 @@ static inline bool isAbsolutePath(const std::string& path)
 #endif
 }
 
+template<typename ... Args>
+std::string strprintf(const char *format, Args ... args)
+{
+	int size = std::snprintf(nullptr, 0, format, args...);
+	std::string out(size + 1, '\0');
+	std::snprintf(out.data(), size + 1, format, args...);
+	out.resize(size);
+	return out;
+}
+
 class MD5Sum
 {
 	MD5_CTX ctx;
@@ -224,6 +238,7 @@ public:
 
 u64 getTimeMs();
 std::string timeToISO8601(time_t time);
+std::string timeToShortDateTimeString(time_t time);
 
 class ThreadRunner
 {
@@ -231,9 +246,13 @@ public:
 	void init() {
 		threadId = std::this_thread::get_id();
 	}
+	void term() {
+		threadId = {};
+	}
 	void runOnThread(std::function<void()> func)
 	{
-		if (threadId == std::this_thread::get_id()) {
+		if (threadId == std::thread::id{}
+			|| threadId == std::this_thread::get_id()) {
 			func();
 		}
 		else {
@@ -243,7 +262,10 @@ public:
 	}
 	void execTasks()
 	{
+// Disabled in unit tests because this assertion fails there
+#ifndef FLYCAST_TEST_FILES
 		assert(threadId == std::this_thread::get_id());
+#endif
 		std::vector<std::function<void()>> localTasks;
 		{
 			LockGuard _(mutex);
@@ -259,4 +281,42 @@ private:
 	std::thread::id threadId;
 	std::vector<std::function<void()>> tasks;
 	std::mutex mutex;
+};
+
+template <typename TimePointType>
+class ScheduledThreadRunner : protected ThreadRunner
+{
+public:
+	using ThreadRunner::init;
+	using ThreadRunner::term;
+	using ThreadRunner::runOnThread;
+
+	void runOnThread(const TimePointType& tp, const std::function<void()>& func)
+	{
+		scheduledTasks.insert({tp, func});
+	}
+
+	void execTasks(const TimePointType& tp)
+	{
+		// Execute all base tasks
+		ThreadRunner::execTasks();
+
+		// Execute all scheduled tasks
+		while (!scheduledTasks.empty() && scheduledTasks.begin()->first <= tp)
+		{
+			// Pop
+			std::function<void()> func = std::move(scheduledTasks.begin()->second);
+			scheduledTasks.erase(scheduledTasks.begin());
+			// Execute
+			func();
+		}
+	}
+
+private:
+	// execTasks must publicly be given a time point (see overload above)
+	using ThreadRunner::execTasks;
+
+private:
+	// This is being used as the schedule since a multimap will automatically sort by key
+	std::multimap<TimePointType, std::function<void()>> scheduledTasks;
 };

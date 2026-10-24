@@ -4,10 +4,13 @@
 //
 //  Created by admin on 8/5/15.
 //  Copyright (c) 2015 reicast. All rights reserved.
+// Portions Copyright 2026 The Hollycast Authors
 //
 #import <Carbon/Carbon.h>
 #import <AppKit/AppKit.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <signal.h>
 #include <mach/task.h>
 #include <mach/mach_init.h>
 #include <mach/mach_port.h>
@@ -20,9 +23,13 @@
 #endif
 #include "stdclass.h"
 #include "oslib/oslib.h"
+#include "oslib/i18n.h"
 #include "emulator.h"
 #include "ui/mainui.h"
+#include "ui/gui.h"
+#include "SDLApplicationDelegate.h"
 #include <future>
+#include <exception>
 
 int darw_printf(const char* text, ...)
 {
@@ -51,8 +58,14 @@ int darw_printf(const char* text, ...)
 
 void os_DoEvents() {
 #if defined(USE_SDL)
-	NSMenuItem *editMenuItem = [[NSApp mainMenu] itemAtIndex:1];
-	[editMenuItem setEnabled:SDL_IsTextInputActive()];
+	NSMenuItem *editMenuItem = [[NSApp mainMenu] itemWithTitle:@"Edit"];
+	if (editMenuItem)
+		[editMenuItem setEnabled:SDL_IsTextInputActive()];
+
+	NSMenuItem *toggleMenuItem = [[[[NSApp mainMenu] itemAtIndex:0] submenu] itemWithTag:MENU_TAG_TOGGLE_MENU];
+	if (toggleMenuItem) {
+		[toggleMenuItem setEnabled:emu.running() || gui_state == GuiState::Commands];
+	}
 #endif
 }
 
@@ -105,9 +118,10 @@ extern "C" int SDL_main(int argc, char *argv[])
     CFRelease(resourcesURL);
     CFRelease(mainBundle);
 
-	emu_flycast_init();
+	if (emu_flycast_init() != 0)
+		return 1;
 	
-	int boardId = cfgLoadInt("naomi", "BoardId", 0);
+	int boardId = config::loadInt("naomi", "BoardId");
 	if (boardId > 0)
 	{
 		NSString *label = @"S";		// Slave
@@ -131,7 +145,13 @@ extern "C" int SDL_main(int argc, char *argv[])
 	auto async = std::async(std::launch::async, uploadCrashes, "/tmp");
 #endif
 
-	mainui_loop();
+	try {
+		mainui_loop();
+	} catch (const std::exception& e) {
+		ERROR_LOG(BOOT, "mainui_loop error: %s", e.what());
+	} catch (...) {
+		ERROR_LOG(BOOT, "mainui_loop unknown exception");
+	}
 
 	emu_flycast_term();
 	os_UninstallFaultHandler();
@@ -142,6 +162,7 @@ extern "C" int SDL_main(int argc, char *argv[])
 static int emu_flycast_init()
 {
 	LogManager::Init();
+	i18n::init();
 	os_InstallFaultHandler();
 	NSArray *arguments = [[NSProcessInfo processInfo] arguments];
 	unsigned long argc = [arguments count];
@@ -178,10 +199,6 @@ static int emu_flycast_init()
 	return rc;
 }
 
-std::string os_Locale(){
-    return [[[NSLocale preferredLanguages] objectAtIndex:0] UTF8String];
-}
-
 std::string os_PrecomposedString(std::string string){
     return [[[NSString stringWithUTF8String:string.c_str()] precomposedStringWithCanonicalMapping] UTF8String];
 }
@@ -198,22 +215,95 @@ void os_RunInstance(int argc, const char *argv[])
 			localArgs.push_back((char *)argv[i]);
 		localArgs.push_back(nullptr);
 		execv(selfPath, &localArgs[0]);
-		ERROR_LOG(BOOT, "Error %d launching Flycast instance %s", errno, selfPath);
+		ERROR_LOG(BOOT, "Error %d launching Hollycast instance %s", errno, selfPath);
 		die("execv failed");
 	}
 }
 
+#ifdef DREAMPOTATO_INTEGRATED_MODE
+std::string os_GetAppContainingDir()
+{
+	NSBundle *bundle = [NSBundle mainBundle];
+	if (bundle != nil)
+	{
+		// path to the .app folder
+		NSString *bundlePath = [bundle bundlePath];
+		if (bundlePath != nil && [bundlePath length] > 0)
+			return [[[bundlePath stringByDeletingLastPathComponent] stringByStandardizingPath] UTF8String];
+	}
+
+	// Not packaged in .app. Return the directory containing the executable.
+	NSArray *arguments = [[NSProcessInfo processInfo] arguments];
+	if ([arguments count] == 0)
+		return "";
+
+	NSString *selfPath = [arguments objectAtIndex:0];
+	return [[[selfPath stringByDeletingLastPathComponent] stringByStandardizingPath] UTF8String];
+}
+
+os_Process os_Process::start(const std::string& executable, const std::vector<std::string>& args)
+{
+	os_Process proc;
+	pid_t pid = fork();
+	if (pid == 0)
+	{
+		// Close open file descriptors except for stdio
+		int maxfd = sysconf(_SC_OPEN_MAX);
+		for (int fd = STDERR_FILENO + 1; fd < maxfd; fd++)
+			close(fd);
+
+		std::vector<char *> cargs;
+		cargs.push_back(const_cast<char *>(executable.c_str()));
+		for (const auto& arg : args)
+			cargs.push_back(const_cast<char *>(arg.c_str()));
+		cargs.push_back(nullptr);
+		execvp(executable.c_str(), cargs.data());
+		_exit(127);
+	}
+	else if (pid > 0)
+	{
+		proc.pid = pid;
+	}
+	else
+	{
+		WARN_LOG(BOOT, "os_Process::start fork failed: %s", strerror(errno));
+	}
+	return proc;
+}
+
+bool os_Process::isRunning()
+{
+	if (!isValid())
+		return false;
+	int status;
+	pid_t result = waitpid(pid, &status, WNOHANG);
+	if (result == 0)
+		return true;
+	// Process has exited
+	pid = -1;
+	return false;
+}
+
+void os_Process::terminate()
+{
+	if (!isValid())
+		return;
+	kill(pid, SIGTERM);
+	int status;
+	waitpid(pid, &status, 0);
+	pid = -1;
+}
+#endif // DREAMPOTATO_INTEGRATED_MODE
+
 #import <Syphon/Syphon.h>
 #import <cfg/cfg.h>
-#include "rend/vulkan/vulkan.h"
 static SyphonOpenGLServer* syphonGLServer;
-static SyphonMetalServer* syphonMtlServer;
 
 void os_VideoRoutingPublishFrameTexture(GLuint texID, GLuint texTarget, float w, float h)
 {
 	if (syphonGLServer == NULL)
 	{
-		int boardID = cfgLoadInt("naomi", "BoardId", 0);
+		int boardID = config::loadInt("naomi", "BoardId");
 		syphonGLServer = [[SyphonOpenGLServer alloc] initWithName:[NSString stringWithFormat:(boardID == 0 ? @"Video Content" : @"Video Content - %d"), boardID] context:[SDL_GL_GetCurrentContext() CGLContextObj] options:nil];
 	}
 	CGLLockContext([syphonGLServer context]);
@@ -228,6 +318,11 @@ void os_VideoRoutingTermGL()
 	syphonGLServer = NULL;
 }
 
+#ifdef USE_VULKAN
+#include "rend/vulkan/vulkan.h"
+
+static SyphonMetalServer* syphonMtlServer;
+
 void os_VideoRoutingPublishFrameTexture(const vk::Device& device, const vk::Image& image, const vk::Queue& queue, float x, float y, float w, float h)
 {
 	if (syphonMtlServer == NULL)
@@ -236,7 +331,7 @@ void os_VideoRoutingPublishFrameTexture(const vk::Device& device, const vk::Imag
 		auto objectsInfo = vk::ExportMetalObjectsInfoEXT(&deviceInfo);
 		device.exportMetalObjectsEXT(&objectsInfo);
 		
-		int boardID = cfgLoadInt("naomi", "BoardId", 0);
+		int boardID = config::loadInt("naomi", "BoardId");
 		syphonMtlServer = [[SyphonMetalServer alloc] initWithName:[NSString stringWithFormat:(boardID == 0 ? @"Video Content" : @"Video Content - %d"), boardID] device:deviceInfo.mtlDevice options:nil];
 	}
 	
@@ -257,6 +352,7 @@ void os_VideoRoutingTermVk()
 	[syphonMtlServer release];
 	syphonMtlServer = NULL;
 }
+#endif
 
 namespace hostfs
 {
@@ -265,6 +361,16 @@ std::string getScreenshotsPath()
 {
 	NSArray *paths = NSSearchPathForDirectoriesInDomains(NSPicturesDirectory, NSUserDomainMask, YES);
 	return [[paths objectAtIndex:0] UTF8String];
+}
+
+}
+
+namespace i18n
+{
+
+std::string getSystemLocale()
+{
+	return [[[NSLocale preferredLanguages] objectAtIndex:0] UTF8String];
 }
 
 }

@@ -70,16 +70,23 @@ static inline int get_last_error() { return WSAGetLastError(); }
 #ifndef SHUT_RD
 #define SHUT_RD SD_RECEIVE
 #endif
+#ifndef SHUT_RDWR
+#define SHUT_RDWR SD_BOTH
+#endif
 #endif
 
 bool is_local_address(u32 addr);
 
-static inline void set_non_blocking(sock_t fd)
+static inline void set_non_blocking(sock_t fd, bool enable = true)
 {
 #ifndef _WIN32
-	fcntl(fd, F_SETFL, O_NONBLOCK);
+	const int flags = fcntl(fd, F_GETFL, O_NONBLOCK);
+	if (enable && (flags & O_NONBLOCK) == 0)
+		fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+	else if (!enable && (flags & O_NONBLOCK) != 0)
+		fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
 #else
-	u_long optl = 1;
+	u_long optl = (u_long)enable;
 	ioctlsocket(fd, FIONBIO, &optl);
 #endif
 }
@@ -91,7 +98,7 @@ static inline void set_tcp_nodelay(sock_t fd)
 #if defined(_WIN32)
 	struct protoent *tcp_proto = getprotobyname("TCP");
 	setsockopt(fd, tcp_proto->p_proto, TCP_NODELAY, (const char *)&optval, optlen);
-#elif !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__NetBSD__) && !defined(__OpenBSD__)
+#elif !defined(__APPLE__) && !defined(__DragonFly__) && !defined(__FreeBSD__) && !defined(__NetBSD__) && !defined(__OpenBSD__) && !defined(__HAIKU__)
 	setsockopt(fd, SOL_TCP, TCP_NODELAY, (const void *)&optval, optlen);
 #else
 	struct protoent *tcp_proto = getprotobyname("TCP");
@@ -145,4 +152,34 @@ static inline const char *inet_ntop(int af, const void* src, char* dst, int cnt)
 void enableNetworkBroadcast(bool enable);
 #else
 static inline void enableNetworkBroadcast(bool enable) {}
+#endif
+
+#ifdef __ANDROID__
+#include <ifaddrs.h>
+
+extern "C" {
+
+int android_getifaddrs(struct ifaddrs **ifap);
+void android_freeifaddrs(struct ifaddrs *ifa);
+
+static inline int my_getifaddrs(struct ifaddrs **ifap)
+{
+	if (__builtin_available(android 24, *))
+		return ::getifaddrs(ifap);
+	else
+		return ::android_getifaddrs(ifap);
+}
+
+static inline void my_freeifaddrs(struct ifaddrs *ifa)
+{
+	if (__builtin_available(android 24, *))
+		::freeifaddrs(ifa);
+	else
+		::android_freeifaddrs(ifa);
+}
+
+}
+
+#define getifaddrs my_getifaddrs
+#define freeifaddrs my_freeifaddrs
 #endif

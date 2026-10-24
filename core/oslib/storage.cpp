@@ -20,6 +20,7 @@
 #include "directory.h"
 #include "stdclass.h"
 #include "nowide/stackstring.hpp"
+#include "i18n.h"
 
 // For macOS
 std::string os_PrecomposedString(std::string string);
@@ -27,9 +28,7 @@ std::string os_PrecomposedString(std::string string);
 namespace hostfs
 {
 
-CustomStorage& customStorage();
-
-#if !defined(__ANDROID__) || defined(LIBRETRO)
+#if !defined(__ANDROID__) && !defined(LIBRETRO)
 CustomStorage& customStorage()
 {
 	class NullStorage : public CustomStorage
@@ -37,7 +36,7 @@ CustomStorage& customStorage()
 	public:
 		bool isKnownPath(const std::string& path) override { return false; }
 		std::vector<FileInfo> listContent(const std::string& path) override { return std::vector<FileInfo>(); }
-		FILE *openFile(const std::string& path, const std::string& mode) override { die("Not implemented"); }
+		File *openFile(const std::string& path, const std::string& mode) override { die("Not implemented"); }
 		std::string getParentPath(const std::string& path) override { die("Not implemented"); }
 		std::string getSubPath(const std::string& reference, const std::string& relative) override { die("Not implemented"); }
 		FileInfo getFileInfo(const std::string& path) override { die("Not implemented"); }
@@ -77,7 +76,7 @@ public:
 		DIR *dir = flycast::opendir(path.c_str());
 		if (dir == nullptr) {
 			WARN_LOG(COMMON, "Cannot read directory '%s' errno 0x%x", path.c_str(), errno);
-			throw StorageException("Can't read directory " + path);
+			throw StorageException(strprintf(i18n::T("Can't read directory %s"), path.c_str()));
 		}
 		std::vector<FileInfo> entries;
 		while (true)
@@ -110,6 +109,15 @@ public:
 			if (direntry->d_type == DT_DIR)
 				isDir = true;
 			// Skip hidden files - but we already check this in readdir
+#elif defined(__HAIKU__)
+			struct stat st;
+			if (flycast::stat(entry.path.c_str(), &st) != 0)
+			{
+				WARN_LOG(COMMON, "Cannot stat file '%s' errno 0x%x", entry.path.c_str(), errno);
+				continue;
+			}
+			if (S_ISDIR(st.st_mode))
+				isDir = true;
 #elif !defined(_WIN32)
 			if (direntry->d_type == DT_DIR)
 				isDir = true;
@@ -146,9 +154,14 @@ public:
 		return entries;
 	}
 
-	FILE *openFile(const std::string& path, const std::string& mode) override
+	File *openFile(const std::string& path, const std::string& mode) override
 	{
-		return nowide::fopen(path.c_str(), mode.c_str());
+		FILE *file = nowide::fopen(path.c_str(), mode.c_str());
+
+		if (file == nullptr)
+			return nullptr;
+
+		return new StdFile(file);
 	}
 
 	std::string getParentPath(const std::string& path) override
@@ -197,7 +210,7 @@ public:
 		if (flycast::stat(path.c_str(), &st) != 0) {
 			if (errno != ENOENT)
 				INFO_LOG(COMMON, "Cannot stat file '%s' errno %d", path.c_str(), errno);
-			throw StorageException("Cannot stat " + path);
+			throw StorageException(strprintf(i18n::T("Cannot stat %s"), path.c_str()));
 		}
 		info.isDirectory = S_ISDIR(st.st_mode);
 		info.size = st.st_size;
@@ -218,7 +231,7 @@ public:
 				// Win32 device namespace
 				UINT type = GetDriveTypeW(wname.get());
 				if (type != DRIVE_CDROM)
-					throw StorageException("Invalid device " + lpath.substr(4, 2));
+					throw StorageException(strprintf(i18n::T("Invalid device %s"), lpath.substr(4, 2).c_str()));
 				info.isDirectory = false;
 				info.isWritable = false;
 			}
@@ -242,14 +255,14 @@ public:
 					if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND)
 						INFO_LOG(COMMON, "Cannot get attributes of '%s' error 0x%x", lpath.c_str(), error);
 					_set_errno(error);
-					throw StorageException("Cannot get attributes of " + lpath);
+					throw StorageException(strprintf(i18n::T("Cannot get attributes of %s"), lpath.c_str()));
 				}
 			}
 		}
 		else
 		{
 			_set_errno(EINVAL);
-			throw StorageException("Invalid file name " + path);
+			throw StorageException(strprintf(i18n::T("Invalid file name %s"), path.c_str()));
 		}
 #endif
 		return info;
@@ -347,7 +360,7 @@ std::vector<FileInfo> AllStorage::listContent(const std::string& path)
 		return stdStorage.listContent(path);
 }
 
-FILE *AllStorage::openFile(const std::string& path, const std::string& mode)
+File *AllStorage::openFile(const std::string& path, const std::string& mode)
 {
 	if (customStorage().isKnownPath(path))
 		return customStorage().openFile(path, mode);

@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include "ui/gui.h"
 #include "oslib/oslib.h"
+#include "sdl/sdl.h"
 
 #ifdef USE_BREAKPAD
 #include "client/mac/handler/exception_handler.h"
@@ -54,6 +55,41 @@ static NSString *getApplicationName(void)
         appName = [[NSProcessInfo processInfo] processName];
     
     return appName;
+}
+
+static bool eventIsFKeyWithoutFunction(NSEvent *event)
+{
+    if (event == nil || [event type] != NSEventTypeKeyDown)
+        return false;
+
+    NSString *characters = [event charactersIgnoringModifiers];
+    return [characters length] == 1
+        && [characters caseInsensitiveCompare:@"f"] == NSOrderedSame
+        && ([event modifierFlags] & NSEventModifierFlagFunction) == 0;
+}
+
+static void restoreFunctionFullScreenShortcut(NSMenuItem *menuItem)
+{
+    [menuItem setKeyEquivalent:@"f"];
+    [menuItem setKeyEquivalentModifierMask:NSEventModifierFlagFunction];
+}
+
+static void installFunctionFullScreenShortcutGuard(NSMenuItem *menuItem)
+{
+    static id monitor = nil;
+    if (monitor != nil)
+        return;
+
+    monitor = [[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *event) {
+        if (eventIsFKeyWithoutFunction(event))
+        {
+            [menuItem setKeyEquivalent:@""];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                restoreFunctionFullScreenShortcut(menuItem);
+            });
+        }
+        return event;
+    }] retain];
 }
 
 @interface NSApplication (SDLApplication)
@@ -163,7 +199,9 @@ static void setApplicationMenu(void)
     
     [appleMenu addItemWithTitle:@"New Instance" action:@selector(newInstance:) keyEquivalent:@"n"];
 
-    [appleMenu addItemWithTitle:@"Toggle Menu" action:@selector(toggleMenu:) keyEquivalent:@"m"];
+    NSMenuItem *toggleMenuItem = [appleMenu addItemWithTitle:@"Toggle Menu" action:@selector(toggleMenu:) keyEquivalent:@"M"];
+    [toggleMenuItem setTag:MENU_TAG_TOGGLE_MENU];
+    [appleMenu setAutoenablesItems:NO];
 
     [appleMenu addItem:[NSMenuItem separatorItem]];
     
@@ -171,7 +209,7 @@ static void setApplicationMenu(void)
     [appleMenu addItemWithTitle:title action:@selector(hide:) keyEquivalent:@"h"];
     
     menuItem = (NSMenuItem *)[appleMenu addItemWithTitle:@"Hide Others" action:@selector(hideOtherApplications:) keyEquivalent:@"h"];
-    [menuItem setKeyEquivalentModifierMask:(NSAlternateKeyMask|NSCommandKeyMask)];
+    [menuItem setKeyEquivalentModifierMask:(NSEventModifierFlagOption | NSEventModifierFlagCommand)];
     
     [appleMenu addItemWithTitle:@"Show All" action:@selector(unhideAllApplications:) keyEquivalent:@""];
     
@@ -222,6 +260,20 @@ static void setupWindowMenu(void)
     [windowMenu addItem:menuItem];
     [menuItem release];
     
+    menuItem = [[NSMenuItem alloc] initWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
+    [menuItem setKeyEquivalentModifierMask:NSEventModifierFlagFunction];
+    [windowMenu addItem:menuItem];
+    installFunctionFullScreenShortcutGuard(menuItem);
+    [menuItem release];
+    
+    /* "Ctrl + Cmd + F" was the standard Full Screen shortcut from OS X 10.7 Lion through macOS 11 Big Sur.
+       Add it back as an alternative shortcut for user without an Apple keyboard */
+    menuItem = [[NSMenuItem alloc] initWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
+    [menuItem setKeyEquivalentModifierMask:(NSEventModifierFlagControl | NSEventModifierFlagCommand)];
+    [menuItem setAlternate:YES];
+    [windowMenu addItem:menuItem];
+    [menuItem release];
+    
     /* Put menu into the menubar */
     windowMenuItem = [[NSMenuItem alloc] initWithTitle:@"Window" action:nil keyEquivalent:@""];
     [windowMenuItem setSubmenu:windowMenu];
@@ -240,13 +292,9 @@ static void setupHelpMenu(void)
 {
     NSMenu      *helpMenu;
     NSMenuItem  *helpMenuItem;
-    NSMenuItem  *menuItem;
     
     helpMenu = [[NSMenu alloc] initWithTitle:@"Help"];
     
-    /* Standard Apple Help item */
-    menuItem = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(showHelp:) keyEquivalent:@"/"];
-
     /* Put menu into the menubar */
     helpMenuItem = [[NSMenuItem alloc] initWithTitle:@"Help" action:nil keyEquivalent:@""];
     [helpMenuItem setSubmenu:helpMenu];
@@ -310,30 +358,12 @@ static bool dumpCallback(const char *dump_dir, const char *minidump_id, void *co
     return succeeded;
 }
 #endif
-/*
- * Catch document open requests...this lets us notice files when the app
- *  was launched by double-clicking a document, or when a document was
- *  dragged/dropped on the app's icon. You need to have a
- *  CFBundleDocumentsType section in your Info.plist to get this message,
- *  apparently.
- *
- * Files are added to gArgv, so to the app, they'll look like command line
- *  arguments. Previously, apps launched from the finder had nothing but
- *  an argv[0].
- *
- * This message may be received multiple times to open several docs on launch.
- *
- * This message is ignored once the app's mainline has been called.
- */
+// Queue document opens until the main loop can safely load the game.
 - (BOOL)application:(NSApplication *)theApplication openFile:(NSString *)filename
 {
-	dispatch_async(dispatch_get_main_queue(), ^(){
-		gui_start_game([filename cStringUsingEncoding:NSUTF8StringEncoding]);
-	});
-
-    return TRUE;
+	// AppKit may deliver a document before SDL initializes the video subsystem.
+	return sdl_queue_open_file([filename UTF8String]) ? YES : NO;
 }
-
 
 /* Called when the internal event loop has just started running */
 - (void) applicationDidFinishLaunching: (NSNotification *) note

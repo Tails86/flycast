@@ -34,6 +34,12 @@
 	GamepadDevice::Register(mouse);
 }
 
+- (void)dealloc
+{
+	GamepadDevice::Unregister(mouse);
+	mouse.reset();
+}
+
 - (void)touchLocation:(UITouch*)touch;
 {
 	float scale = self.contentScaleFactor;

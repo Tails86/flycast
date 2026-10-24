@@ -78,6 +78,9 @@ static void emuEventCallback(Event event, void *)
 		case Event::DiskChange:
 			key = "diskChange";
 			break;
+		case Event::LocaleChange:
+			key = "localeChange";
+			break;
 		}
 		if (v[key].isFunction())
 			v[key]();
@@ -235,6 +238,7 @@ static void setMapleType(int bus, int type, lua_State *L)
 	case MDT_RacingController:
 	case MDT_DenshaDeGoController:
 	case MDT_SegaControllerXL:
+	case MDT_DreamParaParaController:
 	case MDT_None:
 		config::MapleMainDevices[bus - 1] = (MapleDeviceType)type;
 		maple_ReconnectDevices();
@@ -424,6 +428,26 @@ static void luaRegister(lua_State *L)
 	  		.beginNamespace("emulator")
 				.addFunction("startGame", gui_start_game)	// FIXME threading!
 				.addFunction("stopGame", std::function<void()>([]() { gui_stop_game(""); }))
+				.addFunction("openGdrom", std::function<void()>([]() {
+					bool restart = false;
+					if (gui_state == GuiState::Closed) {
+						gui_open_settings();
+						restart = true;
+					}
+					emu.openGdrom();
+					if (restart)
+						gui_open_settings();
+				}))
+				.addFunction("insertGdrom", std::function<void(const std::string&)>([](const std::string& path) {
+					bool restart = false;
+					if (gui_state == GuiState::Closed) {
+						gui_open_settings();
+						restart = true;
+					}
+					emu.insertGdrom(path);
+					if (restart)
+						gui_open_settings();
+				}))
 				.addFunction("pause", std::function<void()>([]() {
 					if (gui_state == GuiState::Closed)
 						gui_open_settings();

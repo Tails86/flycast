@@ -37,6 +37,7 @@
 #include "emulator.h"
 #include "ui/mainui.h"
 #include "oslib/directory.h"
+#include "oslib/i18n.h"
 #include "dynlink.h"
 #ifdef USE_BREAKPAD
 #include "breakpad/client/windows/handler/exception_handler.h"
@@ -46,9 +47,11 @@
 
 #include <nowide/args.hpp>
 #include <nowide/stackstring.hpp>
+#include <exception>
 
 #include <windows.h>
 #include <windowsx.h>
+#include <winsock2.h>
 
 static void setupPath()
 {
@@ -311,6 +314,11 @@ int main(int argc, char* argv[])
 {
 	nowide::args _(argc, argv);
 
+	WSADATA wsaData;
+	int ret = WSAStartup(MAKEWORD(2, 0), &wsaData);
+	if (ret != 0)
+		fprintf(stderr, "WSAStartup failed. error %x", ret);
+
 #ifdef USE_BREAKPAD
 	wchar_t tempDir[MAX_PATH + 1];
 	GetTempPathW(MAX_PATH + 1, tempDir);
@@ -337,6 +345,7 @@ int main(int argc, char* argv[])
 	setbuf(stderr, NULL);
 #endif
 	LogManager::Init();
+	i18n::init();
 
 	reserveBottomMemory();
 	setupPath();
@@ -359,10 +368,20 @@ int main(int argc, char* argv[])
 #endif
 	os_InstallFaultHandler();
 
-	mainui_loop();
+	try {
+		mainui_loop();
+	} catch (const std::exception& e) {
+		ERROR_LOG(BOOT, "mainui_loop error: %s", e.what());
+#ifndef TARGET_UWP
+		MessageBox(NULL, i18n::T("Flycast Error"), e.what(), MB_ICONSTOP | MB_OK);
+#endif
+	} catch (...) {
+		ERROR_LOG(BOOT, "mainui_loop unknown exception");
+	}
 
 	flycast_term();
 	os_UninstallFaultHandler();
+	WSACleanup();
 
 	return 0;
 }
@@ -410,10 +429,10 @@ void os_RunInstance(int argc, const char *argv[])
 		cmdLine += L" \"";
 		for (wchar_t *p = wname.get(); *p != L'\0'; p++)
 		{
-			cmdLine += *p;
 			if (*p == L'"')
 				// escape double quote
-				cmdLine += L'"';
+				cmdLine += L'\\';
+			cmdLine += *p;
 		}
 		cmdLine += L'"';
 	}
@@ -433,6 +452,89 @@ void os_RunInstance(int argc, const char *argv[])
 		WARN_LOG(BOOT, "Cannot launch Flycast instance: error %d", GetLastError());
 	}
 }
+
+#ifdef DREAMPOTATO_INTEGRATED_MODE
+std::string os_GetAppContainingDir()
+{
+	wchar_t exePath[MAX_PATH];
+	GetModuleFileNameW(NULL, exePath, std::size(exePath));
+
+	nowide::stackstring path;
+	if (!path.convert(exePath))
+		return ".";
+
+	std::string fullPath = path.get();
+	size_t pos = get_last_slash_pos(fullPath);
+	if (pos == std::string::npos)
+		return ".";
+
+	return fullPath.substr(0, pos);
+}
+
+os_Process os_Process::start(const std::string& executable, const std::vector<std::string>& args)
+{
+	os_Process proc;
+
+	nowide::wstackstring wexe;
+	if (!wexe.convert(executable.c_str()))
+		return proc;
+
+	std::wstring cmdLine = L'"' + std::wstring(wexe.get()) + L'"';
+	for (const auto& arg : args)
+	{
+		nowide::wstackstring warg;
+		if (!warg.convert(arg.c_str()))
+			continue;
+		cmdLine += L" \"";
+		for (wchar_t *p = warg.get(); *p != L'\0'; p++)
+		{
+			cmdLine += *p;
+			if (*p == L'"')
+				cmdLine += L'"';
+		}
+		cmdLine += L'"';
+	}
+
+	STARTUPINFOW startupInfo{};
+	startupInfo.cb = sizeof(startupInfo);
+
+	PROCESS_INFORMATION processInfo{};
+	BOOL rc = CreateProcessW(wexe.get(), (wchar_t *)cmdLine.c_str(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startupInfo, &processInfo);
+	if (rc)
+	{
+		proc.handle = processInfo.hProcess;
+		CloseHandle(processInfo.hThread);
+	}
+	else
+	{
+		WARN_LOG(BOOT, "os_Process::start failed: error %d", GetLastError());
+	}
+	return proc;
+}
+
+bool os_Process::isRunning()
+{
+	if (!isValid())
+		return false;
+	DWORD result = WaitForSingleObject(handle, 0);
+	if (result == WAIT_TIMEOUT)
+		return true;
+	// Process has exited
+	CloseHandle(handle);
+	handle = nullptr;
+	return false;
+}
+
+void os_Process::terminate()
+{
+	if (!isValid())
+		return;
+	TerminateProcess(handle, 1);
+	WaitForSingleObject(handle, 5000);
+	CloseHandle(handle);
+	handle = nullptr;
+}
+#endif // DREAMPOTATO_INTEGRATED_MODE
 
 static WinLibLoader kernelBaseLib("KernelBase.dll");
 
@@ -490,17 +592,17 @@ void os_VideoRoutingPublishFrameTexture(GLuint texID, GLuint texTarget, float w,
 	if (spoutSender == nullptr)
 	{
 		spoutSender = new SpoutSender();
-		int boardID = cfgLoadInt("naomi", "BoardId", 0);
+		int boardID = config::loadInt("naomi", "BoardId");
 		char buf[32] = { 0 };
 		vsnprintf(buf, sizeof(buf), (boardID == 0 ? "Flycast - Video Content" : "Flycast - Video Content - %d"), std::va_list(&boardID));
 		spoutSender->SetSenderName(buf);
-	}	
+	}
 	spoutSender->SendTexture(texID, texTarget, w, h, true);
 }
 
 void os_VideoRoutingTermGL()
 {
-	if (spoutSender) 
+	if (spoutSender)
 	{
 		spoutSender->ReleaseSender();
 		spoutSender = nullptr;
@@ -521,7 +623,7 @@ void os_VideoRoutingPublishFrameTexture(ID3D11Texture2D* pTexture)
 			resource->Release();
 			spoutDXSender->OpenDirectX11(pDevice);
 			pDevice->Release();
-			int boardID = cfgLoadInt("naomi", "BoardId", 0);
+			int boardID = config::loadInt("naomi", "BoardId");
 			char buf[32] = { 0 };
 			vsnprintf(buf, sizeof(buf), (boardID == 0 ? "Flycast - Video Content" : "Flycast - Video Content - %d"), std::va_list(&boardID));
 			spoutDXSender->SetSenderName(buf);

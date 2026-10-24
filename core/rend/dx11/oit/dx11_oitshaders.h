@@ -34,7 +34,7 @@ public:
 
 	const ComPtr<ID3D11PixelShader>& getShader(bool pp_Texture, bool pp_UseAlpha, bool pp_IgnoreTexA, u32 pp_ShadInstr,
 			bool pp_Offset, u32 pp_FogCtrl, bool pp_BumpMap, bool fog_clamping,
-			int palette, bool gouraud, bool alphaTest, bool clipInside, bool twoVolumes, Pass pass);
+			int palette, bool gouraud, bool alphaTest, bool clipInside, bool twoVolumes, bool secAccum, Pass pass);
 	const ComPtr<ID3D11VertexShader>& getVertexShader(bool gouraud, bool naomi2, bool positionOnly, bool lightOn, bool twoVolumes = true);
 	const ComPtr<ID3D11PixelShader>& getModVolShader();
 	const ComPtr<ID3D11VertexShader>& getMVVertexShader(bool naomi2);
@@ -67,6 +67,7 @@ private:
 	ComPtr<ID3DBlob> compileShader(const char *source, const char* function, const char* profile, const D3D_SHADER_MACRO *pDefines);
 	ComPtr<ID3D11VertexShader> compileVS(const char *source, const char* function, const D3D_SHADER_MACRO *pDefines);
 	ComPtr<ID3D11PixelShader> compilePS(const char *source, const char* function, const D3D_SHADER_MACRO *pDefines);
+	void checkMaxLayers();
 
 	ComPtr<ID3D11Device> device;
 	std::unordered_map<u32, ComPtr<ID3D11PixelShader>> shaders;

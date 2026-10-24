@@ -20,6 +20,11 @@
 */
 #include "oit_renderpass.h"
 
+void RenderPasses::Reset() {
+	for (auto& renderPass : renderPasses)
+		renderPass.reset();
+}
+
 vk::UniqueRenderPass RenderPasses::MakeRenderPass(bool initial, bool last, bool loadClear)
 {
 	vk::AttachmentDescription attach0 = GetAttachment0Description(initial, last, loadClear);
@@ -75,13 +80,39 @@ vk::UniqueRenderPass RenderPasses::MakeRenderPass(bool initial, bool last, bool 
     };
 
     std::vector<vk::SubpassDependency> dependencies = GetSubpassDependencies();
-    dependencies.emplace_back(VK_SUBPASS_EXTERNAL, 1, vk::PipelineStageFlagBits::eFragmentShader, vk::PipelineStageFlagBits::eColorAttachmentOutput,
+    dependencies.emplace_back(vk::SubpassExternal, 1, vk::PipelineStageFlagBits::eFragmentShader, vk::PipelineStageFlagBits::eColorAttachmentOutput,
     		vk::AccessFlagBits::eInputAttachmentRead, vk::AccessFlagBits::eColorAttachmentWrite, vk::DependencyFlagBits::eByRegion);
+    // The OP+PT color and depth/stencil attachments and the OIT storage buffers are shared by consecutive
+    // render passes and by all the frames in flight. Previous reads (input attachments) and writes (color, depth, a-buffers)
+    // must be done before these attachments are cleared or loaded and the a-buffers are written again.
+    // Attachments 1 and 2 are first used in subpass 0 and depth attachment 3 in subpass 1.
+    constexpr vk::PipelineStageFlags oitStages = vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests
+    		| vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eColorAttachmentOutput;
+    for (u32 subpass : { 0u, 1u })
+    	dependencies.emplace_back(vk::SubpassExternal, subpass, oitStages, oitStages,
+    			vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite | vk::AccessFlagBits::eShaderWrite,
+    			vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite
+    				| vk::AccessFlagBits::eDepthStencilAttachmentRead | vk::AccessFlagBits::eDepthStencilAttachmentWrite
+    				| vk::AccessFlagBits::eInputAttachmentRead | vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite);
+    // Attachment 0 is first used in subpass 2. With multiple render passes, it was the OP+PT color attachment
+    // of the previous render pass (written as color and read as input attachment).
+    dependencies.emplace_back(vk::SubpassExternal, 2,
+    		vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eColorAttachmentOutput,
+    		vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eColorAttachmentOutput,
+    		vk::AccessFlagBits::eColorAttachmentWrite,
+    		vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite);
     dependencies.emplace_back(0, 1, vk::PipelineStageFlagBits::eLateFragmentTests, vk::PipelineStageFlagBits::eFragmentShader,
     		vk::AccessFlagBits::eDepthStencilAttachmentRead | vk::AccessFlagBits::eDepthStencilAttachmentWrite,
 			vk::AccessFlagBits::eInputAttachmentRead | vk::AccessFlagBits::eShaderRead, vk::DependencyFlagBits::eByRegion);
-    dependencies.emplace_back(1, 2, vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eFragmentShader,
-    		vk::AccessFlagBits::eColorAttachmentWrite, vk::AccessFlagBits::eInputAttachmentRead, vk::DependencyFlagBits::eByRegion);
+    // Chains the external dependency above with the OP+PT color attachment transition to subpass 2
+    dependencies.emplace_back(0, 1, vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eColorAttachmentOutput,
+    		vk::AccessFlagBits::eColorAttachmentWrite, vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite,
+			vk::DependencyFlagBits::eByRegion);
+    // The OP+PT color attachment is stored at the end of subpass 2
+    dependencies.emplace_back(1, 2, vk::PipelineStageFlagBits::eColorAttachmentOutput,
+    		vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eColorAttachmentOutput,
+    		vk::AccessFlagBits::eColorAttachmentWrite, vk::AccessFlagBits::eInputAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite,
+    		vk::DependencyFlagBits::eByRegion);
     // This dependency is only needed if the render pass isn't the last: it's needed for the depth-only Tr pass
     // Unfortunately we want all render passes to be compatible, and that means all attachments must be identical
     dependencies.emplace_back(1, 2, vk::PipelineStageFlagBits::eFragmentShader,
@@ -100,7 +131,7 @@ vk::UniqueRenderPass RenderPasses::MakeRenderPass(bool initial, bool last, bool 
 	if (GetContext()->GetVendorID() == VulkanContext::VENDOR_ARM) {
 		// Avoid glitches in upper left corner with Mali GPUs.
 		// Using eTopOfPipe as destination since eFragmentShader/eInputAttachmentRead|eShaderRead fails to fix the problem, which is odd.
-		dependencies.emplace_back(2, VK_SUBPASS_EXTERNAL, vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eTopOfPipe,
+		dependencies.emplace_back(2, vk::SubpassExternal, vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eTopOfPipe,
 				vk::AccessFlagBits::eColorAttachmentWrite, vk::AccessFlagBits::eNone);
 	}
 
@@ -110,3 +141,43 @@ vk::UniqueRenderPass RenderPasses::MakeRenderPass(bool initial, bool last, bool 
 			dependencies));
 }
 
+vk::AttachmentDescription RenderPasses::GetAttachment0Description(bool initial, bool last, bool loadClear) const
+{
+	return vk::AttachmentDescription(vk::AttachmentDescriptionFlags(), vk::Format::eR8G8B8A8Unorm, vk::SampleCountFlagBits::e1,
+			initial && loadClear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore,
+			vk::AttachmentLoadOp::eDontCare, vk::AttachmentStoreOp::eDontCare,
+			config::EmulateFramebuffer && initial ? vk::ImageLayout::eTransferSrcOptimal : vk::ImageLayout::eShaderReadOnlyOptimal,
+			config::EmulateFramebuffer && last ? vk::ImageLayout::eTransferSrcOptimal : vk::ImageLayout::eShaderReadOnlyOptimal);
+}
+
+std::vector<vk::SubpassDependency> RenderPasses::GetSubpassDependencies() const
+{
+	if (config::EmulateFramebuffer)
+		return { { 2, vk::SubpassExternal,
+				vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eTransfer | vk::PipelineStageFlagBits::eHost,
+				vk::AccessFlagBits::eColorAttachmentWrite, vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eHostRead, vk::DependencyFlagBits::eByRegion } };
+	else
+		return { { 2, vk::SubpassExternal,
+				vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eFragmentShader,
+				vk::AccessFlagBits::eColorAttachmentWrite, vk::AccessFlagBits::eShaderRead, vk::DependencyFlagBits::eByRegion } };
+}
+
+vk::AttachmentDescription RttRenderPasses::GetAttachment0Description(bool initial, bool last, bool loadClear) const
+{
+	return vk::AttachmentDescription(vk::AttachmentDescriptionFlags(), vk::Format::eR8G8B8A8Unorm, vk::SampleCountFlagBits::e1,
+			vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
+			vk::AttachmentLoadOp::eDontCare, vk::AttachmentStoreOp::eDontCare,
+			vk::ImageLayout::eUndefined,
+			config::RenderToTextureBuffer && last ? vk::ImageLayout::eTransferSrcOptimal : vk::ImageLayout::eShaderReadOnlyOptimal);
+}
+
+std::vector<vk::SubpassDependency> RttRenderPasses::GetSubpassDependencies() const
+{
+	if (config::RenderToTextureBuffer)
+		return { { 2, vk::SubpassExternal,
+				vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eTransfer | vk::PipelineStageFlagBits::eHost,
+				vk::AccessFlagBits::eColorAttachmentWrite, vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eHostRead } };
+	else
+		return { { 2, vk::SubpassExternal, vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eFragmentShader,
+				vk::AccessFlagBits::eColorAttachmentWrite, vk::AccessFlagBits::eShaderRead } };
+}

@@ -16,12 +16,12 @@
     You should have received a copy of the GNU General Public License
     along with reicast.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include <cmath>
 #include "mapping.h"
 #include "cfg/ini.h"
 #include "stdclass.h"
 #include "cfg/option.h"
 #include "oslib/storage.h"
+#include <cmath>
 
 static struct
 {
@@ -47,8 +47,9 @@ button_list[] =
 	{ DC_DPAD2_RIGHT, "dreamcast", "btn_dpad2_right" },
 	{ DC_DPAD2_UP, "dreamcast", "btn_dpad2_up" },
 	{ DC_DPAD2_DOWN, "dreamcast", "btn_dpad2_down" },
-	{ EMU_BTN_ESCAPE, "emulator", "btn_escape" },
 	{ EMU_BTN_MENU, "emulator", "btn_menu" },
+	{ EMU_BTN_ESCAPE, "emulator", "btn_escape" },
+	{ EMU_BTN_PAUSE, "emulator", "btn_pause" },
 	{ EMU_BTN_FFORWARD, "emulator", "btn_fforward" },
 	{ DC_AXIS_LT, "compat", "btn_trigger_left" },
 	{ DC_AXIS_RT, "compat", "btn_trigger_right" },
@@ -62,6 +63,10 @@ button_list[] =
 	{ DC_BTN_INSERT_CARD, "emulator", "insert_card" },
 	{ EMU_BTN_LOADSTATE, "emulator", "btn_jump_state" },
 	{ EMU_BTN_SAVESTATE, "emulator", "btn_quick_save" },
+	{ EMU_BTN_NEXTSLOT, "emulator", "btn_next_slot" },
+	{ EMU_BTN_PREVSLOT, "emulator", "btn_prev_slot" },
+	{ EMU_BTN_LOADSTATE_RAM, "emulator", "btn_jump_state_ram" },
+	{ EMU_BTN_SAVESTATE_RAM, "emulator", "btn_quick_save_ram" },
 	{ EMU_BTN_BYPASS_KB, "emulator", "btn_bypass_kb" },
 	{ EMU_BTN_SCREENSHOT, "emulator", "btn_screenshot" },
 };
@@ -422,7 +427,7 @@ void InputMapping::deleteTrigger(u32 code)
 	}
 }
 
-using namespace emucfg;
+using namespace config;
 
 static DreamcastKey getKeyId(const std::string& name)
 {
@@ -437,22 +442,22 @@ static DreamcastKey getKeyId(const std::string& name)
 	return EMU_BTN_NONE;
 }
 
-void InputMapping::load(FILE* fp)
+void InputMapping::load(hostfs::File* fp)
 {
-	ConfigFile mf;
-	mf.parse(fp);
+	IniFile mf;
+	mf.load(fp);
 
 	this->name = mf.get("emulator", "mapping_name", "<Unknown>");
 
-	int dz = mf.get_int("emulator", "dead_zone", 10);
+	int dz = mf.getInt("emulator", "dead_zone", 10);
 	dz = std::min(dz, 100);
 	dz = std::max(dz, 0);
 	this->dead_zone = (float)dz / 100.f;
-	int sat = std::clamp(mf.get_int("emulator", "saturation", 100), 50, 200);
+	int sat = std::clamp(mf.getInt("emulator", "saturation", 100), 50, 200);
 	this->saturation = (float)sat / 100.f;
-	this->rumblePower = mf.get_int("emulator", "rumble_power", this->rumblePower);
+	this->rumblePower = mf.getInt("emulator", "rumble_power", this->rumblePower);
 
-	version = mf.get_int("emulator", "version", 1);
+	version = mf.getInt("emulator", "version", 1);
 	if (version < 3)
 	{
 		loadv1(mf);
@@ -582,7 +587,7 @@ void InputMapping::load(FILE* fp)
 	dirty = false;
 }
 
-void InputMapping::loadv1(ConfigFile& mf)
+void InputMapping::loadv1(IniFile& mf)
 {
 	for (int port = 0; port < 4; port++)
 	{
@@ -593,7 +598,7 @@ void InputMapping::loadv1(ConfigFile& mf)
 				option = button_list[i].option;
 			else
 				option = button_list[i].option + std::to_string(port);
-			int button_code = mf.get_int(button_list[i].section, option, -1);
+			int button_code = mf.getInt(button_list[i].section, option, -1);
 			if (button_code >= 0)
 			{
 				DreamcastKey id = button_list[i].id;
@@ -613,14 +618,14 @@ void InputMapping::loadv1(ConfigFile& mf)
 				option = axis_list[i].option;
 			else
 				option = axis_list[i].option + std::to_string(port);
-			int axis_code = mf.get_int(axis_list[i].section, option, -1);
+			int axis_code = mf.getInt(axis_list[i].section, option, -1);
 			if (axis_code >= 0)
 			{
 				if (port == 0)
 					option = axis_list[i].option_inverted;
 				else
 					option = axis_list[i].option_inverted + std::to_string(port);
-				bool inverted = mf.get_bool(axis_list[i].section_inverted, option, false);
+				bool inverted = mf.getBool(axis_list[i].section_inverted, option, false);
 
 				this->set_axis(port, axis_list[i].id, axis_code, !inverted);
 
@@ -738,6 +743,7 @@ void InputMapping::clear_button(u32 port, DreamcastKey id)
 	{
 		inputMap.erase(existing->second);
 		existing = revInputMap.erase(existing);
+		dirty = true;
 	}
 }
 
@@ -829,7 +835,7 @@ std::shared_ptr<InputMapping> InputMapping::LoadMapping(const std::string& name)
 		return it->second;
 
 	std::string path;
-	FILE *fp = nullptr;
+	hostfs::File *fp = nullptr;
 	// Try user-defined mapping folders first
 	for (const auto& base : config::MappingsPath.get())
 	{
@@ -853,37 +859,37 @@ std::shared_ptr<InputMapping> InputMapping::LoadMapping(const std::string& name)
 	if (fp == nullptr)
 	{
 		path = get_readonly_config_path(std::string("mappings/") + name);
-		fp = nowide::fopen(path.c_str(), "r");
+		fp = hostfs::storage().openFile(path.c_str(), "r");
 		if (fp == NULL)
 			return NULL;
 	}
 	std::shared_ptr<InputMapping> mapping = std::make_shared<InputMapping>();
 	mapping->load(fp);
-	std::fclose(fp);
+	delete fp;
 	loaded_mappings[name] = mapping;
 
 	if (mapping->is_dirty())
 	{
 		// Make a backup of the current mapping file
-		FILE *out = nowide::fopen((path + ".save").c_str(), "w");
+		hostfs::File *out = hostfs::storage().openFile((path + ".save").c_str(), "w");
 		if (out == nullptr)
 			WARN_LOG(INPUT, "Can't backup controller mapping file %s", path.c_str());
 		else
 		{
-			fp = nowide::fopen(path.c_str(), "r");
+			fp = hostfs::storage().openFile(path.c_str(), "r");
 			if (fp != nullptr)
 			{
 				u8 buf[4096];
 				while (true)
 				{
-					size_t n = fread(buf, 1, sizeof(buf), fp);
+					size_t n = fp->read(buf, 1, sizeof(buf));
 					if (n <= 0)
 						break;
-					fwrite(buf, 1, n, out);
+					fp->write(buf, 1, n);
 				}
-				std::fclose(fp);
+				delete fp;
 			}
-			std::fclose(out);
+			delete out;
 		}
 	}
 
@@ -927,19 +933,19 @@ bool InputMapping::save(const std::string& name)
 		make_directory(base);
 		path = get_writable_config_path(std::string("mappings/") + name);
 	}
-	FILE *fp = nowide::fopen(path.c_str(), "w");
+	hostfs::File *fp = hostfs::storage().openFile(path.c_str(), "w");
 	if (fp == NULL)
 	{
 		WARN_LOG(INPUT, "Cannot save controller mappings into %s", path.c_str());
 		return false;
 	}
-	ConfigFile mf;
+	IniFile mf;
 
 	mf.set("emulator", "mapping_name", this->name);
-	mf.set_int("emulator", "dead_zone", (int)std::round(this->dead_zone * 100.f));
-	mf.set_int("emulator", "saturation", (int)std::round(this->saturation * 100.f));
-	mf.set_int("emulator", "rumble_power", this->rumblePower);
-	mf.set_int("emulator", "version", CURRENT_FILE_VERSION);
+	mf.set("emulator", "dead_zone", (int)std::round(this->dead_zone * 100.f));
+	mf.set("emulator", "saturation", (int)std::round(this->saturation * 100.f));
+	mf.set("emulator", "rumble_power", this->rumblePower);
+	mf.set("emulator", "version", CURRENT_FILE_VERSION);
 
 	int bindIndex = 0;
 	for (int port = 0; port < 4; port++)
@@ -1025,7 +1031,7 @@ bool InputMapping::save(const std::string& name)
 	mf.set("emulator", "triggers", triggerString);
 	mf.save(fp);
 	dirty = false;
-	std::fclose(fp);
+	delete fp;
 
 	return true;
 }

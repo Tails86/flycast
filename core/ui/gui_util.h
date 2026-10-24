@@ -25,10 +25,13 @@
 #include "gui.h"
 #include "emulator.h"
 #include "oslib/oslib.h"
+#include "oslib/i18n.h"
+#include "stdclass.h"
 
 #include <algorithm>
 #include <chrono>
 #include <future>
+#include <initializer_list>
 #include <string>
 #include <mutex>
 
@@ -39,17 +42,48 @@ void select_file_popup(const char *prompt, StringCallback callback,
 
 void scrollWhenDraggingOnVoid(ImGuiMouseButton mouse_button = ImGuiMouseButton_Left);
 
-IMGUI_API const ImWchar*    GetGlyphRangesChineseSimplifiedOfficial();// Default + Half-Width + Japanese Hiragana/Katakana + set of 7800 CJK Unified Ideographs from General Standard Chinese Characters
-IMGUI_API const ImWchar*    GetGlyphRangesChineseTraditionalOfficial();// Default + Half-Width + Japanese Hiragana/Katakana + set of 4700 CJK Unified Ideographs from Hong Kong's List of Graphemes of Commonly-Used Chinese Characters
-
 // Helper to display a little (?) mark which shows a tooltip when hovered.
 void ShowHelpMarker(const char* desc);
+
+// Renders a checkbox with optional help text as a single row.
+bool CheckboxRow(const char* name, bool* value, const char* help = nullptr);
+
 template<bool PerGameOption>
 bool OptionCheckbox(const char *name, config::Option<bool, PerGameOption>& option, const char *help = nullptr);
+
+// Renders a slider with optional help text as a single row.
+bool SliderIntRow(const char* name, int* v, int v_min, int v_max, const char* format = "%d", const char* help = nullptr);
+
 template<bool PerGameOption>
 bool OptionSlider(const char *name, config::Option<int, PerGameOption>& option, int min, int max, const char *help = nullptr, const char *format = nullptr);
-template<typename T>
-bool OptionRadioButton(const char *name, config::Option<T>& option, T value, const char *help = nullptr);
+
+// Renders a combo box with optional help text as a single row.
+class ComboBoxRow
+{
+public:
+	static bool BeginCombo(const char* name, const char* value, const char* help = nullptr);
+	static void EndCombo();
+
+	static bool Selectable(const char* label, bool* selected, const ImVec2& size = ImVec2(0, 0));
+	static bool Selectable(const char* label, bool selected, const ImVec2& size = ImVec2(0, 0));
+};
+
+// Similar to ComboBoxRow except the combo items are arranged in 2-column table layout.
+// This is roughly a replacement for radio button groups where the individual items have help text
+class ComboBox2Col
+{
+public:
+	static const char* Preview(int selected, std::initializer_list<const char*> values);
+	static bool BeginCombo(const char* name, const char* value, const char* help = nullptr);
+	static void EndCombo();
+
+	template<typename T>
+	static bool Selectable(const char* label, T* v, T v_button, const char* help = nullptr);
+
+	template<typename T, bool PerGameOption>
+	static bool Selectable(const char *label, config::Option<T, PerGameOption>& option, T value, const char *help = nullptr);
+};
+
 template<bool PerGameOption>
 void OptionComboBox(const char *name, config::Option<int, PerGameOption>& option, const char *values[], int count,
 			const char *help = nullptr);
@@ -60,6 +94,18 @@ static inline void centerNextWindow()
 	ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x / 2.f, ImGui::GetIO().DisplaySize.y / 2.f),
 			ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 }
+
+class FolderList
+{
+public:
+	static void HeaderAddRefresh(const char* name, const char* help, bool& outAdd, bool& outRefresh);
+	static void HeaderAdd(const char* name, const char* help, bool enableAdd, bool& outAdd);
+	static void HeaderImportExport(const char* name, const char* help, bool useSafFilePicker, bool& outImport, bool& outExport);
+	static void Header(const char* name, const char* help);
+	static void Entry(const char* path);
+	static void Entry(const char* path, bool& outDelete);
+	static void End();
+};
 
 void fullScreenWindow(bool modal);
 void windowDragScroll();
@@ -115,6 +161,16 @@ static inline float uiScaled(float f) {
 	return f * settings.display.uiScale;
 }
 
+static inline float uiNormalFontSize()
+{
+	return uiScaled(17.0f);
+}
+
+static inline float uiLargeFontSize()
+{
+	return uiScaled(22.f);
+}
+
 struct ScaledVec2 : public ImVec2
 {
 	ScaledVec2()
@@ -160,6 +216,9 @@ public:
 	ImguiID(const std::string& id)
 		: ImguiID(id.c_str()) {}
 	ImguiID(const char *id) {
+		ImGui::PushID(id);
+	}
+	ImguiID(int id) {
 		ImGui::PushID(id);
 	}
 	~ImguiID() {
@@ -275,21 +334,34 @@ private:
 	static std::array<ImguiVmuTexture, 8> Vmus;
 };
 
-static inline bool iconButton(const char *icon, const std::string& label, const ImVec2& size = {})
+class IconButton
 {
-	ImguiStyleVar _{ImGuiStyleVar_ButtonTextAlign, ImVec2(0.f, 0.5f)};	// left aligned
-	std::string s(5 + label.size(), '\0');
-	s.resize(snprintf(s.data(), s.size() + 1, "%s  %s", icon, label.c_str()));
-	return ImGui::Button(s.c_str(), size);
-}
+public:
+	IconButton(const char *icon, const std::string& label, const ImVec2& size = {})
+		: size(size)
+	{
+		if (icon == nullptr)
+			str = strprintf("%s", label.c_str());
+		else
+			str = strprintf("%s  %s", icon, label.c_str());
+	}
 
-static inline float iconButtonWidth(const char *icon, const std::string& label)
-{
-	// TODO avoid doing stuff twice
-	std::string s(5 + label.size(), '\0');
-	s.resize(snprintf(s.data(), s.size() + 1, "%s  %s", icon, label.c_str()));
-	return ImGui::CalcTextSize(s.c_str()).x + ImGui::GetStyle().FramePadding.x * 2;
-}
+	IconButton(const std::string& label, const ImVec2& size = {})
+		: IconButton(nullptr, label, size)
+	{}
+
+	bool realize() {
+		return ImGui::Button(str.c_str(), size);
+	}
+
+	float width() {
+		return ImGui::CalcTextSize(str.c_str()).x + ImGui::GetStyle().FramePadding.x * 2;
+	}
+
+private:
+	std::string str;
+	ImVec2 size;
+};
 
 static inline ImU32 alphaOverride(ImU32 color, float alpha) {
 	return (color & ~IM_COL32_A_MASK) | (IM_F32_TO_INT8_SAT(alpha) << IM_COL32_A_SHIFT);
@@ -312,7 +384,7 @@ private:
 	std::mutex mutex;
 };
 
-std::string middleEllipsis(const std::string& s, float width);
+std::string middleEllipsis(std::string s, float width);
 
 bool beginFrame(const char *label, const ImVec2& size_arg = ImVec2(0, 0), ImVec2 *out_size = nullptr);
 void endFrame();
@@ -320,3 +392,7 @@ void endFrame();
 bool InputText(const char *label, std::string *str, ImGuiInputTextFlags flags = 0, ImGuiInputTextCallback callback = nullptr, void* user_data = nullptr);
 bool InputText(const char *label, char *str, size_t size, ImGuiInputTextFlags flags = 0, ImGuiInputTextCallback callback = nullptr, void* user_data = nullptr);
 bool InputTextMultiline(const char* label, char* buf, size_t buf_size, const ImVec2& size, ImGuiInputTextFlags flags = 0, ImGuiInputTextCallback callback = nullptr, void* user_data = nullptr);
+struct TextFilter : public ImGuiTextFilter
+{
+	bool Draw(const char* label = "Filter (inc,-exc)", float width = 0.0f);
+};

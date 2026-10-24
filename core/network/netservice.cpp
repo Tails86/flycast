@@ -21,30 +21,39 @@
 #include "dcnet.h"
 #include "emulator.h"
 #include "cfg/option.h"
+#include "rawmodem.h"
 
 namespace net::modbba
 {
 
 static Service *service;
-static bool usingDCNet;
+// Special service installed by CapComDirect, which manages its lifecycle and starting/stopping
+static Service *customService;
 
 bool start()
 {
-	if (service == nullptr || usingDCNet != config::UseDCNet)
+	if (customService == nullptr)
 	{
 		delete service;
-		if (config::UseDCNet)
+		if (settings.content.gameId == "HDR0010")	// Sega Rally 2 (JP)
+			service = new RawModemService();
+		else if (config::UseDCNet)
 			service = new DCNetService();
 		else
 			service = new PicoTcpService();
-		usingDCNet = config::UseDCNet;
 	}
 	return service->start();
 }
 
-void stop() {
+void stop()
+{
 	if (service != nullptr)
 		service->stop();
+}
+
+void setCustomService(Service *service) {
+	customService = service;
+	net::modbba::service = service;
 }
 
 void writeModem(u8 b) {

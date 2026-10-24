@@ -1,4 +1,6 @@
 /*
+	 Portions Copyright 2026 The Hollycast Authors
+
 	 This file is part of reicast.
 
 	 reicast is free software: you can redistribute it and/or modify
@@ -43,6 +45,16 @@ void push_vmu_screen(int bus_id, int bus_port, u8* buffer)
 	vmu_lcd_status[vmu_id] = true;
 #endif
 	vmuLastChanged[vmu_id] = getTimeMs();
+}
+
+void reset_vmu_screen(int bus_id, int bus_port)
+{
+#ifndef LIBRETRO
+	int vmu_id = bus_id * 2 + bus_port;
+	if (vmu_id < 0 || vmu_id >= (int)std::size(vmu_lcd_data))
+		return;
+	vmu_lcd_status[vmu_id] = false;
+#endif
 }
 
 static const int lightgunCrosshairData[16 * 16] =

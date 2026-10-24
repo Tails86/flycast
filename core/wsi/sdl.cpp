@@ -19,19 +19,24 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #if defined(USE_SDL)
-#include "gl_context.h"
+#include "sdl.h"
 #include "ui/gui.h"
 #include "sdl/sdl.h"
 #include "cfg/option.h"
 
-#include <algorithm>
-#include <cmath>
+SDLGLGraphicsContext::SDLGLGraphicsContext(void *window, void *display)
+	: GLGraphicsContext(window, display)
+{
+	if (!init())
+		throw FlycastException("OpenGL initialization failed");
+}
 
-SDLGLGraphicsContext theGLContext;
+SDLGLGraphicsContext::~SDLGLGraphicsContext() {
+	term();
+}
 
 bool SDLGLGraphicsContext::init()
 {
-	instance = this;
 #ifdef GLES
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
@@ -75,28 +80,22 @@ bool SDLGLGraphicsContext::init()
 	}
 	SDL_GL_MakeCurrent(sdlWindow, NULL);
 
-	int w, h;
-	SDL_GetWindowSize(sdlWindow, &w, &h);
-	SDL_GL_GetDrawableSize(sdlWindow, &settings.display.width, &settings.display.height);
-	settings.display.pointScale = (float)settings.display.width / w;
-
-	float hdpi, vdpi;
-	if (!SDL_GetDisplayDPI(SDL_GetWindowDisplayIndex(sdlWindow), nullptr, &hdpi, &vdpi))
-		settings.display.dpi = roundf(std::max(hdpi, vdpi));
-	
-	sdl_fix_steamdeck_dpi(sdlWindow);
+	sdl_update_display_metrics(sdlWindow, SDL_WINDOW_OPENGL);
 
 	INFO_LOG(RENDERER, "Created SDL Window and GL Context successfully");
 
 	SDL_GL_MakeCurrent(sdlWindow, glcontext);
 	// Swap at vsync
 	swapOnVSync = config::VSync;
-	if (settings.display.refreshRate > 60.f)
-		swapInterval = settings.display.refreshRate / 60.f;
-	else
-		swapInterval = 1;
-
-	SDL_GL_SetSwapInterval(swapOnVSync ? swapInterval : 0);
+	int swapInterval = 0;
+	if (swapOnVSync)
+	{
+		if (settings.display.refreshRate > 60.f)
+			swapInterval = settings.display.refreshRate / 60.f;
+		else
+			swapInterval = 1;
+	}
+	SDL_GL_SetSwapInterval(swapInterval);
 
 #ifdef GLES
 	if (gladLoadGLES2((GLADloadfunc)SDL_GL_GetProcAddress) == 0)
@@ -119,15 +118,7 @@ bool SDLGLGraphicsContext::init()
 void SDLGLGraphicsContext::swap()
 {
 	do_swap_automation();
-	if (swapOnVSync == (settings.input.fastForwardMode || !config::VSync))
-	{
-		swapOnVSync = (!settings.input.fastForwardMode && config::VSync);
-		if (settings.display.refreshRate > 60.f)
-			swapInterval = settings.display.refreshRate / 60.f;
-		else
-			swapInterval = 1;
-		SDL_GL_SetSwapInterval(swapOnVSync ? swapInterval : 0);
-	}
+	changeGLSwapInterval();
 	SDL_GL_SwapWindow((SDL_Window *)window);
 
 	// Check if drawable has been resized
@@ -143,6 +134,25 @@ void SDLGLGraphicsContext::swap()
 #endif
 }
 
+void SDLGLGraphicsContext::changeGLSwapInterval()
+{
+	if (!gameSwapIntervalChanged && swapOnVSync == (!settings.input.fastForwardMode && config::VSync))
+		return;
+	swapOnVSync = (!settings.input.fastForwardMode && config::VSync);
+	gameSwapIntervalChanged = false;
+	int swapInterval = 0;
+	if (swapOnVSync)
+	{
+		if (settings.display.refreshRate > 60.f)
+			swapInterval = settings.display.refreshRate / 60.f * gameSwapInterval;
+		else
+			swapInterval = gameSwapInterval;
+		INFO_LOG(RENDERER, "Swap interval changed to %d", swapInterval);
+	}
+	SDL_GL_SetSwapInterval(swapInterval);
+}
+
+
 void SDLGLGraphicsContext::term()
 {
 	preTerm();
@@ -151,6 +161,10 @@ void SDLGLGraphicsContext::term()
 		SDL_GL_DeleteContext(glcontext);
 		glcontext = nullptr;
 	}
+}
+
+void SDLGLGraphicsContext::Create(void *window, void *display) {
+	new SDLGLGraphicsContext(window, display);
 }
 
 #endif

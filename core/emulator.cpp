@@ -1,5 +1,6 @@
 /*
-    Copyright 2021 flyinghead
+    Copyright 2024 flyinghead
+    Portions Copyright 2026 The Hollycast Authors
 
     This file is part of Flycast.
 
@@ -25,6 +26,7 @@
 #include "hw/naomi/naomi_cart.h"
 #include "reios/reios.h"
 #include "hw/sh4/modules/mmu.h"
+#include "hw/sh4/modules/modules.h"
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_mem.h"
 #include "hw/sh4/sh4_sched.h"
@@ -38,21 +40,22 @@
 #include "network/ice.h"
 #include "hw/mem/mem_watch.h"
 #include "network/net_handshake.h"
-#include "network/naomi_network.h"
 #include "serialize.h"
 #include "hw/pvr/pvr.h"
 #include "profiler/fc_profiler.h"
 #include "oslib/storage.h"
-#include "wsi/context.h"
-#include <chrono>
 #ifndef LIBRETRO
 #include "ui/gui.h"
 #endif
-#include "hw/sh4/sh4_interpreter.h"
-#include "hw/sh4/dyna/ngen.h"
-#ifdef USE_DREAMLINK_DEVICES
-#include "sdl/dreamlink.h"
-#endif
+#include "oslib/i18n.h"
+
+#include <algorithm>
+#include <chrono>
+#include <exception>
+#include <future>
+#include <mutex>
+#include <string>
+#include <utility>
 
 settings_t settings;
 constexpr char const *BIOS_TITLE = "Dreamcast BIOS";
@@ -261,7 +264,34 @@ static void loadSpecialSettings()
 				|| prod_id == "T1208M"	 // Gigawing (JP)
 				|| prod_id == "T1235M"   // Vampire Chronicle for Matching Service
 				|| prod_id == "T22901N"  // Roadsters (US)
-				|| prod_id == "T28202M"))// Shin Nihon Pro Wrestling 4
+				|| prod_id == "T28202M"  // Shin Nihon Pro Wrestling 4
+				|| prod_id == "T9512N"	 // The Grinch (US)
+				|| prod_id == "51034"	 // Generator Vol.1
+				|| prod_id == "MK-51057" // Generator Vol.2
+				|| prod_id == "T15128N"	 // Coaster Works
+				|| prod_id == "T9505N"	 // ESPN-NBA 2 Night
+				|| prod_id == "T-9703N"  // NFL Blitz 2000
+				|| prod_id == "T-8106N"  // Shadow Man
+				|| prod_id == "T15106N"	 // Slave Zero
+				|| prod_id == "T40402N"	 // Tom Clancy's Rainbow Six - Rouge Spear
+				|| prod_id == "T15125N"	 // Unreal Tournament
+				|| prod_id == "6107140"  // Dorimaga GD Vol.1
+				|| prod_id == "T41202M"	 // Boku no tennis jinsei
+				|| prod_id == "T9503M"	 // Eisei Meijin III
+				|| prod_id == "T41201M"	 // Jet Coaster Dream
+				|| prod_id == "T40902M"	 // Jet Coaster Dream 2
+				|| prod_id == "T20105M"	 // Kanon
+				|| prod_id == "T19702M"	 // Memories Off Complete
+				|| prod_id == "T17001M"	 // Pen Pen Tri Iceron (JP)
+				|| prod_id == "T1301M"	 // Revive - Sosei
+				|| prod_id == "T15003M"	 // Seitai Heiki Expendable
+				|| prod_id == "T38805M"	 // Sengoku Turb FID
+				|| prod_id == "T20104M"	 // Sentimental Graffiti 2
+				|| prod_id == "T16601M"	 // Shin Honkaku Hanafuda
+				|| prod_id == "T1236M"	 // Super Street Fighter IIX For Matching Service
+				|| prod_id == "T36501M"	 // Vigilante 8 (JP)
+				|| prod_id == "T5301M"	 // World Neverland Plus - Olerud Kingdom Story
+				|| prod_id == "HDR-0198")) // World Series Baseball 2K2 (JP)
 		{
 			NOTICE_LOG(BOOT, "Game doesn't support RGB. Using TV Composite instead");
 			config::Cable.override(3);
@@ -273,15 +303,15 @@ static void loadSpecialSettings()
 			|| prod_id == "T0020M"		// Force Five Atomiswave DC Conversion
 			|| prod_id == "HDR-0187"	// Fushigi no Dungeon - Fuurai no Shiren Gaiden - Onna Kenshi Asuka Kenzan!
 			|| prod_id == "T15104D 50"	// Slave Zero (PAL)
-			|| prod_id == "MK-51152")	// World Series Baseball 2K2
+			|| prod_id == "MK-51152"	// World Series Baseball 2K2
+			|| ip_meta.isMILCD())
 		{
 			NOTICE_LOG(BOOT, "Forcing real BIOS");
 			config::UseReios.override(false);
 		}
 		else if (prod_id == "T17708N"	// Stupid Invaders (US)
 			|| prod_id == "T17711D"		// Stupid Invaders (EU)
-			|| prod_id == "T46509M"		// Suika (JP)
-			|| prod_id == "T36901M")	// Cool Boarders Burrrn (JP)
+			|| prod_id == "T46509M")	// Suika (JP)
 		{
 			NOTICE_LOG(BOOT, "Forcing HLE BIOS");
 			config::UseReios.override(true);
@@ -301,7 +331,8 @@ static void loadSpecialSettings()
 			|| prod_id == "T7014D  50"		// Super Runabout (EU)
 			|| prod_id == "T10001D 50"		// MTV Sport - Skateboarding (PAL)
 			|| prod_id == "MK-5101050"		// Snow Surfers
-			|| prod_id == "12502D-50")		// Caesar's Palace (PAL)
+			|| prod_id == "12502D-50"		// Caesar's Palace (PAL)
+			|| prod_id == "T46605D 80")		// Evil Twin - Cyprien's Chronicles
 		{
 			NOTICE_LOG(BOOT, "Forcing PAL broadcasting");
 			config::Broadcast.override(1);
@@ -384,10 +415,21 @@ static void loadSpecialSettings()
 			NOTICE_LOG(BOOT, "Forcing %d transparent layers", layers);
 			config::PerPixelLayers.override(layers);
 		}
+		if (prod_id == "HDR-0113"			// Power Smash
+				|| prod_id == "HDR-0091")	// Pro Yakyuu Team de Asobou Net!
+		{
+			NOTICE_LOG(BOOT, "Forcing DCNet use");
+			config::UseDCNet.override(true);
+		}
+		if ((prod_id == "HDR-0164"			// Shenmue II (JP)
+				|| prod_id == "MK-5118450")	// Shenmue II (EU)
+				&& !memcmp(ip_meta.disk_num, "4/4  ", 5))
+			config::WidescreenGameHacks.override(false);
 	}
 	else if (settings.platform.isArcade())
 	{
-		if (prod_id == "COSMIC SMASH IN JAPAN")
+		if (prod_id == "COSMIC SMASH IN JAPAN"
+				|| prod_id == "MONKEY BALL JAPAN VERSION")
 		{
 			INFO_LOG(BOOT, "Enabling translucent depth multipass for game %s", prod_id.c_str());
 			config::TranslucentPolygonDepthMask.override(true);
@@ -414,6 +456,9 @@ static void loadSpecialSettings()
 			INFO_LOG(BOOT, "Enabling Extra depth scaling for game %s", prod_id.c_str());
 			config::ExtraDepthScale.override(10000.f);
 		}
+		if (prod_id == "SEGA STRIKE FIGHTER IN JPN-SLAVE")
+			// slave 1 left channel is connected to a bass shaker, which produces an annoying buzzing sound on regular speakers
+			settings.aica.muteAudio = true;
 	}
 }
 
@@ -526,6 +571,16 @@ Sh4Executor *Emulator::getSh4Executor()
 		return interpreter;
 }
 
+void Emulator::runIn(u64 sh4Duration, const std::function<void()>& func)
+{
+	runner.runOnThread(sh4_sched_now64() + sh4Duration, func);
+}
+
+void Emulator::runAt(u64 sh4TimePoint, const std::function<void()>& func)
+{
+	runner.runOnThread(sh4TimePoint, func);
+}
+
 int getGamePlatform(const std::string& filename)
 {
 	if (settings.naomi.slave)
@@ -556,15 +611,16 @@ void Emulator::loadGame(const char *path, LoadProgress *progress)
 		if (path != nullptr && strlen(path) > 0)
 		{
 			settings.content.path = path;
-			if (settings.naomi.slave) {
-				settings.content.fileName = path;
-			}
-			else
-			{
+			try {
 				hostfs::FileInfo info = hostfs::storage().getFileInfo(settings.content.path);
 				settings.content.fileName = info.name;
 				if (settings.content.title.empty())
 					settings.content.title = get_file_basename(info.name);
+			} catch (const hostfs::StorageException& e) {
+				if (settings.naomi.slave)
+					settings.content.fileName = path;
+				else
+					throw;
 			}
 		}
 		else
@@ -587,7 +643,7 @@ void Emulator::loadGame(const char *path, LoadProgress *progress)
 			{
 				// Boot BIOS
 				if (!nvmem::loadFiles())
-					throw FlycastException("No BIOS file found in " + hostfs::getFlashSavePath("", ""));
+					throw FlycastException(strprintf(i18n::T("No BIOS file found in %s"), hostfs::getFlashSavePath("", "").c_str()));
 				gdr::initDrive("");
 			}
 			else
@@ -603,7 +659,7 @@ void Emulator::loadGame(const char *path, LoadProgress *progress)
 							nvmem::loadHle();
 							NOTICE_LOG(BOOT, "Did not load BIOS, using reios");
 							if (!config::UseReios && config::UseReios.isReadOnly())
-								os_notify("This game requires a real BIOS", 15000);
+								os_notify(i18n::T("This game requires a real BIOS"), 15000);
 						}
 					}
 					else
@@ -611,7 +667,7 @@ void Emulator::loadGame(const char *path, LoadProgress *progress)
 						// Content load failed. Boot the BIOS
 						settings.content.path.clear();
 						if (!nvmem::loadFiles())
-							throw FlycastException("This media cannot be loaded");
+							throw FlycastException(i18n::Ts("This media cannot be loaded"));
 						gdr::initDrive("");
 					}
 				}
@@ -630,62 +686,55 @@ void Emulator::loadGame(const char *path, LoadProgress *progress)
 		}
 		else if (settings.platform.isArcade())
 		{
-			nvmem::loadFiles();
 			naomi_cart_LoadRom(settings.content.path, settings.content.fileName, progress);
+			nvmem::loadFiles();
 			loadGameSpecificSettings();
 			// Reload the BIOS in case a game-specific region is set
 			naomi_cart_LoadBios(path);
 		}
-		if (!settings.naomi.slave)
-		{
-#ifdef USE_DREAMLINK_DEVICES
-			// Note: ordinarily we would like to use the 'events' system for this step.
-			// However, this call can change 'config::MapleExpansionDevices', and therefore needs to run before 'mcfg_CreateDevices'.
-			reconnectDreamLinks();
-#endif
-			mcfg_DestroyDevices();
-			mcfg_CreateDevices();
-			if (settings.platform.isNaomi())
-				// Must be done after the maple devices are created and EEPROM is accessible
-				naomi_cart_ConfigureEEPROM();
-		}
+		mcfg_DestroyDevices();
+		mcfg_CreateDevices();
+		if (settings.platform.isNaomi())
+			// Must be done after the maple devices are created and EEPROM is accessible
+			naomi_cart_ConfigureEEPROM();
+
 #ifdef USE_RACHIEVEMENTS
 		// RA probably isn't expecting to travel back in the past so disable it
 		if (config::GGPOEnable)
 			config::EnableAchievements.override(false);
 		// Hardcore mode disables all cheats, under/overclocking, load state, lua and forces dynarec on
 		settings.raHardcoreMode = config::EnableAchievements && config::AchievementsHardcoreMode
-			&& !NaomiNetworkSupported();
+			&& !naomiNetworkSupported();
 #endif
 		cheatManager.reset(settings.content.gameId);
 		if (cheatManager.isWidescreen())
 		{
-			os_notify("Widescreen cheat activated", 2000);
+			os_notify(i18n::T("Widescreen cheat activated"), 2000);
 			config::ScreenStretching.override(134);	// 4:3 -> 16:9
 		}
 		// reload settings so that all settings can be overridden
 		loadGameSpecificSettings();
 		NetworkHandshake::init();
 		settings.input.fastForwardMode = false;
+		EventManager::event(Event::Start);
 		if (!settings.content.path.empty())
 		{
 #ifndef LIBRETRO
 			if (config::GGPOEnable)
 				dc_loadstate(-1);
-			else if (config::AutoLoadState && !NaomiNetworkSupported() && !settings.naomi.multiboard)
+			else if (config::AutoLoadState && !naomiNetworkSupported() && !settings.naomi.multiboard)
 				dc_loadstate(config::SavestateSlot);
 #endif
 		}
-		EventManager::event(Event::Start);
 
 		if (progress)
 		{
 #ifdef GDB_SERVER
-			if(config::GDBWaitForConnection)
+			if (config::GDB && config::GDBWaitForConnection)
 				progress->label = "Waiting for debugger...";
 			else
 #endif
-				progress->label = "Starting...";
+				progress->label = i18n::T("Starting...");
 		}
 
 		state = Loaded;
@@ -697,34 +746,40 @@ void Emulator::loadGame(const char *path, LoadProgress *progress)
 
 void Emulator::runInternal()
 {
-	if (singleStep)
-	{
-		getSh4Executor()->Step();
-		singleStep = false;
-	}
-	else if (stepRangeTo != 0)
-	{
-		while (Sh4cntx.pc >= stepRangeFrom && Sh4cntx.pc < stepRangeTo)
+	runner.init();
+	try {
+		if (singleStep)
+		{
 			getSh4Executor()->Step();
+			singleStep = false;
+		}
+		else if (stepRangeTo != 0)
+		{
+			while (Sh4cntx.pc >= stepRangeFrom && Sh4cntx.pc < stepRangeTo)
+				getSh4Executor()->Step();
 
-		stepRangeFrom = 0;
-		stepRangeTo = 0;
-	}
-	else
-	{
-		do {
-			resetRequested = false;
+			stepRangeFrom = 0;
+			stepRangeTo = 0;
+		}
+		else
+		{
+			do {
+				resetRequested = false;
 
-			getSh4Executor()->Run();
+				getSh4Executor()->Run();
 
-			if (resetRequested)
-			{
-				nvmem::saveFiles();
-				dc_reset(false);
-				if (!restartCpu())
-					resetRequested = false;
-			}
-		} while (resetRequested);
+				if (resetRequested)
+				{
+					nvmem::saveFiles();
+					dc_reset(false);
+					if (!restartCpu())
+						resetRequested = false;
+				}
+			} while (resetRequested);
+		}
+	} catch (...) {
+		runner.term();
+		throw;
 	}
 }
 
@@ -737,7 +792,7 @@ void Emulator::unloadGame()
 	{
 #ifndef LIBRETRO
 		if (state == Loaded && config::AutoSaveState && !settings.content.path.empty()
-				&& !settings.naomi.multiboard && !config::GGPOEnable && !NaomiNetworkSupported())
+				&& !settings.naomi.multiboard && !config::GGPOEnable && !naomiNetworkSupported())
 			gui_saveState(false);
 #endif
 		try {
@@ -749,10 +804,7 @@ void Emulator::unloadGame()
 		mcfg_DestroyDevices(true);
 		config::Settings::instance().reset();
 		config::Settings::instance().load(false);
-		settings.content.path.clear();
-		settings.content.gameId.clear();
-		settings.content.fileName.clear();
-		settings.content.title.clear();
+		settings.content.reset();
 		settings.platform.system = DC_PLATFORM_DREAMCAST;
 		custom_texture.terminate();
 		state = Init;
@@ -856,7 +908,6 @@ void loadGameSpecificSettings()
 	loadSpecialSettings();
 
 	config::Settings::instance().setGameId(settings.content.gameId);
-	custom_texture.init();
 
 	// Reload per-game settings
 	config::Settings::instance().load(true);
@@ -888,11 +939,8 @@ void Emulator::stepRange(u32 from, u32 to)
 
 void Emulator::loadstate(Deserializer& deser)
 {
-	if (!custom_texture.preloaded())
-	{
-		custom_texture.terminate();
-		custom_texture.init();
-	}
+	if (config::customTexturePreloadMode() == config::CustomTexturePreloadMode::Off)
+		custom_texture.refresh();
 #if FEAT_AREC == DYNAREC_JIT
 	aica::arm::recompiler::flush();
 #endif
@@ -942,6 +990,26 @@ void EventManager::unregisterEvent(Event event, Callback callback, void *param)
 		vector.erase(it);
 }
 
+void EventManager::handleEvent(Event event)
+{
+	switch (event)
+	{
+		case Event::Start:
+			running.store(true);
+			break;
+
+		case Event::Terminate:
+			running.store(false);
+			break;
+
+		default:
+			// Do nothing
+			break;
+	}
+
+	broadcastEvent(event);
+}
+
 void EventManager::broadcastEvent(Event event)
 {
 	auto& vector = callbacks[static_cast<size_t>(event)];
@@ -953,7 +1021,6 @@ void Emulator::run()
 {
 	verify(state == Running);
 	startTime = sh4_sched_now64();
-	renderTimeout = false;
 	if (!singleStep && stepRangeTo == 0)
 		getSh4Executor()->Start();
 	try {
@@ -961,7 +1028,7 @@ void Emulator::run()
 		if (ggpo::active())
 			ggpo::nextFrame();
 	} catch (const std::exception& e) {
-		ERROR_LOG(COMMON, "Exception: %s\n", e.what());
+		ERROR_LOG(COMMON, "Exception: %s", e.what());
 		setNetworkState(false);
 		state = Error;
 		getSh4Executor()->Stop();
@@ -999,7 +1066,6 @@ void Emulator::start()
 					while (state == Running || singleStep || stepRangeTo != 0)
 					{
 						startTime = sh4_sched_now64();
-						renderTimeout = false;
 						runInternal();
 						if (!ggpo::nextFrame())
 							break;
@@ -1065,8 +1131,7 @@ bool Emulator::render()
 		if (state != Running)
 			return false;
 		run();
-		// TODO if stopping due to a user request, no frame has been rendered
-		return !renderTimeout;
+		return true;
 	}
 	if (!checkStatus())
 		return false;
@@ -1078,10 +1143,10 @@ bool Emulator::render()
 void Emulator::vblank()
 {
 	EventManager::event(Event::VBlank);
+	runner.execTasks(sh4_sched_now64());
 	// Time out if a frame hasn't been rendered for 50 ms
-	if (sh4_sched_now64() - startTime <= 10000000)
+	if (sh4_sched_now64() - startTime <= 50_sh4ms)
 		return;
-	renderTimeout = true;
 	if (ggpo::active())
 		ggpo::endOfFrame();
 	else if (!config::ThreadedRendering)
@@ -1117,7 +1182,6 @@ void Emulator::diskChange()
 {
 	config::Settings::instance().reset();
 	config::Settings::instance().load(false);
-	custom_texture.terminate();
 	if (!settings.content.path.empty())
 	{
 		hostfs::FileInfo info = hostfs::storage().getFileInfo(settings.content.path);
@@ -1126,8 +1190,7 @@ void Emulator::diskChange()
 	}
 	else
 	{
-		settings.content.fileName.clear();
-		settings.content.gameId.clear();
+		settings.content.reset();
 		settings.content.title = BIOS_TITLE;
 	}
 	cheatManager.reset(settings.content.gameId);

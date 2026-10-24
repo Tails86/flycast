@@ -1,5 +1,6 @@
 /*
-	Copyright 2021 flyinghead
+	Copyright 2024 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -17,16 +18,16 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #pragma once
-#include <string>
-#include <vector>
-#include <array>
-#include <cmath>
-#include <type_traits>
 #include "cfg.h"
 #include "hw/maple/maple_cfg.h"
 #ifdef LIBRETRO
 #include <libretro.h>
 #endif
+#include <array>
+#include <cmath>
+#include <string>
+#include <type_traits>
+#include <vector>
 
 namespace config {
 
@@ -56,7 +57,7 @@ public:
 		{
 			if (gameId.empty())
 				return;
-			if (!cfgHasSection(gameId))
+			if (!hasSection(gameId))
 				return;
 			perGameConfig = true;
 		}
@@ -65,10 +66,10 @@ public:
 	}
 
 	void save() {
-		cfgSetAutoSave(false);
+		setAutoSave(false);
 		for (const auto& o : options)
 			o->save();
-		cfgSetAutoSave(true);
+		setAutoSave(true);
 	}
 
 	void setGameId(const std::string& gameId) {
@@ -82,7 +83,7 @@ public:
 		this->perGameConfig = perGameConfig;
 		if (!perGameConfig) {
 			if (!gameId.empty())
-				cfgDeleteSection(gameId);
+				deleteSection(gameId);
 			reset();
 		}
 	}
@@ -122,7 +123,7 @@ public:
 		else
 		{
 			set(doLoad(section, name));
-			if (cfgIsVirtual(section, name))
+			if (isTransient(section, name))
 				override(value);
 		}
 	}
@@ -141,7 +142,7 @@ public:
 			if (value == doLoad(section, name))
 			{
 				// delete existing per-game option if any
-				cfgDeleteEntry(settings.gameId, section + "." + name);
+				deleteEntry(settings.gameId, section + "." + name);
 				return;
 			}
 		}
@@ -173,14 +174,14 @@ protected:
 	std::enable_if_t<std::is_same_v<U, bool>, T>
 	doLoad(const std::string& section, const std::string& name) const
 	{
-		return cfgLoadBool(section, name, value);
+		return loadBool(section, name, value);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same<U, int64_t>::value, T>
 	doLoad(const std::string& section, const std::string& name) const
 	{
-		return cfgLoadInt64(section, name, value);
+		return loadInt64(section, name, value);
 	}
 
 	template <typename U = T>
@@ -188,28 +189,28 @@ protected:
 			&& !std::is_same_v<U, bool> && !std::is_same_v<U, int64_t>, T>
 	doLoad(const std::string& section, const std::string& name) const
 	{
-		return (T)cfgLoadInt(section, name, (int)value);
+		return (T)loadInt(section, name, (int)value);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same_v<U, std::string>, T>
 	doLoad(const std::string& section, const std::string& name) const
 	{
-		return cfgLoadStr(section, name, value);
+		return loadStr(section, name, value);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same_v<float, U>, T>
 	doLoad(const std::string& section, const std::string& name) const
 	{
-		return cfgLoadFloat(section, name, value);
+		return loadFloat(section, name, value);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same_v<std::vector<std::string>, U>, T>
 	doLoad(const std::string& section, const std::string& name) const
 	{
-		std::string paths = cfgLoadStr(section, name, "");
+		std::string paths = loadStr(section, name);
 		if (paths.empty())
 			return value;
 		std::string::size_type start = 0;
@@ -268,14 +269,14 @@ protected:
 	std::enable_if_t<std::is_same_v<U, bool>>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		cfgSaveBool(section, name, value);
+		saveBool(section, name, value);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same<U, int64_t>::value>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		cfgSaveInt64(section, name, value);
+		saveInt64(section, name, value);
 	}
 
 	template <typename U = T>
@@ -283,21 +284,21 @@ protected:
 		&& !std::is_same_v<U, bool> && !std::is_same_v<U, int64_t>>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		cfgSaveInt(section, name, (int)value);
+		saveInt(section, name, (int)value);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same_v<U, std::string>>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		cfgSaveStr(section, name, value);
+		saveStr(section, name, value);
 	}
 
 	template <typename U = T>
 	std::enable_if_t<std::is_same_v<float, U>>
 	doSave(const std::string& section, const std::string& name) const
 	{
-		cfgSaveFloat(section, name, value);
+		saveFloat(section, name, value);
 	}
 
 	template <typename U = T>
@@ -332,7 +333,7 @@ protected:
 			else
 				s += v;
 		}
-		cfgSaveStr(section, name, s);
+		saveStr(section, name, s);
 	}
 
 	std::string section;
@@ -350,6 +351,8 @@ using OptionString = Option<std::string>;
 // Dynarec
 
 extern Option<bool> DynarecEnabled;
+extern Option<int> FastForwardSpeedLimit;
+extern Option<bool> FastForwardAudio;
 #ifndef LIBRETRO
 extern Option<int> Sh4Clock;
 #endif
@@ -360,12 +363,55 @@ extern Option<int> Cable;		// 0 -> VGA, 1 -> VGA, 2 -> RGB, 3 -> TV Composite
 extern Option<int> Region;		// 0 -> JP, 1 -> USA, 2 -> EU, 3 -> default
 extern Option<int> Broadcast;	// 0 -> NTSC, 1 -> PAL, 2 -> PAL/M, 3 -> PAL/N, 4 -> default
 extern Option<int> Language;	// 0 -> JP, 1 -> EN, 2 -> DE, 3 -> FR, 4 -> SP, 5 -> IT, 6 -> default
+extern OptionString UILanguage;
 extern Option<bool> AutoLoadState;
 extern Option<bool> AutoSaveState;
+extern Option<bool> SaveProtection;
 extern Option<int, false> SavestateSlot;
 extern Option<bool> ForceFreePlay;
 extern Option<bool, false> FetchBoxart;
 extern Option<bool, false> BoxartDisplayMode;
+extern Option<int, false> BoxartSourceMode; // 0 -> Scraped, 1 -> Physical Media, 2 -> Custom with scraped fallback
+enum class LibraryDisplayStyleMode
+{
+	Classic = 0,
+	List = 1,
+};
+
+enum class LibraryImageSourceMode
+{
+	CurrentArtwork = 0,
+	VmuSaveIcon = 1,
+	VmuThenCurrentArtwork = 2,
+	CurrentArtworkThenVmu = 3,
+};
+
+enum class LibraryCoverMediaMode
+{
+	CurrentArtwork = 0,
+	MixImage = 1,
+	Cover = 2,
+	Case = 3,
+	Screenshot = 4,
+	Title = 5,
+	Physical = 6,
+	FanArt = 7,
+	TitleScreen = 8,
+	Manual = 9,
+	Count = 10,
+};
+
+enum class VmuIconPlaybackMode
+{
+	Static = 0,
+	Active = 1,
+};
+
+extern Option<int, false> LibraryDisplayStyle;
+extern Option<int, false> LibraryImageSource;
+extern Option<int, false> LibraryCoverMedia;
+extern Option<int, false> LibraryIconScale;
+extern Option<int, false> VmuIconMode;
 extern Option<int, false> UIScaling;
 extern Option<int, false> UITheme;          // 0 -> Dark, 1 -> Light, 2 -> Dreamcast, 3 -> High Contrast, 4 -> Nintendo, 5 -> Aqua Chill
 
@@ -446,10 +492,19 @@ extern Option<int> PerPixelLayers;
 #endif
 extern Option<float> ExtraDepthScale;
 extern Option<bool> CustomTextures;
-extern Option<bool> PreloadCustomTextures;
+enum class CustomTexturePreloadMode : int
+{
+	Off = 0,
+	SystemMemory = 1,
+	VideoMemory = 2,
+};
+extern Option<int> PreloadCustomTextures;
+CustomTexturePreloadMode customTexturePreloadMode();
 extern Option<bool> DumpTextures;
+extern Option<bool> DumpUniqueTextures;
 extern Option<bool> DumpReplacedTextures;
 extern Option<int> ScreenStretching;	// in percent. 150 means stretch from 4/3 to 6/3
+extern Option<bool> StretchToFill;
 extern Option<bool> Fog;
 extern Option<bool> FloatVMUs;
 extern Option<bool> Rotate90;
@@ -474,6 +529,7 @@ extern Option<bool> NativeDepthInterpolation;
 extern Option<bool> EmulateFramebuffer;
 extern Option<bool> FixUpscaleBleedingEdge;
 extern Option<bool> CustomGpuDriver;
+extern Option<bool> FramePacing;
 #ifdef VIDEO_ROUTING
 extern Option<bool, false> VideoRouting;
 extern Option<bool, false> VideoRoutingScale;
@@ -496,6 +552,7 @@ extern Option<bool> OpenGlChecks;
 extern Option<std::vector<std::string>, false> ContentPath;
 extern Option<std::vector<std::string>, false> BiosPath;
 extern Option<std::string, false> VMUPath;
+extern Option<std::string, false> GameListPath;
 extern Option<std::vector<std::string>, false> SavestatePath;
 extern Option<std::string, false> SavePath;
 extern Option<std::vector<std::string>, false> TexturePath;
@@ -503,6 +560,9 @@ extern Option<std::string, false> TextureDumpPath;
 extern Option<std::string, false> BoxartPath;
 extern Option<std::vector<std::string>, false> MappingsPath;
 extern Option<std::vector<std::string>, false> CheatPath;
+#ifdef DREAMPOTATO_INTEGRATED_MODE
+extern Option<std::string, false> DreamPotatoFolderPath;
+#endif
 extern Option<bool, false> HideLegacyNaomiRoms;
 extern Option<bool, false> UploadCrashLogs;
 extern Option<bool, false> DiscordPresence;
@@ -521,6 +581,7 @@ extern Option<float> ProfilerFrameWarningTime;
 
 extern Option<bool> NetworkEnable;
 extern Option<bool> ActAsServer;
+extern Option<bool> NaomiSatellite;
 extern OptionString DNS;
 extern OptionString NetworkServer;
 extern Option<int> LocalPort;
@@ -551,7 +612,10 @@ extern Option<int> VirtualGamepadVibration;
 extern Option<int> VirtualGamepadTransparency;
 extern std::array<Option<MapleDeviceType>, 4> MapleMainDevices;
 extern std::array<std::array<Option<MapleDeviceType>, 2>, 4> MapleExpansionDevices;
-extern std::array<Option<bool>, 4> UseNetworkExpansionDevices;
+extern std::array<std::array<Option<int>, 2>, 4> NetworkExpansionDevices;
+extern std::array<std::array<Option<std::string, false>, 2>, 4> MapleVmuSlotFileNames;
+// When true, automatically change the peripheral setting to DreamLink when a DreamLink controller attaches
+extern std::array<std::array<Option<bool>, 2>, 4> DreamLinkSelect;
 extern Option<bool> PerGameVmu;
 #ifdef _WIN32
 extern Option<bool, false> UseRawInput;
@@ -559,6 +623,9 @@ extern Option<bool, false> UseRawInput;
 constexpr bool UseRawInput = false;
 #endif
 extern Option<bool> UsePhysicalVmuMemory;
+#ifdef DREAMPOTATO_INTEGRATED_MODE
+extern Option<bool> DreamPotatoIntegratedMode;
+#endif
 
 #ifdef USE_LUA
 extern Option<std::string, false> LuaFileName;
@@ -570,5 +637,6 @@ extern Option<bool> EnableAchievements;
 extern Option<bool> AchievementsHardcoreMode;
 extern OptionString AchievementsUserName;
 extern OptionString AchievementsToken;
+extern OptionString AchievementsHostUrl;
 
 } // namespace config

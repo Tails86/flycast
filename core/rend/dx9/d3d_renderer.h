@@ -20,13 +20,13 @@
 #include "types.h"
 #include <array>
 #include "hw/pvr/Renderer_if.h"
+#include "hw/pvr/ta_ctx.h"
 #include <d3d9.h>
 #include "dxcontext.h"
 #include "rend/transform_matrix.h"
 #include "d3d_texture.h"
 #include "d3d_shaders.h"
 #include "ui/imgui_driver.h"
-#include "rend/tileclip.h"
 
 class RenderStateCache
 {
@@ -119,6 +119,12 @@ struct D3DRenderer : public Renderer
 	bool GetLastFrame(std::vector<u8>& data, int& width, int& height) override;
 
 private:
+	void clearTextureCache() override
+	{
+		texCache.Clear();
+		texCache.Cleanup();
+	}
+
 	enum ModifierVolumeMode { Xor, Or, Inclusion, Exclusion, ModeCount };
 
 	void resize(int w, int h);
@@ -141,7 +147,8 @@ private:
 	void readRttRenderTarget(u32 texAddress);
 	void writeFramebufferToVRAM();
 	void drawOSD();
-	TileClipping setTileClip(u32 tileclip, int rect[4]);
+	TileClipping setTileClip(u32 tileclip, Rect& rect);
+	void makeSecAccumSurface();
 
 	RenderStateCache devCache;
 	ComPtr<IDirect3DDevice9> device;
@@ -166,10 +173,15 @@ private:
 	ComPtr<IDirect3DSurface9> depthSurface;
 	ComPtr<IDirect3DTexture9> fbScaledTexture;
 	ComPtr<IDirect3DSurface9> fbScaledSurface;
+	ComPtr<IDirect3DTexture9> secAccumTexture;
+	ComPtr<IDirect3DSurface9> secAccumSurface;
+	ComPtr<IDirect3DSurface9> primAccumSurface;
+	u32 secAccumWidth = 0;
+	u32 secAccumHeight = 0;
 
 	u32 width = 0;
 	u32 height = 0;
-	TransformMatrix<COORD_DIRECTX> matrices;
+	TransformMatrix matrices{ true };
 	D3DTextureCache texCache;
 	D3DShaders shaders;
 	RECT scissorRect{};
@@ -179,5 +191,5 @@ private:
 	int maxAnisotropy = 1;
 	float aspectRatio = 4.f / 3.f;
 	bool dithering = false;
+	rend_context *rendContext;
 };
-

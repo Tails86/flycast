@@ -201,8 +201,6 @@ void main(void)
 {
 	ivec2 coords = ivec2(gl_FragCoord.xy);
 	// Compute and output final color for the frame buffer
-	// Visualize the number of layers in use
-	//FragColor = vec4(float(fillAndSortFragmentArray(coords)) / float(MAX_PIXELS_PER_FRAGMENT * 4), 0, 0, 1);
 	FragColor = resolveAlphaBlend(coords);
 
 	// Reset pointers
@@ -284,9 +282,10 @@ static void abufferDrawQuad();
 
 static void compileFinalAndModVolShaders()
 {
-	if (maxLayers != config::PerPixelLayers)
+	int layers = std::clamp<int>(config::PerPixelLayers, 1, 256);
+	if (maxLayers != layers)
 	{
-		maxLayers = config::PerPixelLayers;
+		maxLayers = layers;
 		for (auto& shader : g_abuffer_final_shader) {
 			glcache.DeleteProgram(shader.program);
 			shader.program = 0;
@@ -303,7 +302,7 @@ static void compileFinalAndModVolShaders()
 		for (size_t i = 0; i < std::size(g_abuffer_final_shader); i++)
 		{
 			OpenGl4Source finalShader;
-			finalShader.addConstant("MAX_PIXELS_PER_FRAGMENT", config::PerPixelLayers)
+			finalShader.addConstant("MAX_PIXELS_PER_FRAGMENT", maxLayers)
 					.addConstant("DITHERING", i)
 					.addConstant("DIV_POS_Z", 0)
 					.addSource(ShaderHeader)
@@ -314,7 +313,7 @@ static void compileFinalAndModVolShaders()
 	if (g_abuffer_tr_modvol_shaders[0].program == 0)
 	{
 		OpenGl4Source modVolShader;
-		modVolShader.addConstant("MAX_PIXELS_PER_FRAGMENT", config::PerPixelLayers)
+		modVolShader.addConstant("MAX_PIXELS_PER_FRAGMENT", maxLayers)
 			.addConstant("DIV_POS_Z", config::NativeDepthInterpolation)
 			.addSource(ShaderHeader)
 			.addSource(tr_modvol_shader_source);
@@ -360,7 +359,7 @@ void initABuffer()
 		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, max_image_width, max_image_height);
-		glBindImageTexture(4, pixels_pointers, 0, false, 0,  GL_READ_WRITE, GL_R32UI);
+		glBindImageTexture(ABUFFER_POINTER_IMAGE_UNIT, pixels_pointers, 0, false, 0,  GL_READ_WRITE, GL_R32UI);
 		glCheck();
 	}
 
@@ -479,9 +478,9 @@ static void abufferDrawQuad()
 	glCheck();
 }
 
-void DrawTranslucentModVols(int first, int count, bool useOpaqueGeom)
+void OpenGL4Renderer::drawTranslucentModVols(int first, int count, bool useOpaqueGeom)
 {
-	if (count == 0 || pvrrc.modtrig.empty())
+	if (count == 0 || gl.rendContext->modtrig.empty())
 		return;
 	compileFinalAndModVolShaders();
 	gl4SetupModvolVBO();
@@ -500,9 +499,9 @@ void DrawTranslucentModVols(int first, int count, bool useOpaqueGeom)
 
 	glCheck();
 
-	ModifierVolumeParam* params = useOpaqueGeom ? &pvrrc.global_param_mvo[first] : &pvrrc.global_param_mvo_tr[first];
+	ModifierVolumeParam* params = useOpaqueGeom ? &gl.rendContext->global_param_mvo[first] : &gl.rendContext->global_param_mvo_tr[first];
 
-	glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
+	glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
 
 	int mod_base = -1;
 
@@ -515,7 +514,10 @@ void DrawTranslucentModVols(int first, int count, bool useOpaqueGeom)
 
 		u32 mv_mode = param.isp.DepthMode;
 
-		verify(param.first >= 0 && param.first + param.count <= (u32)pvrrc.modtrig.size());
+		if (param.first + param.count > (u32)gl.rendContext->modtrig.size()) {
+			ERROR_LOG(RENDERER, "Corrupted translucent poly[%d]: first %d end %d", cmv, param.first, param.first + param.count);
+			continue;
+		}
 
 		if (mod_base == -1)
 			mod_base = param.first;
@@ -528,9 +530,9 @@ void DrawTranslucentModVols(int first, int count, bool useOpaqueGeom)
 		glcache.UseProgram(shader->program);
 		gl4ShaderUniforms.Set(shader);
 
-		SetCull(param.isp.CullMode); glCheck();
+		setCull(param.isp.CullMode); glCheck();
 
-		glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
 		glDrawArrays(GL_TRIANGLES, param.first * 3, param.count * 3); glCheck();
 
@@ -541,7 +543,7 @@ void DrawTranslucentModVols(int first, int count, bool useOpaqueGeom)
 			glcache.UseProgram(shader->program);
 			gl4ShaderUniforms.Set(shader);
 
-			glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+			glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 			glDrawArrays(GL_TRIANGLES, mod_base * 3, (param.first + param.count - mod_base) * 3); glCheck();
 			mod_base = -1;
 		}
@@ -574,18 +576,18 @@ void checkOverflowAndReset()
 //		}
 //	}
 	// Reset counter
-	max_pixel_index = 0;
- 	glBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0 , sizeof(GLuint), &max_pixel_index);
+	glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_buffer);
+	glBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0 , sizeof(GLuint), &max_pixel_index);
 }
 
 void renderABuffer(bool lastPass)
 {
 	// Render to output FBO
 	compileFinalAndModVolShaders();
-	if (lastPass && config::EmulateFramebuffer && pvrrc.fb_W_CTRL.fb_dither && pvrrc.fb_W_CTRL.fb_packmode <= 3)
+	if (lastPass && config::EmulateFramebuffer && gl.rendContext->fb_W_CTRL.fb_dither && gl.rendContext->fb_W_CTRL.fb_packmode <= 3)
 	{
 		glcache.UseProgram(g_abuffer_final_shader[1].program);
-		switch (pvrrc.fb_W_CTRL.fb_packmode)
+		switch (gl.rendContext->fb_W_CTRL.fb_packmode)
 		{
 		case 0: // 0555 KRGB 16 bit
 		case 3: // 1555 ARGB 16 bit
@@ -612,7 +614,7 @@ void renderABuffer(bool lastPass)
 	glcache.Disable(GL_DEPTH_TEST);
 	glcache.Disable(GL_CULL_FACE);
 	glcache.Disable(GL_SCISSOR_TEST);
-	glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
+	glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
 	glcache.Disable(GL_BLEND);
 
 	abufferDrawQuad();

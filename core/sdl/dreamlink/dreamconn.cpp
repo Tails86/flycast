@@ -1,0 +1,230 @@
+/*
+	Copyright 2024 flyinghead
+
+	This file is part of Flycast.
+
+    Flycast is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    Flycast is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#include <asio.hpp> // Must be included first to avoid winsock issues on Windows
+#include "dreamconn.h"
+#include "hw/maple/maple_devs.h"
+#include "oslib/oslib.h"
+#include "ui/gui.h"
+#include "cfg/option.h"
+#include "oslib/i18n.h"
+#include <SDL.h>
+#include <array>
+#include <mutex>
+
+#ifdef USE_DREAMCONN
+
+// TODO: drop use of iostream, use async connection like DreamPotato
+static asio::error_code sendMsg(const MapleMsg& msg, asio::ip::tcp::iostream& stream)
+{
+	static char buffer[1024 * 3 + 2];
+	char *p = buffer;
+	p += sprintf(p, "%02X %02X %02X %02X", msg.command, msg.destAP, msg.originAP, msg.size);
+	const u32 sz = msg.getDataSize();
+	for (u32 i = 0; i < sz; i++)
+		p += sprintf(p, " %02X", msg.data[i]);
+	strcpy(p, "\r\n");
+	p += 2;
+	asio::ip::tcp::socket& sock = static_cast<asio::ip::tcp::socket&>(stream.socket());
+	asio::error_code ec;
+	asio::write(sock, asio::buffer(buffer, p - buffer), ec);
+	return ec;
+}
+
+static bool receiveMsg(MapleMsg& msg, std::istream& stream)
+{
+	std::string response;
+	if (!std::getline(stream, response))
+		return false;
+	sscanf(response.c_str(), "%hhx %hhx %hhx %hhx", &msg.command, &msg.destAP, &msg.originAP, &msg.size);
+	if ((msg.getDataSize() - 1) * 3 + 13 >= response.length())
+		return false;
+	for (unsigned i = 0; i < msg.getDataSize(); i++)
+		sscanf(&response[i * 3 + 12], "%hhx", &msg.data[i]);
+	return !stream.fail();
+}
+
+//! DreamConn implementation class
+//! This is here mainly so asio.hpp can be included in this source file instead of the header.
+class DreamConn : public SDLDreamLink
+{
+	int bus = -1;
+	bool maple_io_connected = false;
+	std::array<MapleDeviceType, 2> expansionDevs{};
+	asio::ip::tcp::iostream iostream;
+	//! Base port of communication to DreamConn
+	static constexpr u16 BASE_PORT = 37393;
+
+public:
+	DreamConn(int bus)
+		: SDLDreamLink(false), bus(bus)
+	{
+	}
+
+	bool storageEnabled() override {
+		// DreamConn controllers don't support physical VMU memory access
+		return false;
+	}
+
+	bool send(const MapleMsg& msg) override
+	{
+		if (!maple_io_connected)
+			return false;
+
+		auto ec = sendMsg(msg, iostream);
+		if (ec) {
+			WARN_LOG(INPUT, "DreamConn[%d] send failed: %s", bus, ec.message().c_str());
+			maple_io_connected = false;
+			// TODO: reconnect automatically
+			return false;
+		}
+		return true;
+	}
+
+	bool sendReceive(const MapleMsg& txMsg, MapleMsg& rxMsg) override
+	{
+		if (!send(txMsg))
+			return false;
+
+		if (!receiveMsg(rxMsg, iostream)) {
+			WARN_LOG(INPUT, "DreamConn[%d] receive failed", bus);
+			maple_io_connected = false;
+			// TODO: reconnect automatically
+			return false;
+		}
+		return true;
+	}
+
+	void changeBus(int newBus) override
+	{
+		if (newBus != bus) {
+			bus = newBus;
+			registerLink(bus, ALL_PORTS_MASK); // will automatically unregister from previous bus
+			if (isConnected())
+			{
+				// A different TCP port is used depending on the bus - need to reconnect
+				maple_io_connected = false;
+				// TODO: reconnect automatically
+			}
+		}
+	}
+
+	void registered() override {
+		registerLink(bus, ALL_PORTS_MASK);
+	}
+
+	bool isConnected() override {
+		return maple_io_connected;
+	}
+
+	void connect() override
+	{
+		maple_io_connected = false;
+		if (!DreamLink::isValidBus(bus))
+			return;
+
+		iostream = asio::ip::tcp::iostream("localhost", std::to_string(BASE_PORT + bus));
+		if (!iostream) {
+			WARN_LOG(INPUT, "DreamConn[%d] connection failed: %s", bus, iostream.error().message().c_str());
+			disconnect();
+			return;
+		}
+		// Optimistically assume we are connected to the maple server. If a send fails we will just set this flag back to false.
+		maple_io_connected = true;
+
+		iostream.expires_from_now(std::chrono::seconds(1));
+		// Now get the controller configuration
+		MapleMsg msg;
+		msg.command = MDCF_GetCondition;
+		msg.destAP = (bus << 6) | 0x20;
+		msg.originAP = bus << 6;
+		msg.pushData(MFID_0_Input);
+		MapleMsg rxMsg;
+		if (!sendReceive(msg, rxMsg))
+			return;
+		iostream.expires_from_now(std::chrono::duration<u32>::max());	// don't use a 64-bit based duration to avoid overflow
+
+		expansionDevs[0] = rxMsg.originAP & 1 ? MDT_SegaVMU : MDT_None;
+		expansionDevs[1] = rxMsg.originAP & 2 ? MDT_PurupuruPack : MDT_None;
+
+		NOTICE_LOG(INPUT, "Connected to DreamConn[%d]: Slot 1: %s, Slot 2: %s", bus,
+				deviceDescription(expansionDevs[0]), deviceDescription(expansionDevs[1]));
+	}
+
+	static const char* deviceDescription(MapleDeviceType deviceType) {
+		switch (deviceType) {
+			case MDT_None: return "None";
+			case MDT_SegaVMU: return "Sega VMU";
+			case MDT_PurupuruPack: return "Vibration Pack";
+			default: return "Unknown"; // note: we don't expect to reach this path, unless something has really gone wrong (e.g. somehow garbage data was written to `expansionDevs`).
+		}
+	}
+
+	void disconnect() override
+	{
+		// Already disconnected
+		if (!maple_io_connected)
+			return;
+		maple_io_connected = false;
+
+		if (iostream)
+			iostream.close();
+
+		// Notify the user of the disconnect
+		NOTICE_LOG(INPUT, "Disconnected from DreamConn[%d]", bus);
+		char buf[128];
+		snprintf(buf, sizeof(buf), i18n::T("WARNING: DreamConn disconnected from port %c"), 'A' + bus);
+		os_notify(buf, 6000);
+	}
+
+	const char* getProductName() const override {
+		return "DreamConn";
+	}
+
+	u32 getFunctionCodesMask(int forPort) const override {
+		if (forPort < expansionDevs.size()) {
+			if (expansionDevs[forPort] == MDT_SegaVMU)
+				return (MFID_1_Storage | MFID_2_LCD | MFID_3_Clock);
+			else if (expansionDevs[forPort] == MDT_PurupuruPack)
+				return MFID_8_Vibration;
+		}
+
+		return 0; // None
+	}
+};
+
+bool DreamConnGamepad::identify(int deviceIndex)
+{
+	char guid_str[33] {};
+	SDL_JoystickGetGUIDString(SDL_JoystickGetDeviceGUID(deviceIndex), guid_str, sizeof(guid_str));
+	// DreamConn VID:4457 PID:4443
+	const char* pid_vid_guid_str = guid_str + 8;
+	if (memcmp(VID_PID_GUID, pid_vid_guid_str, 16) == 0) {
+		return true;
+	}
+	return false;
+}
+
+DreamConnGamepad::DreamConnGamepad(int maple_port, int joystick_idx, SDL_Joystick* sdl_joystick)
+	: DreamLinkGamepad(std::make_shared<DreamConn>(maple_port), maple_port, joystick_idx, sdl_joystick)
+{
+	_name = "DreamConn+ / DreamConn S Controller";
+}
+
+#endif // USE_DREAMCONN

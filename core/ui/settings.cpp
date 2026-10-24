@@ -18,37 +18,34 @@
  */
 #include "settings.h"
 #include "gui.h"
+#include "gui_font.h"
 #include "IconsFontAwesome6.h"
 #include "mainui.h"
 #include "log/LogManager.h"
 #include "hw/maple/maple_if.h"
 #include "imgui_stdlib.h"
+#include "input/dreampotato.h"
 
 #ifdef GDB_SERVER
 #include "hw/mem/addrspace.h"
 #endif
 
-#if defined(USE_DREAMLINK_DEVICES)
-#include "sdl/dreamlink.h"
-#endif
-
 static void gui_settings_advanced()
 {
 #if FEAT_SHREC != DYNAREC_NONE
-    header("CPU Mode");
+	const char* cpuModeValue = config::DynarecEnabled ? T("Dynarec") : T("Interpreter");
+    if (ComboBox2Col::BeginCombo(T("CPU Mode"), cpuModeValue))
     {
-		ImGui::Columns(2, "cpu_modes", false);
-		OptionRadioButton("Dynarec", config::DynarecEnabled, true,
-			"Use the dynamic recompiler. Recommended in most cases");
-		ImGui::NextColumn();
-		OptionRadioButton("Interpreter", config::DynarecEnabled, false,
-			"Use the interpreter. Very slow but may help in case of a dynarec problem");
-		ImGui::Columns(1, NULL, false);
+		ComboBox2Col::Selectable(T("Dynarec"), config::DynarecEnabled, true,
+				T("Use the dynamic recompiler. Recommended in most cases"));
+		ComboBox2Col::Selectable(T("Interpreter"), config::DynarecEnabled, false,
+				T("Use the interpreter. Very slow but may help in case of a dynarec problem"));
+		ComboBox2Col::EndCombo();
+	}
 
-		OptionSlider("SH4 Clock", config::Sh4Clock, 100, 300,
-				"Over/Underclock the main SH4 CPU. Default is 200 MHz. Other values may crash, freeze or trigger unexpected nuclear reactions.",
-				"%d MHz");
-    }
+	OptionSlider(T("SH4 Clock"), config::Sh4Clock, 100, 300,
+			T("Over/Underclock the main SH4 CPU. Default is 200 MHz. Other values may crash, freeze or trigger unexpected nuclear reactions."),
+			"%d MHz");
 #ifdef GDB_SERVER
 	ImGui::Spacing();
 	header("Virtual memory addresses");
@@ -60,7 +57,7 @@ static void gui_settings_advanced()
 
 		if (ram == nullptr) {
 			const ImVec4 gray(0.75f, 0.75f, 0.75f, 1.f);
-			ImGui::TextColored(gray, "RAM adresses are not available until the emulation is started");
+			ImGui::TextColored(gray, "%s", "RAM adresses are not available until the emulation is started");
 		} else {
 			ImGui::Columns(3, "virtualMemoryAddress", false);
 			ImGui::Text("RAM: %p", ram);
@@ -94,46 +91,46 @@ static void gui_settings_advanced()
 #endif
 	ImGui::Spacing();
 #endif
-    header("Other");
+    header(T("Other"));
     {
-    	OptionCheckbox("HLE BIOS", config::UseReios, "Force high-level BIOS emulation");
-        OptionCheckbox("Multi-threaded emulation", config::ThreadedRendering,
-        		"Run the emulated CPU and GPU on different threads");
+    	OptionCheckbox(T("HLE BIOS"), config::UseReios, T("Force high-level BIOS emulation"));
+        OptionCheckbox(T("Multi-threaded emulation"), config::ThreadedRendering,
+        		T("Run the emulated CPU and GPU on different threads"));
 #if !defined(__ANDROID) && !defined(GDB_SERVER)
-        OptionCheckbox("Serial Console", config::SerialConsole,
-        		"Dump the Dreamcast serial console to stdout");
+        OptionCheckbox(T("Serial Console"), config::SerialConsole,
+        		T("Dump the Dreamcast serial console to stdout"));
 #endif
 		{
 			DisabledScope scope(game_started);
-			OptionCheckbox("Dreamcast 32MB RAM Mod", config::RamMod32MB,
-				"Enables 32MB RAM Mod for Dreamcast. May affect compatibility");
+			OptionCheckbox(T("Dreamcast 32MB RAM Mod"), config::RamMod32MB,
+					T("Enables 32MB RAM Mod for Dreamcast. May affect compatibility"));
 		}
-        OptionCheckbox("Dump Textures", config::DumpTextures,
-        		"Dump all textures into data/texdump/<game id>");
+        OptionCheckbox(T("Dump Textures"), config::DumpTextures,
+        		T("Dump all textures into data/texdump/<game id>"));
 		ImGui::Indent();
 		{
 			DisabledScope scope(!config::DumpTextures.get());
-			OptionCheckbox("Dump Replaced Textures", config::DumpReplacedTextures,
-					"Always dump textures that are already replaced by custom textures");
+			OptionCheckbox(T("Dump Replaced Textures"), config::DumpReplacedTextures,
+					T("Always dump textures that are already replaced by custom textures"));
+			OptionCheckbox(T("Discard Video and Animated Textures"), config::DumpUniqueTextures,
+					T("Skip dumping video (YUV) and already updated textures"));
 		}
 		ImGui::Unindent();
-        bool logToFile = cfgLoadBool("log", "LogToFile", false);
-		if (ImGui::Checkbox("Log to File", &logToFile))
-			cfgSaveBool("log", "LogToFile", logToFile);
-        ImGui::SameLine();
-        ShowHelpMarker("Log debug information to flycast.log");
+        bool logToFile = config::loadBool("log", "LogToFile", false);
+		if (CheckboxRow(T("Log to File"), &logToFile, T("Log debug information to flycast.log")))
+			config::saveBool("log", "LogToFile", logToFile);
 #ifdef SENTRY_UPLOAD
-        OptionCheckbox("Automatically Report Crashes", config::UploadCrashLogs,
-        		"Automatically upload crash reports to sentry.io to help in troubleshooting. No personal information is included.");
+        OptionCheckbox(T("Automatically Report Crashes"), config::UploadCrashLogs,
+        		T("Automatically upload crash reports to sentry.io to help in troubleshooting. No personal information is included."));
 #endif
     }
 
 #ifdef USE_LUA
-	header("Lua Scripting");
+	header(T("Lua Scripting"));
 	{
-		InputText("Lua Filename", &config::LuaFileName.get(), ImGuiInputTextFlags_CharsNoBlank);
+		InputText(T("Lua Filename"), &config::LuaFileName.get(), ImGuiInputTextFlags_CharsNoBlank);
 		ImGui::SameLine();
-		ShowHelpMarker("Specify lua filename to use. Should be located in Flycast config folder. Defaults to flycast.lua when empty.");
+		ShowHelpMarker(T("Specify lua filename to use. Should be located in Flycast config folder. Defaults to flycast.lua when empty."));
 	}
 #endif
 }
@@ -151,25 +148,25 @@ static void gui_debug_tab()
 			std::string name = std::string(logManager->GetShortName(type)) + " - " + logManager->GetFullName(type);
 			if (ImGui::Checkbox(name.c_str(), &enabled) && logManager->GetLogLevel() > LogTypes::LWARNING) {
 				logManager->SetEnable(type, enabled);
-				cfgSaveBool("log", logManager->GetShortName(type), enabled);
+				config::saveBool("log", logManager->GetShortName(type), enabled);
 			}
 		}
 		ImGui::Spacing();
 
 		static const char *levels[] = { "Notice", "Error", "Warning", "Info", "Debug" };
-		if (ImGui::BeginCombo("Log Verbosity", levels[logManager->GetLogLevel() - 1], ImGuiComboFlags_None))
+		if (ComboBoxRow::BeginCombo("Log Verbosity", levels[logManager->GetLogLevel() - 1]))
 		{
 			for (std::size_t i = 0; i < std::size(levels); i++)
 			{
 				bool is_selected = logManager->GetLogLevel() - 1 == (int)i;
-				if (ImGui::Selectable(levels[i], &is_selected)) {
+				if (ComboBoxRow::Selectable(levels[i], &is_selected)) {
 					logManager->SetLogLevel((LogTypes::LOG_LEVELS)(i + 1));
-					cfgSaveInt("log", "Verbosity", i + 1);
+					config::saveInt("log", "Verbosity", i + 1);
 				}
 				if (is_selected)
 					ImGui::SetItemDefaultFocus();
 			}
-			ImGui::EndCombo();
+			ComboBoxRow::EndCombo();
 		}
 		InputText("Log Server", &config::LogServer.get(), ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_CallbackCharFilter, dnsCharFilter);
         ImGui::SameLine();
@@ -199,18 +196,86 @@ static void gui_debug_tab()
 }
 #endif
 
-void gui_display_settings()
+class VerticalTabBar
 {
-	static bool maple_devices_changed;
+private:
+	// Label of the currently selected tab.
+	// Note: we don't want a translated label here, it should remain stable when locale changes.
+	const char* activeLabel = nullptr;
+	const char* nextFrameActiveLabel = nullptr;
 
-	fullScreenWindow(false);
-	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
+	void EndHelper()
+	{
+		ImGui::EndChild(); // ##verticalTabBar
+		ImGui::PopID();
+	}
 
-    ImGui::Begin("Settings", NULL, ImGuiWindowFlags_DragScrolling | ImGuiWindowFlags_NoResize
-    		| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-	ImVec2 normal_padding = ImGui::GetStyle().FramePadding;
+public:
+	bool BeginTabBar(const char* id)
+	{
+		ImGui::PushID(id);
+		// Tab bar structure: tab list on left, active tab content on the right.
+		// The right child is added when we encounter it in BeginTab().
+		bool ret = ImGui::BeginChild("##verticalTabBar", ScaledVec2(155, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_Borders);
+		if (!ret)
+			EndHelper();
 
-    if (ImGui::Button("Done", ScaledVec2(100, 30)))
+		return ret;
+	}
+
+	void EndTabBar()
+	{
+		EndHelper();
+
+		activeLabel = nextFrameActiveLabel;
+	}
+
+	bool BeginTab(const char* icon, const char* label)
+	{
+		std::string fullLabel = std::string(icon) + " " + T(label);
+
+		// When we have no activeLabel stored, then the first tab becomes the active tab automatically
+		if (activeLabel == nullptr) {
+			activeLabel = label;
+		}
+
+		bool isActiveTab = activeLabel == label;
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ScaledVec2(6, 12));
+		ImGui::PushFont(settingsTitleFont, 0.0f);
+		bool pressed = ImGui::Selectable(fullLabel.c_str(), isActiveTab);
+		ImGui::PopFont();
+		ImGui::PopStyleVar();
+		if (pressed) {
+			// Delay changing the active selectable until the next frame.
+			// This prevents accidentally rendering multiple tab contents in a single frame.
+			nextFrameActiveLabel = label;
+		}
+
+		if (isActiveTab) {
+			ImGui::EndChild(); // ##verticalTabBar
+			ImGui::SameLine();
+			ImGui::BeginChild(label, ImVec2(0, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_Borders, ImGuiWindowFlags_DragScrolling);
+		}
+
+		return isActiveTab;
+	}
+
+	void EndTab()
+	{
+		scrollWhenDraggingOnVoid();
+		windowDragScroll();
+		ImGui::EndChild(); // 'label' (active tab)
+		ImGui::BeginChild("##verticalTabBar");
+	}
+};
+
+void gui_display_settings_header(ImVec2 normal_padding, std::array<bool, 4>& mapleDevicesChanges, std::array<std::array<bool, 2>, 4>& expDevicesChanges)
+{
+	ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+	ImGui::PushFont(settingsTitleFont, 0.0f);
+
+	auto availableWidth = ImGui::GetContentRegionAvail().x;
+    if (ImGui::Button(T("Done"), ImVec2(availableWidth, uiScaled(30))))
     {
     	if (uiUserScaleUpdated)
     	{
@@ -221,27 +286,36 @@ void gui_display_settings()
     		gui_setState(GuiState::Commands);
     	else
     		gui_setState(GuiState::Main);
-    	if (maple_devices_changed)
-    	{
-    		maple_devices_changed = false;
-    		if (game_started && settings.platform.isConsole())
-    		{
-#if defined(USE_DREAMLINK_DEVICES)
-				reconnectDreamLinks();
-#endif
-    			maple_ReconnectDevices();
-    			reset_vmus();
-    		}
+    	dreampotato::update();
+ 		if (game_started && settings.platform.isConsole())
+		{
+			for (unsigned bus = 0; bus < mapleDevicesChanges.size(); bus++)
+			{
+				if (mapleDevicesChanges[bus]) {
+					maple_ReconnectDevice(bus, 5);
+				}
+				else
+				{
+					if (expDevicesChanges[bus][0]) {
+						maple_ReconnectDevice(bus, 0);
+						reset_vmus();
+					}
+					if (expDevicesChanges[bus][1]) {
+						maple_ReconnectDevice(bus, 1);
+						reset_vmus();
+					}
+				}
+			}
     	}
+    	mapleDevicesChanges = {};
+    	expDevicesChanges = {};
        	SaveSettings();
     }
 	if (game_started)
 	{
-	    ImGui::SameLine();
-		ImguiStyleVar _(ImGuiStyleVar_FramePadding, ImVec2(uiScaled(16), normal_padding.y));
 		if (config::Settings::instance().hasPerGameConfig())
 		{
-			if (ImGui::Button("Delete Game Config", ScaledVec2(0, 30)))
+			if (ImGui::Button(T("Delete Game Config"), ImVec2(availableWidth, uiScaled(30))))
 			{
 				config::Settings::instance().setPerGameConfig(false);
 				config::Settings::instance().load(false);
@@ -250,10 +324,29 @@ void gui_display_settings()
 		}
 		else
 		{
-			if (ImGui::Button("Make Game Config", ScaledVec2(0, 30)))
+			if (ImGui::Button(T("Make Game Config"), ImVec2(availableWidth, uiScaled(30))))
 				config::Settings::instance().setPerGameConfig(true);
 		}
 	}
+
+	ImGui::PushStyleVarY(ImGuiStyleVar_ItemSpacing, uiScaled(14.f));
+	ImGui::Separator();
+	ImGui::PopStyleVar();
+	ImGui::PopFont();
+}
+
+void gui_display_settings()
+{
+	static std::array<bool, 4> mapleDevicesChanges;
+	static std::array<std::array<bool, 2>, 4> expDevicesChanges;
+	static VerticalTabBar settingsTabBar;
+
+	fullScreenWindow(false);
+	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
+
+    ImGui::Begin(T("Settings"), nullptr, ImGuiWindowFlags_DragScrolling | ImGuiWindowFlags_NoResize
+			| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+	ImVec2 normal_padding = ImGui::GetStyle().FramePadding;
 
 	if (ImGui::GetContentRegionAvail().x >= uiScaled(650.f))
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ScaledVec2(16, 6));
@@ -261,61 +354,71 @@ void gui_display_settings()
 		// low width
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ScaledVec2(4, 6));
 
-    if (ImGui::BeginTabBar("settings", ImGuiTabBarFlags_NoTooltip))
+    if (settingsTabBar.BeginTabBar("settings"))
     {
-		if (ImGui::BeginTabItem(ICON_FA_TOOLBOX " General"))
+		gui_display_settings_header(normal_padding, mapleDevicesChanges, expDevicesChanges);
+
+		if (settingsTabBar.BeginTab(ICON_FA_TOOLBOX, "General"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_general();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
-		if (ImGui::BeginTabItem(ICON_FA_GAMEPAD " Controls"))
+		if (settingsTabBar.BeginTab(ICON_FA_GAMEPAD, "Controls"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
-			gui_settings_controls(maple_devices_changed);
-			ImGui::EndTabItem();
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
+			gui_settings_controls(mapleDevicesChanges, expDevicesChanges);
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
-		if (ImGui::BeginTabItem(ICON_FA_DISPLAY " Video"))
+		if (settingsTabBar.BeginTab(ICON_FA_DISPLAY, "Video"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_video();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
-		if (ImGui::BeginTabItem(ICON_FA_MUSIC " Audio"))
+		if (settingsTabBar.BeginTab(ICON_FA_MUSIC, "Audio"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_audio();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
-		if (ImGui::BeginTabItem(ICON_FA_WIFI " Network"))
+		if (settingsTabBar.BeginTab(ICON_FA_WIFI, "Network"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_network();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
-		if (ImGui::BeginTabItem(ICON_FA_MICROCHIP " Advanced"))
+		if (settingsTabBar.BeginTab(ICON_FA_MICROCHIP, "Advanced"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_advanced();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
 #if !defined(NDEBUG) || defined(DEBUGFAST) || FC_PROFILER
-		if (ImGui::BeginTabItem(ICON_FA_BUG " Debug"))
+		if (settingsTabBar.BeginTab(ICON_FA_BUG, "Debug"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_debug_tab();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
 #endif
-		if (ImGui::BeginTabItem(ICON_FA_CIRCLE_INFO " About"))
+		if (settingsTabBar.BeginTab(ICON_FA_CIRCLE_INFO, "About"))
 		{
-			ImguiStyleVar _(ImGuiStyleVar_FramePadding, normal_padding);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 			gui_settings_about();
-			ImGui::EndTabItem();
+			ImGui::PopStyleVar();
+			settingsTabBar.EndTab();
 		}
-		ImGui::EndTabBar();
+		settingsTabBar.EndTabBar();
     }
-    ImGui::PopStyleVar();
+	ImGui::PopStyleVar();
 
     scrollWhenDraggingOnVoid();
     windowDragScroll();

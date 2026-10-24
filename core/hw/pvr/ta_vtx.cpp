@@ -36,6 +36,31 @@ static f32 f16(u16 v)
 	return *(f32*)&z;
 }
 
+static void loadTexture(PolyParam *pp, int index)
+{
+	if (pp->pcw.Texture == 0)
+		return;
+	if (index == 0)
+	{
+		pp->texture = renderer->GetTexture(pp->tsp, pp->tcw, 0);
+		if (pp->texture == nullptr)
+			pp->pcw.Texture = 0;
+	}
+	else
+	{
+		pp->texture1 = renderer->GetTexture(pp->tsp1, pp->tcw1, 1);
+		if (pp->texture1 == nullptr)
+			pp->pcw.Texture = 0;
+	}
+}
+
+static void loadTextures(PolyParam *pp)
+{
+	loadTexture(pp, 0);
+	if (pp->tsp1.full != (u32)-1)
+		loadTexture(pp, 1);
+}
+
 class BaseTAParser
 {
 	static Ta_Dma *DYNACALL NullVertexData(Ta_Dma *data, Ta_Dma *data_end)
@@ -377,6 +402,13 @@ strip_end:
 		return data+SZ32;
 	}
 
+	static Ta_Dma* TACALL ta_poly_B_Invalid(Ta_Dma* data, Ta_Dma* data_end)
+	{
+		WARN_LOG(PVR, "ta_poly_B_Invalid");
+		TaCmd = ta_main;
+		return data + SZ32;
+	}
+
 	static Ta_Dma* TACALL ta_main(Ta_Dma* data, Ta_Dma* data_end)
 	{
 		while (data < data_end)
@@ -542,8 +574,8 @@ private:
 		d_pp->pcw = pp->pcw;
 		d_pp->tileclip = tileclip_val;
 
-		if (d_pp->pcw.Texture && fetchTextures)
-			d_pp->texture = renderer->GetTexture(d_pp->tsp, d_pp->tcw);
+		if (fetchTextures)
+			loadTexture(d_pp, 0);
 	}
 
 	#define glob_param_bdc(pp) glob_param_bdc_( (TA_PolyParam0*)pp)
@@ -602,8 +634,8 @@ private:
 
 		CurrentPP->tsp1.full = pp->tsp1.full;
 		CurrentPP->tcw1.full = pp->tcw1.full;
-		if (pp->pcw.Texture && fetchTextures)
-			CurrentPP->texture1 = renderer->GetTexture(pp->tsp1, pp->tcw1, 1);
+		if (fetchTextures)
+			loadTexture(CurrentPP, 1);
 	}
 
 	// Intensity, with Two Volumes
@@ -615,8 +647,8 @@ private:
 
 		CurrentPP->tsp1.full = pp->tsp1.full;
 		CurrentPP->tcw1.full = pp->tcw1.full;
-		if (pp->pcw.Texture && fetchTextures)
-			CurrentPP->texture1 = renderer->GetTexture(pp->tsp1, pp->tcw1, 1);
+		if (fetchTextures)
+			loadTexture(CurrentPP, 1);
 	}
 
 	static void TACALL AppendPolyParam4B(void* vpp)
@@ -625,6 +657,10 @@ private:
 
 		poly_float_color(FaceBaseColor, FaceColor0);
 		poly_float_color(FaceBaseColor1, FaceColor1);
+	}
+
+	static void TACALL AppendPolyParamInvalid(void* vpp) {
+		WARN_LOG(PVR, "AppendPolyParamInvalid");
 	}
 
 	//Poly Strip handling
@@ -970,8 +1006,8 @@ private:
 		d_pp->pcw = spr->pcw;
 		d_pp->tileclip = tileclip_val;
 
-		if (d_pp->pcw.Texture && fetchTextures)
-			d_pp->texture = renderer->GetTexture(d_pp->tsp, d_pp->tcw);
+		if (fetchTextures)
+			loadTexture(d_pp, 0);
 
 		SFaceBaseColor = spr->BaseCol;
 		SFaceOffsColor = spr->OffsCol;
@@ -1196,6 +1232,17 @@ static void parseRenderPass(RenderPass& pass, const RenderPass& previousPass, re
 	}
 }
 
+void setTileClipping(rend_context& ctx)
+{
+	u32 xmax, ymax;
+	getRegionTileClipping((u32&)ctx.tileClip.origin.x, xmax, (u32&)ctx.tileClip.origin.y, ymax);
+	// intersect with TA global clipping
+	xmax = std::min<u32>(xmax + 32, ctx.globClip.x);
+	ymax = std::min<u32>(ymax + 32, ctx.globClip.y);
+	ctx.tileClip.size.x = xmax - ctx.tileClip.origin.x;
+	ctx.tileClip.size.y = ymax - ctx.tileClip.origin.y;
+}
+
 static void ta_parse_vdrc(TA_context* ctx, bool primRestart)
 {
 	verify(vd_ctx == nullptr);
@@ -1204,8 +1251,7 @@ static void ta_parse_vdrc(TA_context* ctx, bool primRestart)
 	ta_parse_reset();
 
 	PolyParam *bgpp = &vd_rc.global_param_op.front();
-	if (bgpp->pcw.Texture)
-		bgpp->texture = renderer->GetTexture(bgpp->tsp, bgpp->tcw);
+	loadTexture(bgpp, 0);
 
 	TA_context *childCtx = ctx;
 	int pass = 0;
@@ -1254,13 +1300,26 @@ static void ta_parse_vdrc(TA_context* ctx, bool primRestart)
 		childCtx = childCtx->nextContext;
 		pass++;
 	}
-
-	u32 xmin, xmax, ymin, ymax;
-	getRegionTileClipping(xmin, xmax, ymin, ymax);
-	vd_rc.fb_X_CLIP.min = std::max(vd_rc.fb_X_CLIP.min, xmin);
-	vd_rc.fb_X_CLIP.max = std::min(vd_rc.fb_X_CLIP.max, xmax + 31);
-	vd_rc.fb_Y_CLIP.min = std::max(vd_rc.fb_Y_CLIP.min, ymin);
-	vd_rc.fb_Y_CLIP.max = std::min(vd_rc.fb_Y_CLIP.max, ymax + 31);
+	if (vd_rc.global_param_mvo_tr.size() > vd_rc.global_param_mvo.size())
+	{
+		// Hack for Xtreme Sports. This game shares the same MVO list between opaque and translucent.
+		// BUT the translucent list is the one to use, contrary to other games. Detect this here and
+		// swap the arrays, which also allows non-oit renderers to display them.
+		bool swapMVO = false;
+		for (const RenderPass& renderPass : vd_rc.render_passes)
+		{
+			if (renderPass.mv_op_tr_shared) {
+				swapMVO = true;
+				break;
+			}
+		}
+		if (swapMVO)
+		{
+			std::swap(vd_rc.global_param_mvo, vd_rc.global_param_mvo_tr);
+			for (RenderPass& renderPass : vd_rc.render_passes)
+				std::swap(renderPass.mvo_count, renderPass.mvo_tr_count);
+		}
+	}
 
 	vd_ctx = nullptr;
 }
@@ -1268,26 +1327,11 @@ static void ta_parse_vdrc(TA_context* ctx, bool primRestart)
 static void ta_parse_naomi2(TA_context* ctx, bool primRestart)
 {
 	for (PolyParam& pp : ctx->rend.global_param_op)
-	{
-		if (pp.pcw.Texture)
-			pp.texture = renderer->GetTexture(pp.tsp, pp.tcw, 0);
-		if (pp.tsp1.full != (u32)-1)
-			pp.texture1 = renderer->GetTexture(pp.tsp1, pp.tcw1, 1);
-	}
+		loadTextures(&pp);
 	for (PolyParam& pp : ctx->rend.global_param_pt)
-	{
-		if (pp.pcw.Texture)
-			pp.texture = renderer->GetTexture(pp.tsp, pp.tcw, 0);
-		if (pp.tsp1.full != (u32)-1)
-			pp.texture1 = renderer->GetTexture(pp.tsp1, pp.tcw1, 1);
-	}
+		loadTextures(&pp);
 	for (PolyParam& pp : ctx->rend.global_param_tr)
-	{
-		if (pp.pcw.Texture)
-			pp.texture = renderer->GetTexture(pp.tsp, pp.tcw, 0);
-		if (pp.tsp1.full != (u32)-1)
-			pp.texture1 = renderer->GetTexture(pp.tsp1, pp.tcw1, 1);
-	}
+		loadTextures(&pp);
 
 	ctx->rend.newRenderPass();
 	RenderPass previousPass{};
@@ -1305,13 +1349,6 @@ static void ta_parse_naomi2(TA_context* ctx, bool primRestart)
 		}
 		previousPass = pass;
 	}
-
-	u32 xmin, xmax, ymin, ymax;
-	getRegionTileClipping(xmin, xmax, ymin, ymax);
-	ctx->rend.fb_X_CLIP.min = std::max(ctx->rend.fb_X_CLIP.min, xmin);
-	ctx->rend.fb_X_CLIP.max = std::min(ctx->rend.fb_X_CLIP.max, xmax + 31);
-	ctx->rend.fb_Y_CLIP.min = std::max(ctx->rend.fb_Y_CLIP.min, ymin);
-	ctx->rend.fb_Y_CLIP.max = std::min(ctx->rend.fb_Y_CLIP.max, ymax + 31);
 }
 
 void ta_parse(TA_context *ctx, bool primRestart)

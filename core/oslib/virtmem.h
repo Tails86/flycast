@@ -1,16 +1,14 @@
 #pragma once
 #include "types.h"
 
-#if defined(_WIN32) || defined(TARGET_IPHONE) || defined(TARGET_ARM_MAC)
+#if defined(_WIN32) || defined(__APPLE__)
 #define DECLARE_CODE_CACHE(Name, Size) static u8 *Name;
 #elif defined(__ANDROID__)
 #define DECLARE_CODE_CACHE(Name, Size) alignas(4096) static u8 Name[Size];
 #elif defined(__OpenBSD__)
 #define DECLARE_CODE_CACHE(Name, Size) alignas(4096) static u8 Name[Size] __attribute__((section(".openbsd.mutable")));
-#elif defined(__unix__) || defined(__SWITCH__)
+#elif defined(__unix__) || defined(__SWITCH__) || defined(__HAIKU__)
 #define DECLARE_CODE_CACHE(Name, Size) alignas(4096) static u8 Name[Size] __attribute__((section(".text")));
-#elif defined(__APPLE__)
-#define DECLARE_CODE_CACHE(Name, Size) alignas(4096) static u8 Name[Size] __attribute__((section("__TEXT,.text")));
 #else
 #error Unknown platform for dynarec code cache declaration
 #endif
@@ -49,6 +47,17 @@ void jit_set_exec(void* code, size_t size, bool enable);
 void release_jit_block(void *code_area, size_t size);
 // Release a jit block previously allocated by prepare_jit_block (with dual RW and RX areas)
 void release_jit_block(void *code_area1, void *code_area2, size_t size);
+
+// The address part of a host pointer. On arm64, Android may put a tag in the top
+// byte of heap pointers, and a signal handler receives fault addresses without it.
+static inline uintptr_t untag(const void *p)
+{
+#if HOST_CPU == CPU_ARM64 && defined(__ANDROID__)
+	return (uintptr_t)p & 0x00ffffffffffffffull;
+#else
+	return (uintptr_t)p;
+#endif
+}
 
 bool region_lock(void *start, std::size_t len);
 bool region_unlock(void *start, std::size_t len);

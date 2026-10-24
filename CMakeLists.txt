@@ -1,3 +1,5 @@
+# Portions Copyright 2026 The Hollycast Authors
+
 if(APPLE AND NOT LIBRETRO)
 	# Requirement from SDL
 	# Minimum version for $<LINK_LIBRARY:feature,library-list>
@@ -42,14 +44,19 @@ if(APPLE)
 endif()
 
 if(LIBRETRO)
-	project(flycast_libretro)
+	project(Hollycast_libretro)
 else()
-	project(flycast)
+	project(Hollycast)
+endif()
+
+option(FLYCAST_PRESEED_DARWIN_XCODE_CHECKS "Pre-seed stable macOS feature checks for faster Xcode generation" ON)
+if(FLYCAST_PRESEED_DARWIN_XCODE_CHECKS)
+	include(DarwinXcodeProbeCache)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-if(CMAKE_SYSTEM_NAME STREQUAL "NetBSD" OR NINTENDO_SWITCH)
+if(CMAKE_SYSTEM_NAME MATCHES "NetBSD|Haiku" OR NINTENDO_SWITCH)
 	set(CMAKE_CXX_EXTENSIONS ON)
 else()
 	set(CMAKE_CXX_EXTENSIONS OFF)
@@ -67,7 +74,7 @@ if(CMAKE_CXX_COMPILER MATCHES "webos" OR
 endif()
 
 set(USE_HOST_SDL_DEFAULT OFF)
-if(NOT APPLE AND (NOT UNIX OR CMAKE_SYSTEM_NAME MATCHES "(FreeBSD|OpenBSD|NetBSD)"))
+if(NOT APPLE AND (NOT UNIX OR CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD|OpenBSD|NetBSD|Haiku"))
 	set(USE_HOST_SDL_DEFAULT ON)
 endif()
 
@@ -82,8 +89,10 @@ option(USE_HOST_GLSLANG "Use host glslang" OFF)
 option(USE_HOST_LIBZIP "Use host libzip" ON)
 option(USE_HOST_SDL "Use host SDL library" ${USE_HOST_SDL_DEFAULT})
 option(USE_HOST_LIBCHDR "Use host libchdr" OFF)
+option(USE_HOST_LIBJUICE "Use host libjuice" OFF)
 option(USE_OPENMP "Use OpenMP if available" ON)
 option(USE_VULKAN "Build with Vulkan support" ON)
+set(MOLTENVK_DYLIB "" CACHE FILEPATH "Path to macOS MoltenVK dylib for macOS Vulkan builds")
 option(USE_DX9 "Build with Direct3D 9 support" ON)
 option(USE_DX11 "Build with Direct3D 11 support" ON)
 option(LIBRETRO "Build libretro core" OFF)
@@ -97,18 +106,33 @@ option(USE_BREAKPAD "Build and link with breakpad library" ON)
 option(USE_LUA "Build with Lua support" ON)
 option(ENABLE_GDB_SERVER "Build with GDB debugging support" OFF)
 option(ENABLE_DC_PROFILER "Build with support for target machine (SH4) profiler" OFF)
-option(ENABLE_FC_PROFILER "Build with support for host app (Flycast) profiler" OFF)
+option(ENABLE_FC_PROFILER "Build with support for host app (Hollycast) profiler" OFF)
 option(USE_DISCORD "Use Discord Presence API" OFF)
 option(USE_LIBCDIO "Use libcdio for CDROM access" OFF)
+option(USE_DREAMLINK_DEVICES "Use DreamLink devices" ON)
+
+if(ASAN AND MSVC)
+	add_compile_options(/fsanitize=address)
+	add_link_options(/INCREMENTAL:NO)
+endif()
 
 if(IOS AND NOT LIBRETRO)
 	set(USE_VULKAN OFF CACHE BOOL "Force vulkan off" FORCE)
 endif()
 
 if(WEBOS)
-	set(USE_GLES2 ON CACHE BOOL "Use GLES2 API" FORCE)
-	set(USE_OPENMP OFF CACHE BOOL "Force openmp off" FORCE)
+	if(CMAKE_CXX_COMPILER MATCHES "aarch64")
+		set(USE_GLES ON CACHE BOOL "Use GLES[3] API" FORCE)
+	else()
+		set(USE_GLES2 ON CACHE BOOL "Use GLES2 API" FORCE)
+		set(USE_OPENMP OFF CACHE BOOL "Force openmp off" FORCE)
+	endif()
 	set(USE_VULKAN OFF CACHE BOOL "Force vulkan off" FORCE)
+endif()
+
+if(ANDROID OR IOS OR NINTENDO_SWITCH OR LIBRETRO)
+	# DreamLink only available for non-mobile Linux, MacOS, and Windows
+	set(USE_DREAMLINK_DEVICES OFF CACHE BOOL "Force DreamLink devices off" FORCE)
 endif()
 
 include(GNUInstallDirs)
@@ -116,6 +140,7 @@ include(CMakeRC)
 
 if(ENABLE_CTEST)
 	include(CTest)
+	add_compile_definitions(FLYCAST_TEST_FILES="${CMAKE_CURRENT_SOURCE_DIR}/tests/files")
 endif()
 
 if(IOS AND NOT LIBRETRO)
@@ -167,7 +192,7 @@ if(NINTENDO_SWITCH)
 		target_compile_definitions(${PROJECT_NAME} PRIVATE LIBRETRO HAVE_LIBNX HAVE_OPENGL HAVE_OIT)
 		find_path(GLEXT_H_INCLUDE_DIR NAMES GL/glext.h REQUIRED)
 		target_include_directories(${PROJECT_NAME} PRIVATE ${GLEXT_H_INCLUDE_DIR})
-		set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "flycast_libretro_libnx")
+		set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "Hollycast_libretro_libnx")
 		set(CMAKE_STATIC_LIBRARY_PREFIX "")
 	else()
 		add_executable(${PROJECT_NAME} core/emulator.cpp)
@@ -192,22 +217,26 @@ elseif(LIBRETRO)
 		endif()
 		set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/shell/libretro/libretro.osx.def")
 	else()
-		set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--no-undefined")
+		if(NOT CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
+			set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--no-undefined")
+		endif()
 	endif()
-	set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "flycast_libretro"
+	set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "Hollycast_libretro"
 	  XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
 	  XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY ""
     )
 	set(CMAKE_SHARED_LIBRARY_PREFIX "")
 	set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 	target_compile_definitions(${PROJECT_NAME} PRIVATE LIBRETRO)
-	target_compile_options(${PROJECT_NAME} PRIVATE -Wno-misleading-indentation)
 	if(APPLE)
 		find_library(FOUNDATION Foundation)
 		target_link_libraries(${PROJECT_NAME} PRIVATE ${FOUNDATION})
 	endif()
 	if(ANDROID OR USE_GLES)
-		target_compile_definitions(${PROJECT_NAME} PRIVATE GLES GLES3 HAVE_OPENGLES HAVE_OPENGLES3 HAVE_OIT)
+		target_compile_definitions(${PROJECT_NAME} PRIVATE GLES GLES3 HAVE_OPENGLES HAVE_OPENGLES3 HAVE_OPENGLES_3_1 HAVE_OIT)
+		if(ANDROID)
+			target_link_libraries(${PROJECT_NAME} PRIVATE android)
+		endif()
     elseif(IOS)
 		target_compile_definitions(${PROJECT_NAME} PRIVATE GLES GLES3 HAVE_OPENGLES HAVE_OPENGLES3)
 		find_library(OPENGLES OpenGLES)
@@ -223,6 +252,14 @@ elseif(LIBRETRO)
 			target_link_libraries(${PROJECT_NAME} PRIVATE "-lGLESv2")
 		endif()
 	elseif(USE_OPENGL)
+		if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD|OpenBSD|NetBSD")
+			find_package(OpenGL REQUIRED)
+			if(CMAKE_VERSION VERSION_LESS 3.29.0)
+				target_include_directories(${PROJECT_NAME} PRIVATE ${OPENGL_INCLUDE_DIR})
+			else()
+				target_include_directories(${PROJECT_NAME} PRIVATE ${OPENGL_INCLUDE_DIRS})
+			endif()
+		endif()
 		target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_OPENGL)
 		if(APPLE)
 			set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-framework,OpenGL")
@@ -232,8 +269,6 @@ elseif(LIBRETRO)
 	endif()
 elseif(ANDROID)
 	add_library(${PROJECT_NAME} SHARED core/emulator.cpp)
-	set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_RELEASE} -O3")
-	set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELEASE} -O3")
 	target_compile_options(${PROJECT_NAME} PRIVATE -fno-stack-protector)
 	set(CMAKE_ANDROID_STL_TYPE "c++_static")
 elseif(WIN32)
@@ -261,6 +296,25 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 		CMAKE_CXX_STANDARD 20
 		CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_library(flycast_basis_transcoder STATIC
+		core/deps/basis_universal/transcoder/basisu_transcoder.cpp
+		core/deps/basis_universal/zstd/zstddeclib.c)
+target_compile_features(flycast_basis_transcoder PRIVATE cxx_std_17)
+target_compile_definitions(flycast_basis_transcoder PRIVATE
+		BASISD_SUPPORT_KTX2=1
+		BASISD_SUPPORT_KTX2_ZSTD=1
+		BASISD_SUPPORT_DXT1=1
+		BASISD_SUPPORT_DXT5A=1
+		BASISD_SUPPORT_ETC2_EAC_A8=1
+		BASISD_SUPPORT_XUASTC=1)
+target_include_directories(flycast_basis_transcoder PUBLIC core/deps)
+set_target_properties(flycast_basis_transcoder PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+	target_compile_options(flycast_basis_transcoder PRIVATE
+			$<$<COMPILE_LANGUAGE:CXX>:-fno-strict-aliasing>)
+endif()
+target_link_libraries(${PROJECT_NAME} PRIVATE flycast_basis_transcoder)
+
 if(WINDOWS_STORE)
 	set(USE_OPENGL OFF)
 	set(USE_VULKAN OFF)
@@ -268,7 +322,7 @@ endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS_RELEASE -s)
 if(MSVC)
-	target_compile_options(${PROJECT_NAME} PRIVATE /GR /GS-)
+	target_compile_options(${PROJECT_NAME} PRIVATE /GR /GS- /utf-8 /MP)
 	if(WINDOWS_STORE)
 		target_compile_options(${PROJECT_NAME} PRIVATE /ZW)
 	endif()
@@ -382,27 +436,27 @@ if(USE_BREAKPAD AND NOT LIBRETRO)
 				COMMAND mkdir -p ../symbols
 				COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/build/breakpad/dump_syms
 					-a x86_64
-					-g ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/Flycast.app.dSYM
-					$<TARGET_FILE:flycast> > ../symbols/Flycast-x64.sym
+					-g ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/Hollycast.app.dSYM
+					$<TARGET_FILE:Hollycast> > ../symbols/Hollycast-x64.sym
 				COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/build/breakpad/dump_syms
 					-a arm64
-					-g ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/Flycast.app.dSYM
-					$<TARGET_FILE:flycast> > ../symbols/Flycast-arm64.sym
+					-g ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/Hollycast.app.dSYM
+					$<TARGET_FILE:Hollycast> > ../symbols/Hollycast-arm64.sym
 			)
 		else()
 			add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 				COMMAND sleep 20
 				COMMAND mkdir -p ../symbols
-				COMMAND dsymutil $<TARGET_FILE:flycast>
-					-o ${CMAKE_CURRENT_BINARY_DIR}/Flycast.app.dSYM
+				COMMAND dsymutil $<TARGET_FILE:Hollycast>
+					-o ${CMAKE_CURRENT_BINARY_DIR}/Hollycast.app.dSYM
 				COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/build/breakpad/dump_syms
 					-a x86_64
-					-g ${CMAKE_CURRENT_BINARY_DIR}/Flycast.app.dSYM
-					$<TARGET_FILE:flycast> > ../symbols/Flycast-x64.sym
+					-g ${CMAKE_CURRENT_BINARY_DIR}/Hollycast.app.dSYM
+					$<TARGET_FILE:Hollycast> > ../symbols/Hollycast-x64.sym
 				COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/build/breakpad/dump_syms
 					-a arm64
-					-g ${CMAKE_CURRENT_BINARY_DIR}/Flycast.app.dSYM
-					$<TARGET_FILE:flycast> > ../symbols/Flycast-arm64.sym
+					-g ${CMAKE_CURRENT_BINARY_DIR}/Hollycast.app.dSYM
+					$<TARGET_FILE:Hollycast> > ../symbols/Hollycast-arm64.sym
 			)
 		endif()
 	endif()
@@ -453,6 +507,37 @@ if(USE_VULKAN)
 	target_link_libraries(${PROJECT_NAME} PRIVATE glslang::glslang-default-resource-limits glslang::SPIRV)
 endif()
 
+if(USE_DREAMLINK_DEVICES)
+	target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DREAMLINK_DEVICES=1)
+
+	if (WINDOWS_STORE)
+		# Use winrt implementation of the DreamPicoPort-API
+		option(DREAMPICOPORT_WITH_LIBUSB "Use libusb to access DreamPicoPort-API" OFF)
+	elseif (CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD|NetBSD|OpenBSD|Haiku")
+		find_package(PkgConfig REQUIRED)
+		pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+
+		set(DREAMPICOPORT_LIBUSB_LIBRARIES "${LIBUSB_LIBRARIES}" CACHE STRING "Name of the libusb library to link against")
+		set(DREAMPICOPORT_LIBUSB_INCLUDE_DIRS "${LIBUSB_INCLUDE_DIRS}" CACHE STRING "Path to libusb include directory, when applicable")
+	else()
+		if(MINGW)
+			# Shim 'windowsapp' to prevent libusb from linking against the UWP library
+			# and link against standard desktop libraries instead for Windows 7 support.
+			if(NOT TARGET windowsapp)
+				add_library(windowsapp INTERFACE)
+				target_link_libraries(windowsapp INTERFACE advapi32 ole32 shell32 user32)
+			endif()
+		endif()
+		# libusb
+		add_subdirectory(core/deps/DreamPicoPort-API/ext/libusb-cmake)
+	endif()
+
+	# DreamPicoPort-API
+	option(DREAMPICOPORT_ADD_LIBUSB "Add internal libusb library" OFF) # Already included above, when applicable
+	add_subdirectory(core/deps/DreamPicoPort-API EXCLUDE_FROM_ALL)
+	target_link_libraries(${PROJECT_NAME} PRIVATE dream_pico_port_api)
+endif()
+
 if(NOT LIBRETRO)
 	if(USE_OSS)
 		target_compile_definitions(${PROJECT_NAME} PRIVATE USE_OSS)
@@ -472,42 +557,8 @@ if(NOT LIBRETRO)
 	endif()
 
 	if(NOT ANDROID AND NOT IOS)
-		if (NOT NINTENDO_SWITCH)
-			# DreamLink enabled for non-mobile Linux, MacOS, and Windows
-			target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DREAMLINK_DEVICES=1)
-			set(USE_DREAMLINK_DEVICES ON) # Must be set before adding core/sdl
-
-			if (WINDOWS_STORE)
-				# Use winrt implementation of the DreamPicoPort-API
-				option(DREAMPICOPORT_WITH_LIBUSB "Use libusb to access DreamPicoPort-API" OFF)
-			elseif (CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
-				# A version of libusb is installed in FreeBSD
-				find_package(PkgConfig REQUIRED)
-   	 			pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
-
-				set(DREAMPICOPORT_LIBUSB_LIBRARIES "${LIBUSB_LIBRARIES}" CACHE STRING "Name of the libusb library to link against")
-				set(DREAMPICOPORT_LIBUSB_INCLUDE_DIRS "${LIBUSB_INCLUDE_DIRS}" CACHE STRING "Path to libusb include directory, when applicable")
-			else()
-				if(MINGW)
-					# Shim 'windowsapp' to prevent libusb from linking against the UWP library
-					# and link against standard desktop libraries instead for Windows 7 support.
-					if(NOT TARGET windowsapp)
-						add_library(windowsapp INTERFACE)
-						target_link_libraries(windowsapp INTERFACE advapi32 ole32 shell32 user32)
-					endif()
-				endif()
-				# libusb
-				add_subdirectory(core/deps/libusb-cmake)
-			endif()
-
-			# DreamPicoPort-API
-			option(DREAMPICOPORT_ADD_LIBUSB "Add internal libusb library" OFF) # Already included above, when applicable
-			add_subdirectory(core/deps/DreamPicoPort-API)
-			target_link_libraries(${PROJECT_NAME} PRIVATE dream_pico_port_api)
-		endif()
-
 		if(USE_HOST_SDL)
-			find_package(SDL2 2.0.9)
+			find_package(SDL2 2.0.18)
 		endif()
 		if(NOT SDL2_FOUND)
 			set(SDL_TEST_ENABLED_BY_DEFAULT OFF)
@@ -532,11 +583,6 @@ if(NOT LIBRETRO)
 
 		target_compile_definitions(${PROJECT_NAME} PRIVATE USE_SDL USE_SDL_AUDIO)
 		add_subdirectory(core/sdl)
-
-		if((UNIX AND NOT APPLE) OR NINTENDO_SWITCH)
-			find_package(CURL REQUIRED)
-			target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
-		endif()
 	endif()
 
 	find_package(ZLIB)
@@ -554,6 +600,18 @@ if(NOT LIBRETRO)
 			target_link_libraries(${PROJECT_NAME} PRIVATE ${LUA_LIBRARIES})
 		endif()
 	endif()
+endif()
+
+# http
+if((UNIX AND NOT APPLE AND NOT ANDROID) OR NINTENDO_SWITCH)
+	find_package(CURL REQUIRED)
+	target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
+elseif(LIBRETRO AND ANDROID)
+	# libretro needs to enable prefab and add dependency 'implementation("io.github.vvb2060.ndk:curl:8.18.0")'
+	find_package(curl REQUIRED CONFIG)
+	target_link_libraries(${PROJECT_NAME} PRIVATE curl::curl_static)
+elseif(LIBRETRO AND WIN32)
+	target_link_libraries(${PROJECT_NAME} PRIVATE wininet)
 endif()
 
 find_package(PkgConfig)
@@ -678,7 +736,28 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
 endif()
 
 if(ASAN)
-	if(ANDROID)
+	if(MSVC)
+		# Copy address sanitizer runtime dll to output
+		if(ARCHITECTURE STREQUAL "x86_64")
+			set(MSVC_ASAN_ARCH x86_64)
+		elseif(ARCHITECTURE STREQUAL "x86")
+			set(MSVC_ASAN_ARCH i386)
+		elseif(ARCHITECTURE STREQUAL "arm64")
+			set(MSVC_ASAN_ARCH aarch64)
+		else()
+			message(FATAL_ERROR "MSVC AddressSanitizer is not supported for ${ARCHITECTURE}")
+		endif()
+		get_filename_component(MSVC_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+		set(MSVC_ASAN_RUNTIME "${MSVC_COMPILER_DIR}/clang_rt.asan_dynamic-${MSVC_ASAN_ARCH}.dll")
+		if(NOT EXISTS "${MSVC_ASAN_RUNTIME}")
+			message(FATAL_ERROR "MSVC AddressSanitizer runtime not found: ${MSVC_ASAN_RUNTIME}")
+		endif()
+		add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				"${MSVC_ASAN_RUNTIME}"
+				"$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+			VERBATIM)
+	elseif(ANDROID)
 		target_compile_options(${PROJECT_NAME} PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 		set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS -fsanitize=address)
 	else()
@@ -771,18 +850,27 @@ if(WIN32)
 	target_include_directories(${PROJECT_NAME} PRIVATE core/deps/dirent)
 endif()
 
-if(NOT LIBRETRO AND NOT NINTENDO_SWITCH)
-	target_compile_definitions(${PROJECT_NAME} PRIVATE USE_ICE)
-	# libjuice
+# libjuice
+target_compile_definitions(${PROJECT_NAME} PRIVATE USE_ICE)
+if (USE_HOST_LIBJUICE AND UNIX AND NOT APPLE AND NOT ANDROID)
+	find_package(LibJuice)
+endif()
+if(NOT TARGET LibJuice::LibJuiceStatic)
 	option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 	option(NO_SERVER "Disable server support" ON)
 	option(NO_TESTS "Disable tests build" ON)
 	add_subdirectory(core/deps/libjuice EXCLUDE_FROM_ALL)
-	target_link_libraries(${PROJECT_NAME} PRIVATE LibJuice::LibJuiceStatic)
+	if(NINTENDO_SWITCH)
+		target_include_directories(juice-static SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shell/switch)
+		target_compile_definitions(juice-static PRIVATE getnameinfo=getnameinfo_fixed)
+	endif()
+endif()
+target_link_libraries(${PROJECT_NAME} PRIVATE LibJuice::LibJuiceStatic)
 
-	# websocket++
+# websocket++
+if(NOT LIBRETRO AND NOT NINTENDO_SWITCH)
 	target_include_directories(${PROJECT_NAME} PRIVATE core/deps/websocketpp)
-	target_compile_definitions(${PROJECT_NAME} PRIVATE ASIO_STANDALONE)
+	target_compile_definitions(${PROJECT_NAME} PRIVATE ASIO_STANDALONE USE_WEBSOCKET)
 	if (MSVC)
 		target_compile_definitions(${PROJECT_NAME} PRIVATE
 			_WEBSOCKETPP_CPP11_FUNCTIONAL_
@@ -796,6 +884,12 @@ if(NOT LIBRETRO AND NOT NINTENDO_SWITCH)
 		target_compile_definitions(${PROJECT_NAME} PRIVATE _WEBSOCKETPP_CPP11_STL_)
 	endif()
 endif()
+
+# tinygettext
+set(TINYGETTEXT_WO_ICONV ON)
+add_subdirectory(core/deps/tinygettext EXCLUDE_FROM_ALL)
+target_include_directories(${PROJECT_NAME} PRIVATE core/deps/tinygettext/include)
+target_link_libraries(${PROJECT_NAME} PRIVATE tinygettext::tinygettext)
 
 target_include_directories(${PROJECT_NAME} PRIVATE core/deps/picotcp/include core/deps/picotcp/modules)
 target_sources(${PROJECT_NAME} PRIVATE
@@ -871,9 +965,20 @@ if(NOT LIBRETRO)
 		core/deps/imgui/imgui.cpp
 		core/deps/imgui/imgui_demo.cpp
 		core/deps/imgui/imgui_draw.cpp
+		core/deps/imgui/imgui_cjk.cpp
 		core/deps/imgui/imgui_stdlib.cpp
 		core/deps/imgui/imgui_tables.cpp
-		core/deps/imgui/imgui_widgets.cpp)
+		core/deps/imgui/imgui_widgets.cpp
+		core/deps/imgui/misc/freetype/imgui_freetype.cpp)
+
+	set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+	set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+	set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+	add_subdirectory(core/deps/freetype EXCLUDE_FROM_ALL)
+	if(WINDOWS_STORE)
+		target_compile_definitions(freetype PRIVATE _WINRT_DLL)
+	endif()
+	target_link_libraries(${PROJECT_NAME} PRIVATE freetype)
 
 	if(ENABLE_FC_PROFILER)
 		target_include_directories(${PROJECT_NAME} PRIVATE core/deps/implot)
@@ -895,19 +1000,22 @@ if(USE_DISCORD AND NOT LIBRETRO)
 	target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DISCORD)
 endif()
 
-target_link_libraries(${PROJECT_NAME} PRIVATE flycast::res)
+target_link_libraries(${PROJECT_NAME} PRIVATE Hollycast::res)
 
 if(LIBRETRO)
 	target_include_directories(${PROJECT_NAME} PRIVATE core/deps/libretro-common/include)
 	target_sources(${PROJECT_NAME} PRIVATE
 		core/deps/libretro-common/memmap/memalign.c
 		core/deps/libretro-common/file/file_path.c
+		core/deps/libretro-common/file/file_path_io.c
 		core/deps/libretro-common/vfs/vfs_implementation.c
 		core/deps/libretro-common/encodings/encoding_utf.c
 		core/deps/libretro-common/compat/compat_strl.c
 		core/deps/libretro-common/compat/fopen_utf8.c
 		core/deps/libretro-common/compat/compat_strcasestr.c
 		core/deps/libretro-common/file/retro_dirent.c
+		core/deps/libretro-common/streams/file_stream.c
+		core/deps/libretro-common/time/rtime.c
 		core/deps/libretro-common/string/stdstring.c)
 	if(USE_OPENGL)
 		target_sources(${PROJECT_NAME} PRIVATE
@@ -932,9 +1040,12 @@ if(LIBRETRO)
 		shell/libretro/LogManager.h
 		shell/libretro/option.cpp
 		shell/libretro/oslib.cpp
+		shell/libretro/storage.cpp
 		shell/libretro/vmu_xhair.cpp)
 	if(APPLE)
-		target_sources(${PROJECT_NAME} PRIVATE shell/libretro/oslib_apple.mm)
+		target_sources(${PROJECT_NAME} PRIVATE
+			shell/libretro/oslib_apple.mm
+			shell/apple/common/http_client.mm)
 	endif()
 	if(WIN32)
 		target_link_libraries(${PROJECT_NAME} PRIVATE mswsock)
@@ -957,7 +1068,7 @@ add_subdirectory(core/lua)
 add_subdirectory(core/profiler)
 add_subdirectory(core/wsi)
 
-include(cmake/resources.cmake)
+include(resources/resources.cmake)
 
 if(WIN32)
 	target_sources(${PROJECT_NAME} PRIVATE
@@ -1021,66 +1132,22 @@ if(NOT LIBRETRO)
 	target_compile_definitions(${PROJECT_NAME} PRIVATE USE_RACHIEVEMENTS RC_DISABLE_LUA)
 endif()
 
-if(USE_OPENGL)
-	target_compile_definitions(${PROJECT_NAME} PRIVATE USE_OPENGL)
-
-	target_sources(${PROJECT_NAME} PRIVATE
-			core/rend/gles/glcache.h
-			core/rend/gles/gldraw.cpp
-			core/rend/gles/gles.cpp
-			core/rend/gles/gles.h
-			core/rend/gles/gltex.cpp
-			core/rend/gles/quad.cpp
-			core/rend/gles/postprocess.cpp
-			core/rend/gles/postprocess.h
-			core/rend/gles/naomi2.cpp
-			core/rend/gles/naomi2.h)
-
-	if(NOT LIBRETRO)
-		target_sources(${PROJECT_NAME} PRIVATE
-				core/deps/imgui/backends/imgui_impl_opengl3.cpp
-				core/deps/imgui/backends/imgui_impl_opengl3.h
-				core/rend/gles/opengl_driver.cpp
-				core/rend/gles/opengl_driver.h)
-	endif()
-
-	if(NOT (APPLE OR USE_GLES2))
-		target_sources(${PROJECT_NAME} PRIVATE
-				core/rend/gl4/abuffer.cpp
-				core/rend/gl4/gl4.h
-				core/rend/gl4/gldraw.cpp
-				core/rend/gl4/gles.cpp
-				core/rend/gl4/gl4naomi2.cpp
-				core/rend/gl4/gl4naomi2.h)
-	endif()
-endif()
-
 target_sources(${PROJECT_NAME} PRIVATE
 		core/build.h
+		core/chd.h
 		core/cheats.cpp
 		core/cheats.h
 		core/emulator.h
 		core/nullDC.cpp
 		core/serialize.cpp
 		core/serialize.h
+		core/stbi.h
 		core/stdclass.cpp
 		core/stdclass.h
 		core/types.h
 		core/debug/gdb_server.h)
 
-target_sources(${PROJECT_NAME} PRIVATE
-		core/rend/CustomTexture.cpp
-		core/rend/CustomTexture.h
-		core/rend/osd.cpp
-		core/rend/osd.h
-		core/rend/sorter.cpp
-		core/rend/sorter.h
-		core/rend/tileclip.h
-		core/rend/TexCache.cpp
-		core/rend/TexCache.h
-		core/rend/texconv.cpp
-		core/rend/texconv.h
-		core/rend/norend/norend.cpp)
+set(IMGUI_BACKENDS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/core/deps/imgui/backends")
 
 if(USE_VULKAN)
 	target_compile_definitions(${PROJECT_NAME} PUBLIC VK_ENABLE_BETA_EXTENSIONS VK_NO_PROTOTYPES)
@@ -1105,117 +1172,9 @@ if(USE_VULKAN)
 		add_subdirectory(core/deps/libadrenotools)
 		target_link_libraries(${PROJECT_NAME} PRIVATE adrenotools)
 	endif()
-
-	target_compile_definitions(${PROJECT_NAME} PRIVATE USE_VULKAN HAVE_VULKAN)
-	target_sources(${PROJECT_NAME} PRIVATE
-			core/rend/vulkan/oit/oit_buffer.h
-			core/rend/vulkan/oit/oit_drawer.cpp
-			core/rend/vulkan/oit/oit_drawer.h
-			core/rend/vulkan/oit/oit_pipeline.cpp
-			core/rend/vulkan/oit/oit_pipeline.h
-			core/rend/vulkan/oit/oit_renderer.cpp
-			core/rend/vulkan/oit/oit_renderpass.cpp
-			core/rend/vulkan/oit/oit_renderpass.h
-			core/rend/vulkan/oit/oit_shaders.cpp
-			core/rend/vulkan/oit/oit_shaders.h
-			core/rend/vulkan/adreno.cpp
-			core/rend/vulkan/buffer.cpp
-			core/rend/vulkan/buffer.h
-			core/rend/vulkan/commandpool.cpp
-			core/rend/vulkan/commandpool.h
-			core/rend/vulkan/compiler.cpp
-			core/rend/vulkan/compiler.h
-			core/rend/vulkan/drawer.cpp
-			core/rend/vulkan/drawer.h
-			core/rend/vulkan/pipeline.cpp
-			core/rend/vulkan/pipeline.h
-			core/rend/vulkan/quad.cpp
-			core/rend/vulkan/quad.h
-			core/rend/vulkan/shaders.cpp
-			core/rend/vulkan/shaders.h
-			core/rend/vulkan/texture.cpp
-			core/rend/vulkan/texture.h
-			core/rend/vulkan/utils.h
-			core/rend/vulkan/vmallocator.cpp
-			core/rend/vulkan/vmallocator.h
-			core/rend/vulkan/overlay.cpp
-			core/rend/vulkan/overlay.h
-			core/rend/vulkan/vulkan_context.h
-			core/rend/vulkan/vulkan.h
-			core/rend/vulkan/vulkan_renderer.cpp)
-	if(LIBRETRO)
-		target_sources(${PROJECT_NAME} PRIVATE
-				core/rend/vulkan/vk_context_lr.cpp
-				core/rend/vulkan/vk_context_lr.h)
-	else()
-		target_compile_definitions(${PROJECT_NAME} PUBLIC IMGUI_IMPL_VULKAN_NO_PROTOTYPES)
-		target_sources(${PROJECT_NAME} PRIVATE
-				core/rend/vulkan/vulkan_driver.h
-				core/rend/vulkan/vulkan_context.cpp
-				core/deps/imgui/backends/imgui_impl_vulkan.cpp
-				core/deps/imgui/backends/imgui_impl_vulkan.h)
-		if(CMAKE_SIZEOF_VOID_P EQUAL 4)
-			target_compile_definitions(${PROJECT_NAME} PRIVATE ImTextureID=ImU64)
-		endif()
-	endif()
 endif()
 
-if(WIN32 AND USE_DX9 AND NOT LIBRETRO AND NOT WINDOWS_STORE AND ("x86" IN_LIST ARCHITECTURE OR "x86_64" IN_LIST ARCHITECTURE))
-	set(REND_DX9_FILES
-		core/rend/dx9/d3d_overlay.h
-		core/rend/dx9/d3d_overlay.cpp
-		core/rend/dx9/d3d_renderer.h
-		core/rend/dx9/d3d_renderer.cpp
-		core/rend/dx9/d3d_shaders.h
-		core/rend/dx9/d3d_shaders.cpp
-		core/rend/dx9/d3d_texture.h
-		core/rend/dx9/d3d_texture.cpp
-		core/rend/dx9/dx9_driver.h
-		core/rend/dx9/dxcontext.cpp
-		core/rend/dx9/dxcontext.h
-		core/deps/imgui/backends/imgui_impl_dx9.h
-		core/deps/imgui/backends/imgui_impl_dx9.cpp)
-	target_sources(${PROJECT_NAME} PRIVATE ${REND_DX9_FILES})
-
-	if(NOT MINGW)
-		set_source_files_properties(${REND_DX9_FILES} PROPERTIES INCLUDE_DIRECTORIES "$ENV{DXSDK_DIR}/Include")
-	endif()
-	target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DX9)
-endif()
-
-if(WIN32 AND USE_DX11)
-	if(NOT LIBRETRO)
-		target_sources(${PROJECT_NAME} PRIVATE
-			core/deps/imgui/backends/imgui_impl_dx11.cpp
-			core/deps/imgui/backends/imgui_impl_dx11.h)
-	endif()
-	target_sources(${PROJECT_NAME} PRIVATE
-		core/rend/dx11/dx11_driver.h
-		core/rend/dx11/dx11_overlay.cpp
-		core/rend/dx11/dx11_overlay.h
-		core/rend/dx11/dx11_renderer.cpp
-		core/rend/dx11/dx11_renderer.h
-		core/rend/dx11/dx11_renderstate.h
-		core/rend/dx11/dx11_renderstate.cpp
-		core/rend/dx11/dx11_shaders.cpp
-		core/rend/dx11/dx11_shaders.h
-		core/rend/dx11/dx11_texture.cpp
-		core/rend/dx11/dx11_texture.h
-		core/rend/dx11/dx11context.cpp
-		core/rend/dx11/dx11context.h
-		core/rend/dx11/dx11context_lr.cpp
-		core/rend/dx11/dx11context_lr.h
-		core/rend/dx11/dx11_driver.h
-		core/rend/dx11/dx11_naomi2.cpp
-		core/rend/dx11/dx11_naomi2.h
-		core/rend/dx11/oit/dx11_oitbuffers.h
-		core/rend/dx11/oit/dx11_oitrenderer.cpp
-		core/rend/dx11/oit/dx11_oitshaders.cpp
-		core/rend/dx11/oit/dx11_oitshaders.h)
-
-	target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_D3D11)
-	target_link_libraries(${PROJECT_NAME} PRIVATE d3d11 d3dcompiler dxgi)
-endif()
+add_subdirectory(core/rend)
 
 if(ENABLE_GDB_SERVER)
 
@@ -1369,17 +1328,20 @@ if(NOT LIBRETRO)
 
 	if(ANDROID)
 		target_compile_definitions(${PROJECT_NAME} PRIVATE GLES GLES3)
-
-		target_sources(${PROJECT_NAME} PRIVATE
-			shell/android-studio/flycast/src/main/jni/src/Android.cpp
-			shell/android-studio/flycast/src/main/jni/src/android_gamepad.h
-			shell/android-studio/flycast/src/main/jni/src/android_storage.h
-			shell/android-studio/flycast/src/main/jni/src/http_client.h
-			shell/android-studio/flycast/src/main/jni/src/jni_util.h
-			shell/android-studio/flycast/src/main/jni/src/android_input.cpp
-			shell/android-studio/flycast/src/main/jni/src/android_keyboard.h)
-
+		add_subdirectory(shell/android-studio/flycast/src/main/jni/src)
 		target_link_libraries(${PROJECT_NAME} PRIVATE android log)
+
+		set(GAMESDK_THREAD_CHECKS 0)
+		add_subdirectory(core/deps/gamesdk/games-frame-pacing EXCLUDE_FROM_ALL)
+		target_compile_options(swappy_static PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wno-vla-cxx-extension>)
+		target_compile_definitions(swappy_static PRIVATE ANDROIDGAMESDK_NO_BINARY_DEX_LINKAGE)
+
+		target_include_directories(${PROJECT_NAME} PRIVATE
+				core/deps/gamesdk/include
+				core/deps/gamesdk/games-frame-pacing/include)
+		target_link_libraries(${PROJECT_NAME} PRIVATE swappy_static)
+		target_compile_definitions(${PROJECT_NAME} PRIVATE SWAPPY)
+
 	elseif(APPLE)
 		string(TIMESTAMP YEAR "%Y")
 		string(REGEX MATCH "^[^-]+" TAG_VERSION ${GIT_VERSION})
@@ -1424,16 +1386,16 @@ if(NOT LIBRETRO)
 			set_source_files_properties(${IOS_RESOURCES} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 
 			set_target_properties(${PROJECT_NAME} PROPERTIES
-				OUTPUT_NAME "Flycast"
+				OUTPUT_NAME "Hollycast"
 				MACOSX_BUNDLE YES
-				MACOSX_BUNDLE_EXECUTABLE_NAME "Flycast"
+				MACOSX_BUNDLE_EXECUTABLE_NAME "Hollycast"
 				MACOSX_BUNDLE_INFO_STRING ""
-				MACOSX_BUNDLE_GUI_IDENTIFIER "com.flyinghead.Flycast"
-				MACOSX_BUNDLE_BUNDLE_NAME "com.flyinghead.Flycast"
+				MACOSX_BUNDLE_GUI_IDENTIFIER "org.hollycast.Hollycast"
+				MACOSX_BUNDLE_BUNDLE_NAME "Hollycast"
 				MACOSX_BUNDLE_LONG_VERSION_STRING "${GIT_VERSION}"
 				MACOSX_BUNDLE_SHORT_VERSION_STRING "${TAG_VERSION}"
 				MACOSX_BUNDLE_BUNDLE_VERSION "${GIT_HASH}"
-				MACOSX_BUNDLE_COPYRIGHT "Copyright © ${YEAR} Flycast contributors. All rights reserved."
+				MACOSX_BUNDLE_COPYRIGHT "Copyright © ${YEAR} The Hollycast Authors. All rights reserved."
 				MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/shell/apple/emulator-ios/plist.in
 
 				XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf-with-dsym"
@@ -1445,7 +1407,7 @@ if(NOT LIBRETRO)
 				XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
 				XCODE_ATTRIBUTE_COMBINE_HIDPI_IMAGES NO
 				XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"
-				XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.flyinghead.Flycast")
+				XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.hollycast.Hollycast")
 
 			find_library(UIKIT UIKit)
 			find_library(FOUNDATION Foundation)
@@ -1461,24 +1423,24 @@ if(NOT LIBRETRO)
 				${AUDIOTOOLBOX}
 				${AVFOUNDATION})
 
-			add_custom_target(Flycast.IPA ALL
+			add_custom_target(Hollycast.IPA ALL
 				DEPENDS ${PROJECT_NAME}
 				COMMENT "Building IPA"
 				COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/Payload
 				COMMAND rm -rf ${CMAKE_CURRENT_BINARY_DIR}/Payload/*
-				COMMAND cp -r ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>-${CMAKE_OSX_SYSROOT}/Flycast.app ${CMAKE_CURRENT_BINARY_DIR}/Payload
-				COMMAND for lib in ${CMAKE_CURRENT_BINARY_DIR}/Payload/Flycast.app/Frameworks/*.dylib
+				COMMAND cp -r ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>-${CMAKE_OSX_SYSROOT}/Hollycast.app ${CMAKE_CURRENT_BINARY_DIR}/Payload
+				COMMAND for lib in ${CMAKE_CURRENT_BINARY_DIR}/Payload/Hollycast.app/Frameworks/*.dylib
 				COMMAND do xcrun bitcode_strip -r $lib -o $lib
 				COMMAND done
-				COMMAND ldid -S${CMAKE_CURRENT_SOURCE_DIR}/shell/apple/emulator-ios/emulator/flycast.entitlements ${CMAKE_CURRENT_BINARY_DIR}/Payload/Flycast.app/Flycast
-				COMMAND ${CMAKE_COMMAND} -E tar "cfv" "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>-${CMAKE_OSX_SYSROOT}/Flycast.ipa" --format=zip ${CMAKE_CURRENT_BINARY_DIR}/Payload)
+				COMMAND ldid -S${CMAKE_CURRENT_SOURCE_DIR}/shell/apple/emulator-ios/emulator/flycast.entitlements ${CMAKE_CURRENT_BINARY_DIR}/Payload/Hollycast.app/Hollycast
+				COMMAND ${CMAKE_COMMAND} -E tar "cfv" "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>-${CMAKE_OSX_SYSROOT}/Hollycast.ipa" --format=zip ${CMAKE_CURRENT_BINARY_DIR}/Payload)
 		else()
 
 			add_subdirectory(core/deps/Syphon)
 			target_link_libraries(${PROJECT_NAME} PRIVATE Syphon)
 			add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 				COMMAND ${CMAKE_COMMAND} -E copy ${SYPHON_METALLIB}
-				$<TARGET_FILE_DIR:flycast>/../Resources/)
+				$<TARGET_FILE_DIR:Hollycast>/../Resources/)
 			target_compile_definitions(${PROJECT_NAME} PRIVATE VIDEO_ROUTING)
 
 			target_sources(${PROJECT_NAME} PRIVATE
@@ -1493,23 +1455,23 @@ if(NOT LIBRETRO)
 			set_source_files_properties(${ASSETS} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 
 			set_target_properties(${PROJECT_NAME} PROPERTIES
-				OUTPUT_NAME "Flycast"
+				OUTPUT_NAME "Hollycast"
 				MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/shell/apple/emulator-osx/MacOSXBundleInfo.plist.in
-				MACOSX_BUNDLE_EXECUTABLE_NAME "Flycast"
+				MACOSX_BUNDLE_EXECUTABLE_NAME "Hollycast"
 				MACOSX_BUNDLE_INFO_STRING ""
 				MACOSX_BUNDLE_ICON_FILE "AppIcon"
-				MACOSX_BUNDLE_GUI_IDENTIFIER "com.flyinghead.Flycast"
+				MACOSX_BUNDLE_GUI_IDENTIFIER "org.hollycast.Hollycast"
 				MACOSX_BUNDLE_LONG_VERSION_STRING "${GIT_VERSION}"
 				MACOSX_BUNDLE_SHORT_VERSION_STRING "${TAG_VERSION}"
 				MACOSX_BUNDLE_BUNDLE_VERSION "${GIT_HASH}"
-				MACOSX_BUNDLE_BUNDLE_NAME "Flycast"
-				MACOSX_BUNDLE_COPYRIGHT "Copyright © ${YEAR} Flycast contributors. All rights reserved."
+				MACOSX_BUNDLE_BUNDLE_NAME "Hollycast"
+				MACOSX_BUNDLE_COPYRIGHT "Copyright © ${YEAR} The Hollycast Authors. All rights reserved."
 				XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf"
 				XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT[variant=RelWithDebInfo] "dwarf-with-dsym"
 				XCODE_ATTRIBUTE_CLANG_DEBUG_INFORMATION_LEVEL[variant=RelWithDebInfo] "line-tables-only"
 				XCODE_ATTRIBUTE_DEPLOYMENT_POSTPROCESSING[variant=RelWithDebInfo] YES
 				XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"
-				XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.flyinghead.Flycast"
+				XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.hollycast.Hollycast"
 				BUILD_WITH_INSTALL_RPATH TRUE
 				INSTALL_RPATH "@loader_path/../Frameworks"
 			)
@@ -1529,9 +1491,15 @@ if(NOT LIBRETRO)
 				${IOSURFACE_LIBRARY}
 				${MULTITOUCH_SUPPORT_LIBRARY})
 
-			add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E copy "$ENV{VULKAN_SDK}/lib/libMoltenVK.dylib"
-				$<TARGET_FILE_DIR:flycast>/../Frameworks/libvulkan.dylib)
+			if(USE_VULKAN)
+				set(MOLTENVK_DYLIB_PATH "${MOLTENVK_DYLIB}")
+				if(NOT MOLTENVK_DYLIB_PATH OR NOT EXISTS "${MOLTENVK_DYLIB_PATH}")
+					message(FATAL_ERROR "A macOS MoltenVK dylib is required for macOS Vulkan builds. Run shell/apple/generate_xcode_project.command to download the configured MoltenVK release, or pass -DMOLTENVK_DYLIB=/path/to/libMoltenVK.dylib.")
+				endif()
+				add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+					COMMAND ${CMAKE_COMMAND} -E copy "${MOLTENVK_DYLIB_PATH}"
+					$<TARGET_FILE_DIR:Hollycast>/../Frameworks/libMoltenVK.dylib)
+			endif()
 		endif()
 	elseif(UNIX)
 		if(NOT BUILD_TESTING)
@@ -1550,12 +1518,10 @@ if(NOT LIBRETRO)
 			string(REPLACE "9.9.9.9" ${MS_VERSION} MANIFEST ${MANIFEST})
 			file(WRITE ${CMAKE_BINARY_DIR}/Package.appxmanifest ${MANIFEST})
 			set(ResourceFiles ${CMAKE_BINARY_DIR}/Package.appxmanifest
-					shell/uwp/flycast150.png
-					shell/uwp/flycast50.png
-					shell/uwp/flycast44.png
+					shell/uwp/hollycast150.png
+					shell/uwp/hollycast50.png
+					shell/uwp/hollycast44.png
 					shell/uwp/splash.png
-					shell/uwp/flycast44.targetsize-48_altform-unplated.png
-					shell/uwp/flycast44.targetsize-48_altform-lightunplated.png
 					core/deps/SDL/src/main/winrt/SDL2-WinRTResource_BlankCursor.cur
 					core/deps/SDL/src/main/winrt/SDL2-WinRTResources.rc)
 			target_sources(${PROJECT_NAME} PRIVATE
@@ -1591,26 +1557,46 @@ endif()
 
 if(NINTENDO_SWITCH)
 	if(LIBRETRO)
+		# ar names a member after the basename of the object, so extracting every
+		# archive into one directory loses whatever two of them happen to share:
+		# zstd carries its own copy of xxhash.c, whose object lands on top of the
+		# real xxHash one and takes XXH32 with it. A directory per archive keeps
+		# them apart.
 		add_custom_target(combined ALL
-			COMMAND ${CMAKE_AR} -x $<TARGET_FILE:xxHash::xxhash>
-			COMMAND ${CMAKE_AR} -x $<TARGET_FILE:chdr-static>
-			COMMAND ${CMAKE_AR} -x $<TARGET_FILE:zip>
-			COMMAND ${CMAKE_AR} -x $<TARGET_FILE:elf>
-			COMMAND ${CMAKE_AR} -x $<TARGET_FILE:flycast::res>
-			COMMAND ${CMAKE_AR} -rs flycast_libretro_libnx.a *.o
-			COMMAND rm *.o
+			COMMAND ${CMAKE_COMMAND} -E rm -rf combined-objs
+			COMMAND ${CMAKE_COMMAND} -E make_directory
+				combined-objs/xxhash combined-objs/chdr combined-objs/zip
+				combined-objs/zstd combined-objs/elf combined-objs/tinygettext
+				combined-objs/res
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/xxhash
+				${CMAKE_AR} -x $<TARGET_FILE:xxHash::xxhash>
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/chdr
+				${CMAKE_AR} -x $<TARGET_FILE:chdr-static>
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/zip
+				${CMAKE_AR} -x $<TARGET_FILE:zip>
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/zstd
+				${CMAKE_AR} -x $<TARGET_FILE:libzstd_static>
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/elf
+				${CMAKE_AR} -x $<TARGET_FILE:elf>
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/tinygettext
+				${CMAKE_AR} -x $<TARGET_FILE:tinygettext::tinygettext>
+			COMMAND ${CMAKE_COMMAND} -E chdir combined-objs/res
+				${CMAKE_AR} -x $<TARGET_FILE:Hollycast::res>
+			COMMAND ${CMAKE_AR} -rs Hollycast_libretro_libnx.a combined-objs/*/*.o
+			COMMAND ${CMAKE_COMMAND} -E rm -rf combined-objs
 			WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}
-			DEPENDS xxHash::xxhash chdr-static zip ${PROJECT_NAME})
+			DEPENDS xxHash::xxhash chdr-static zip libzstd_static
+				tinygettext::tinygettext ${PROJECT_NAME})
 	else()
-		nx_generate_nacp(flycast.nacp NAME "Flycast" AUTHOR "flyinghead, M4xw" VERSION "${GIT_VERSION}")
-		nx_create_nro(flycast NACP flycast.nacp ICON "${CMAKE_SOURCE_DIR}/shell/switch/flycast.jpeg")
+		nx_generate_nacp(Hollycast.nacp NAME "Hollycast" AUTHOR "The Hollycast Authors" VERSION "${GIT_VERSION}")
+		nx_create_nro(Hollycast NACP Hollycast.nacp ICON "${CMAKE_SOURCE_DIR}/shell/switch/flycast.jpeg")
 	endif()
 endif()
 
 if(IOS)
-	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>-${CMAKE_OSX_SYSROOT}/Flycast.ipa" TYPE BIN)
+	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>-${CMAKE_OSX_SYSROOT}/Hollycast.ipa" TYPE BIN)
 elseif(NINTENDO_SWITCH AND NOT LIBRETRO)
-	install(FILES ${CMAKE_BINARY_DIR}/flycast.nro DESTINATION "${CMAKE_INSTALL_BINDIR}")
+	install(FILES ${CMAKE_BINARY_DIR}/Hollycast.nro DESTINATION "${CMAKE_INSTALL_BINDIR}")
 elseif(LIBRETRO)
 	install(TARGETS ${PROJECT_NAME} DESTINATION "${CMAKE_INSTALL_LIBDIR}/libretro")
 else()
@@ -1627,7 +1613,7 @@ if(UNIX AND NOT APPLE AND NOT ANDROID AND NOT LIBRETRO)
 	install(FILES shell/linux/${PROJECT_NAME}.png
 		DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/pixmaps"
 	)
-	install(FILES shell/linux/org.${PROJECT_NAME}.Flycast.metainfo.xml
+	install(FILES shell/linux/org.hollycast.${PROJECT_NAME}.metainfo.xml
 		DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/metainfo"
 	)
 	foreach(size 16 32 64 128 256 512)

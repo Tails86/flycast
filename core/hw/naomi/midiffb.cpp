@@ -24,6 +24,7 @@
 #include "input/haptic.h"
 #include "oslib/oslib.h"
 #include "network/output.h"
+#include "oslib/i18n.h"
 
 namespace midiffb {
 
@@ -72,7 +73,7 @@ static void midiReceiver(u8 data)
 				haptic::stopAll(0);
 				if (calibrating) {
 					calibrating = false;
-					os_notify("Calibration done", 2000);
+					os_notify(i18n::T("Calibration done"), 2000);
 				}
 			}
 			else if (midiTxBuf[2] == 1)
@@ -197,7 +198,7 @@ static void midiReceiver(u8 data)
 		case 0x7f:
 			// Reset board
 			// FIXME also set when entering the service menu (kingrt66)
-			os_notify("Calibrating the wheel. Keep it centered.", 10000);
+			os_notify(i18n::T("Calibrating the wheel. Keep it centered."), 10000);
 			calibrating = true;
 			haptic::setSpring(0, 0.8f, 1.f);
 			position = 8192.f;
@@ -268,30 +269,18 @@ void serialize(Serializer& ser)
 
 void deserialize(Deserializer& deser)
 {
-	if (deser.version() >= Deserializer::V27)
-	{
-		if (initialized) {
-			deser >> midiTxBuf;
-			deser >> midiTxBufIndex;
-		}
-		else if (deser.version() < Deserializer::V51) {
-			deser.skip(4);		// midiTxBuf
-			deser.skip<u32>();	// midiTxBufIndex
-		}
+	if (initialized) {
+		deser >> midiTxBuf;
+		deser >> midiTxBufIndex;
 	}
-	else {
-		midiTxBufIndex = 0;
+	else if (deser.version() < Deserializer::V51) {
+		deser.skip(4);		// midiTxBuf
+		deser.skip<u32>();	// midiTxBufIndex
 	}
-	if (deser.version() >= Deserializer::V34)
-	{
-		if (initialized)
-			deser >> calibrating;
-		else if (deser.version() < Deserializer::V51)
-			deser.skip<bool>();	// calibrating
-	}
-	else {
-		calibrating = false;
-	}
+	if (initialized)
+		deser >> calibrating;
+	else if (deser.version() < Deserializer::V51)
+		deser.skip<bool>();	// calibrating
 	if (initialized)
 	{
 		maxSpring = 0x7f;

@@ -21,13 +21,12 @@
 #include "gui.h"
 #include <memory>
 #include <unordered_map>
-#include <array>
 
 class ImGuiDriver
 {
 public:
 	ImGuiDriver() {
-		gui_initFonts();
+		gui_updateStyle();
 	}
 	virtual ~ImGuiDriver() = default;
 

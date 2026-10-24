@@ -1,5 +1,6 @@
 /*
-	Copyright 2021 flyinghead
+	Copyright 2024 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -17,8 +18,9 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "option.h"
-#include "network/naomi_network.h"
+#include "network/net_handshake.h"
 #include "debug/gdb_server.h"
+#include "hw/pvr/Renderer_if.h"
 
 namespace config {
 
@@ -26,6 +28,8 @@ namespace config {
 
 Option<bool> DynarecEnabled("Dynarec.Enabled", true);
 Option<int> Sh4Clock("Sh4Clock", 200);
+Option<int> FastForwardSpeedLimit("FastForwardSpeedLimit", 300);
+Option<bool> FastForwardAudio("FastForwardAudio", false);
 
 // General
 
@@ -33,12 +37,20 @@ Option<int> Cable("Dreamcast.Cable", 3);			// TV Composite
 Option<int> Region("Dreamcast.Region", 1);			// USA
 Option<int> Broadcast("Dreamcast.Broadcast", 0);	// NTSC
 Option<int> Language("Dreamcast.Language", 1);		// English
+OptionString UILanguage("UILanguage", "");
 Option<bool> AutoLoadState("Dreamcast.AutoLoadState");
 Option<bool> AutoSaveState("Dreamcast.AutoSaveState");
+Option<bool> SaveProtection("Dreamcast.SaveProtection", true);
 Option<int, false> SavestateSlot("Dreamcast.SavestateSlot");
 Option<bool> ForceFreePlay("ForceFreePlay", true);
 Option<bool, false> FetchBoxart("FetchBoxart", true);
 Option<bool, false> BoxartDisplayMode("BoxartDisplayMode", true);
+Option<int, false> BoxartSourceMode("BoxartSourceMode", 0);
+Option<int, false> LibraryDisplayStyle("Dreamcast.LibraryDisplayStyle", 0);
+Option<int, false> LibraryImageSource("Dreamcast.LibraryImageSource", 0);
+Option<int, false> LibraryCoverMedia("Dreamcast.LibraryCoverMedia", 0);
+Option<int, false> LibraryIconScale("Dreamcast.LibraryIconScale", 100);
+Option<int, false> VmuIconMode("Dreamcast.VmuIconMode", 0);
 Option<int, false> UIScaling("UIScaling", 100);
 Option<int, false> UITheme("UITheme", 0);
 
@@ -76,10 +88,12 @@ Option<int> TextureUpscale("rend.TextureUpscale2", 1);
 Option<int> MaxFilteredTextureSize("rend.MaxFilteredTextureSize", 256);
 Option<float> ExtraDepthScale("rend.ExtraDepthScale", 1.f);
 Option<bool> CustomTextures("rend.CustomTextures");
-Option<bool> PreloadCustomTextures("rend.PreloadCustomTextures");
+Option<int> PreloadCustomTextures("rend.PreloadCustomTextures", 0);
 Option<bool> DumpTextures("rend.DumpTextures");
+Option<bool> DumpUniqueTextures("rend.DumpUniqueTextures");
 Option<bool> DumpReplacedTextures("rend.DumpReplacedTextures");
 Option<int> ScreenStretching("rend.ScreenStretching", 100);
+Option<bool> StretchToFill("rend.StretchToFill");
 Option<bool> Fog("rend.Fog", true);
 Option<bool> FloatVMUs("rend.FloatVMUs");
 Option<bool> Rotate90("rend.Rotate90");
@@ -118,6 +132,27 @@ Option<bool> NativeDepthInterpolation("rend.NativeDepthInterpolation", false);
 Option<bool> EmulateFramebuffer("rend.EmulateFramebuffer", false);
 Option<bool> FixUpscaleBleedingEdge("rend.FixUpscaleBleedingEdge", true);
 Option<bool> CustomGpuDriver("rend.CustomGpuDriver", false);
+Option<bool> FramePacing("rend.FramePacing", true);
+
+CustomTexturePreloadMode customTexturePreloadMode()
+{
+	const auto mode = static_cast<CustomTexturePreloadMode>(PreloadCustomTextures.get());
+	switch (mode)
+	{
+	case CustomTexturePreloadMode::Off:
+	case CustomTexturePreloadMode::SystemMemory:
+		return mode;
+	case CustomTexturePreloadMode::VideoMemory:
+		if (rend_supports_gpu_texture_preload()) {
+			return mode;
+		} else {
+			// Not supported
+			return CustomTexturePreloadMode::Off;
+		}
+	default:
+		return CustomTexturePreloadMode::Off;
+	}
+}
 #ifdef VIDEO_ROUTING
 Option<bool, false> VideoRouting("rend.VideoRouting", false);
 Option<bool, false> VideoRoutingScale("rend.VideoRoutingScale", false);
@@ -140,6 +175,10 @@ Option<bool> OpenGlChecks("OpenGlChecks", false, "validate");
 Option<std::vector<std::string>, false> ContentPath("Dreamcast.ContentPath");
 Option<std::vector<std::string>, false> BiosPath("Dreamcast.BiosPath");
 Option<std::string, false> VMUPath("Dreamcast.VMUPath");
+Option<std::string, false> GameListPath("Dreamcast.GameListPath");
+#ifdef DREAMPOTATO_INTEGRATED_MODE
+Option<std::string, false> DreamPotatoFolderPath("Dreamcast.DreamPotatoPath");
+#endif
 Option<std::vector<std::string>, false> SavestatePath("Dreamcast.SavestatePath");
 Option<std::string, false> SavePath("Dreamcast.SavePath");
 Option<std::vector<std::string>, false> TexturePath("Dreamcast.TexturePath");
@@ -165,9 +204,10 @@ Option<float> ProfilerFrameWarningTime("Profiler.FrameWarningTime", 1.0f / 55.0f
 
 Option<bool> NetworkEnable("Enable", false, "network");
 Option<bool> ActAsServer("ActAsServer", false, "network");
+Option<bool> NaomiSatellite("NaomiSatellite", false, "network");
 OptionString DNS("DNS", "dns.flyca.st", "network");
 OptionString NetworkServer("server", "", "network");
-Option<int> LocalPort("LocalPort", NaomiNetwork::SERVER_PORT, "network");
+Option<int> LocalPort("LocalPort", defaultNaomiServerPort(), "network");
 Option<bool> EmulateBBA("EmulateBBA", false, "network");
 Option<bool> EnableUPnP("EnableUPnP", true, "network");
 Option<bool> GGPOEnable("GGPO", false, "network");
@@ -180,7 +220,7 @@ Option<int> GGPOChatTimeout("GGPOChatTimeout", 10, "network");
 Option<bool> NetworkOutput("NetworkOutput", false, "network");
 Option<int> MultiboardSlaves("MultiboardSlaves", 1, "network");
 Option<bool> BattleCableEnable("BattleCable", false, "network");
-Option<bool> UseDCNet("DCNet", false, "network");
+Option<bool> UseDCNet("DCNet", true, "network");
 OptionString ISPUsername("ISPUsername", "flycast1", "network");
 
 #ifdef USE_OMX
@@ -214,18 +254,53 @@ std::array<std::array<Option<MapleDeviceType>, 2>, 4> MapleExpansionDevices {{
 	Option<MapleDeviceType>("device4.2", MDT_None, "input")}},
 }};
 
-std::array<Option<bool>, 4> UseNetworkExpansionDevices{
-	Option<bool>("device1.UseNetworkExpansionDevices", false, "input"),
-	Option<bool>("device2.UseNetworkExpansionDevices", false, "input"),
-	Option<bool>("device3.UseNetworkExpansionDevices", false, "input"),
-	Option<bool>("device4.UseNetworkExpansionDevices", false, "input"),
-};
+std::array<std::array<Option<int>, 2>, 4> NetworkExpansionDevices{{
+	{{Option<int>("device1.1.net", 0, "input"),
+	Option<int>("device1.2.net", 0, "input")}},
 
-Option<bool> PerGameVmu("PerGameVmu", false, "config");
+	{{Option<int>("device2.1.net", 0, "input"),
+	Option<int>("device2.2.net", 0, "input")}},
+
+	{{Option<int>("device3.1.net", 0, "input"),
+	Option<int>("device3.2.net", 0, "input")}},
+
+	{{Option<int>("device4.1.net", 0, "input"),
+	Option<int>("device4.2.net", 0, "input")}},
+}};
+std::array<std::array<Option<std::string, false>, 2>, 4> MapleVmuSlotFileNames{{
+	{{Option<std::string, false>("device1.1.vmu", "", "input"),
+	Option<std::string, false>("device1.2.vmu", "", "input")}},
+
+	{{Option<std::string, false>("device2.1.vmu", "", "input"),
+	Option<std::string, false>("device2.2.vmu", "", "input")}},
+
+	{{Option<std::string, false>("device3.1.vmu", "", "input"),
+	Option<std::string, false>("device3.2.vmu", "", "input")}},
+
+	{{Option<std::string, false>("device4.1.vmu", "", "input"),
+	Option<std::string, false>("device4.2.vmu", "", "input")}},
+}};
+std::array<std::array<Option<bool>, 2>, 4> DreamLinkSelect{{
+	{{Option<bool>("device1.1.dreamlink", true, "input"),
+	Option<bool>("device1.2.dreamlink", true, "input")}},
+
+	{{Option<bool>("device2.1.dreamlink", true, "input"),
+	Option<bool>("device2.2.dreamlink", true, "input")}},
+
+	{{Option<bool>("device3.1.dreamlink", true, "input"),
+	Option<bool>("device3.2.dreamlink", true, "input")}},
+
+	{{Option<bool>("device4.1.dreamlink", true, "input"),
+	Option<bool>("device4.2.dreamlink", true, "input")}},
+}};
+Option<bool> PerGameVmu("PerGameVmu", true, "config");
 #ifdef _WIN32
 Option<bool, false> UseRawInput("RawInput", false, "input");
 #endif
 Option<bool> UsePhysicalVmuMemory("UsePhysicalVmuMemory", true);
+#ifdef DREAMPOTATO_INTEGRATED_MODE
+Option<bool> DreamPotatoIntegratedMode("DreamPotatoIntegratedMode", true);
+#endif
 
 #ifdef USE_LUA
 Option<std::string, false> LuaFileName("LuaFileName", "flycast.lua");
@@ -237,5 +312,6 @@ Option<bool> EnableAchievements("Enabled", false, "achievements");
 Option<bool> AchievementsHardcoreMode("HardcoreMode", false, "achievements");
 OptionString AchievementsUserName("UserName", "", "achievements");
 OptionString AchievementsToken("Token", "", "achievements");
+OptionString AchievementsHostUrl("HostUrl", "", "achievements");
 
 } // namespace config

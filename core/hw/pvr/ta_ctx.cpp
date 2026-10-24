@@ -36,7 +36,7 @@ void SetCurrentTARC(u32 addr)
 		//Flush cache to context
 		verify(ta_ctx != 0);
 		ta_ctx->tad=ta_tad;
-		
+
 		//clear context
 		ta_ctx=0;
 		ta_tad.Reset(0);
@@ -46,10 +46,10 @@ void SetCurrentTARC(u32 addr)
 static TA_context* rqueue;
 static cResetEvent frame_finished;
 
-bool QueueRender(TA_context* ctx)
+bool SetRender(TA_context* ctx)
 {
 	verify(ctx != 0);
-	
+
 	bool skipFrame = !rend_is_enabled();
 	if (!skipFrame)
 	{
@@ -81,7 +81,7 @@ bool QueueRender(TA_context* ctx)
 	return true;
 }
 
-TA_context* DequeueRender()
+TA_context* GetRender()
 {
 	if (rqueue != nullptr)
 		FrameCount++;
@@ -89,13 +89,12 @@ TA_context* DequeueRender()
 	return rqueue;
 }
 
-void FinishRender(TA_context* ctx)
+void FinishRender(bool resetRender)
 {
-	if (ctx != nullptr)
+	if (resetRender && rqueue != nullptr)
 	{
-		verify(rqueue == ctx);
+		tactx_Recycle(rqueue);
 		rqueue = nullptr;
-		tactx_Recycle(ctx);
 	}
 	frame_finished.Set();
 }
@@ -179,7 +178,7 @@ TA_context *tactx_Pop(u32 addr)
 		if (ctx_list[i]->Address == addr)
 		{
 			TA_context *ctx = ctx_list[i];
-			
+
 			if (::ta_ctx == ctx)
 				SetCurrentTARC(TACTX_NONE);
 
@@ -237,18 +236,14 @@ static void deserializeContext(Deserializer& deser, TA_context **pctx)
 		*pctx = nullptr;
 		return;
 	}
-	*pctx = tactx_Find(address, true);
 	u32 size;
 	deser >> size;
+	if (size > TA_DATA_SIZE)
+		throw Deserializer::Exception("Invalid TA context size");
+	*pctx = tactx_Find(address, true);
 	tad_context& tad = (*pctx)->tad;
 	deser.deserialize(tad.thd_root, size);
 	tad.thd_data = tad.thd_root + size;
-	if (deser.version() < Deserializer::V26)
-	{
-		u32 render_pass_count;
-		deser >> render_pass_count;
-		deser.skip(sizeof(u32) * render_pass_count);
-	}
 }
 
 void SerializeTAContext(Serializer& ser)
@@ -268,30 +263,18 @@ void DeserializeTAContext(Deserializer& deser)
 {
 	if (::ta_ctx != nullptr)
 		SetCurrentTARC(TACTX_NONE);
-	if (deser.version() >= Deserializer::V25)
+	u32 listSize;
+	deser >> listSize;
+	for (const auto& ctx : ctx_list)
+		tactx_Recycle(ctx);
+	ctx_list.clear();
+	for (u32 i = 0; i < listSize; i++)
 	{
-		u32 listSize;
-		deser >> listSize;
-		for (const auto& ctx : ctx_list)
-			tactx_Recycle(ctx);
-		ctx_list.clear();
-		for (u32 i = 0; i < listSize; i++)
-		{
-			TA_context *ctx;
-			deserializeContext(deser, &ctx);
-		}
-		int curCtx;
-		deser >> curCtx;
-		if (curCtx >= 0 && curCtx < (int)ctx_list.size())
-			SetCurrentTARC(ctx_list[curCtx]->Address);
+		TA_context *ctx;
+		deserializeContext(deser, &ctx);
 	}
-	else
-	{
-		TA_context *ta_cur_ctx;
-		deserializeContext(deser, &ta_cur_ctx);
-		if (ta_cur_ctx != nullptr)
-			SetCurrentTARC(ta_cur_ctx->Address);
-		if (deser.version() >= Deserializer::V20)
-			deserializeContext(deser, &ta_cur_ctx);
-	}
+	int curCtx;
+	deser >> curCtx;
+	if (curCtx >= 0 && curCtx < (int)ctx_list.size())
+		SetCurrentTARC(ctx_list[curCtx]->Address);
 }

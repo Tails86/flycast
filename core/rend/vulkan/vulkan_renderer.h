@@ -19,6 +19,7 @@
 #pragma once
 #include "vulkan.h"
 #include "hw/pvr/Renderer_if.h"
+#include "hw/pvr/ta_ctx.h"
 #include "commandpool.h"
 #include "pipeline.h"
 #include "shaders.h"
@@ -37,6 +38,8 @@ public:
 	void Term() override;
 	BaseTextureCacheData *GetTexture(TSP tsp, TCW tcw, int area) override;
 	void Process(TA_context* ctx) override;
+	void processCustomTexturePreloads() override;
+	bool supportsGpuTexturePreload() const override { return true; }
 	void ReInitOSD();
 	void RenderFramebuffer(const FramebufferInfo& info) override;
 	void RenderVideoRouting();
@@ -50,6 +53,7 @@ public:
 
 protected:
 	BaseVulkanRenderer() : viewport(640, 480) {}
+	void clearTextureCache() override { textureCache.Clear(); }
 
 	VulkanContext *GetContext() const { return VulkanContext::Instance(); }
 
@@ -76,4 +80,5 @@ protected:
 	std::unique_ptr<QuadDrawer> framebufferDrawer;
 	CommandPool fbCommandPool;
 	bool framebufferRendered = false;
+	rend_context *rendContext = nullptr;
 };

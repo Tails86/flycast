@@ -3,14 +3,22 @@
 #include "maple_if.h"
 #include "hw/naomi/naomi_cart.h"
 #include "hw/naomi/card_reader.h"
+#include "hw/sh4/modules/modules.h"
+#include "hw/sh4/sh4_sched.h"
 #include "cfg/option.h"
 #include "stdclass.h"
 #include "serialize.h"
+#include "input/maplelinkregistry.h"
+#include "input/mouse.h"
+
+#include <initializer_list>
+#include <algorithm>
 
 MapleInputState mapleInputState[4];
 extern bool maple_ddt_pending_reset;
 extern std::vector<std::pair<u32, std::vector<u32>>> mapleDmaOut;
 extern bool SDCKBOccupied;
+extern int maple_schid;
 
 void (*MapleConfigMap::UpdateVibration)(u32 port, float power, float inclination, u32 duration_ms);
 
@@ -171,6 +179,11 @@ void MapleConfigMap::SetImage(u8 *img)
 	push_vmu_screen(dev->bus_id, dev->bus_port, img);
 }
 
+void MapleConfigMap::ResetImage()
+{
+	reset_vmu_screen(dev->bus_id, dev->bus_port);
+}
+
 void MapleConfigMap::GetAbsCoordinates(int& x, int& y)
 {
 	const MapleInputState& inputState = mapleInputState[playerNum()];
@@ -211,24 +224,122 @@ bool maple_atomiswave_coin_chute(int slot)
 #endif
 }
 
+static void mcfg_CreateDreamLink(MapleLink& link, u32 bus, u32 port)
+{
+	if (MapleDevices[bus][port] != nullptr)
+		return;
+
+	INFO_LOG(MAPLE, "MapleLink device created on %d,%d", bus, port);
+	std::shared_ptr<maple_device> dev = link.createMapleDevice();
+	dev->Setup(bus, port);
+}
+
 static void mcfg_Create(MapleDeviceType type, u32 bus, u32 port, s32 player_num = -1)
 {
-	MapleDevices[bus][port].reset();
+	if (MapleDevices[bus][port] != nullptr)
+		return;
+
 	std::shared_ptr<maple_device> dev = maple_Create(type);
 	dev->Setup(bus, port, player_num);
 }
 
+void createDreamLinkDevices(
+	int linkBusOffset = 0,
+	std::initializer_list<u32> allowedBusses = {},
+	std::initializer_list<u32> allowedPorts = {}
+)
+{
+	// The purpose of this function is only to create the DreamLink devices where necessary
+
+	for (int bus = 0; bus < MAPLE_PORTS; ++bus)
+	{
+		// Only add DreamLink for this device if allowedBusses is empty or bus is found in allowedBusses
+		if (
+			allowedBusses.size() > 0 &&
+			std::find(allowedBusses.begin(), allowedBusses.end(), bus) == allowedBusses.end()
+		)
+		{
+			continue;
+		}
+
+		// Check for network expansion devices first
+		for (int port = 0; port < config::NetworkExpansionDevices[bus].size(); ++port)
+		{
+			if (
+				allowedPorts.size() > 0 &&
+				std::find(allowedPorts.begin(), allowedPorts.end(), port) == allowedPorts.end()
+			)
+			{
+				continue;
+			}
+
+			std::optional<MapleLink> extLink = MapleLinkRegistry::GetMapleLink(bus, port);
+			if (extLink && config::NetworkExpansionDevices[bus][port])
+			{
+				mcfg_CreateDreamLink(extLink.value(), bus, port);
+			}
+		}
+
+		// For DreamLinkSelect devices, the main device must be allowed in allowedPorts too
+		if (
+			allowedPorts.size() > 0 &&
+			std::find(allowedPorts.begin(), allowedPorts.end(), MAPLE_MAIN_DEV_IDX) == allowedPorts.end()
+		)
+		{
+			continue;
+		}
+
+		std::optional<MapleLink> mainLink = MapleLinkRegistry::GetMapleLink(bus, MAPLE_MAIN_DEV_IDX, linkBusOffset);
+		if (mainLink)
+		{
+			mcfg_CreateDreamLink(mainLink.value(), bus, MAPLE_MAIN_DEV_IDX);
+
+			for (int port = MAPLE_FIRST_EXT_DEV_IDX; port <= MAPLE_LAST_EXT_DEV_IDX; ++port)
+			{
+				if (
+					allowedPorts.size() > 0 &&
+					std::find(allowedPorts.begin(), allowedPorts.end(), port) == allowedPorts.end()
+				)
+				{
+					continue;
+				}
+
+				std::optional<MapleLink> extLink = MapleLinkRegistry::GetMapleLink(bus, port, linkBusOffset);
+
+				if (extLink)
+				{
+					bool selected = true;
+					if (port < config::DreamLinkSelect[bus].size())
+					{
+						selected = config::DreamLinkSelect[bus][port];
+					}
+
+					if (selected)
+					{
+						mcfg_CreateDreamLink(extLink.value(), bus, port);
+					}
+				}
+			}
+		}
+	}
+}
+
 static void createNaomiDevices()
 {
+	// Check for and instantiate DreamLink devices first, only on buses 1 and 2, main device and first port
+	createDreamLinkDevices(-1, {1,2}, {0, MAPLE_MAIN_DEV_IDX});
+
 	const std::string& gameId = settings.content.gameId;
-	mcfg_Create(MDT_NaomiJamma, 0, 5);
+	mcfg_Create(MDT_NaomiJamma, 0, MAPLE_MAIN_DEV_IDX);
+	if (settings.naomi.slave)
+		return;
 	if (gameId == "THE TYPING OF THE DEAD"
 			|| gameId == " LUPIN THE THIRD  -THE TYPING-"
 			|| gameId == "------La Keyboardxyu------")
 	{
 		INFO_LOG(MAPLE, "Enabling keyboard for game %s", gameId.c_str());
-		mcfg_Create(MDT_Keyboard, 1, 5, 0);
-		mcfg_Create(MDT_Keyboard, 2, 5, 1);
+		mcfg_Create(MDT_Keyboard, 1, MAPLE_MAIN_DEV_IDX, 0);
+		mcfg_Create(MDT_Keyboard, 2, MAPLE_MAIN_DEV_IDX, 1);
 		settings.input.keyboardGame = true;
 	}
 	else if (gameId.substr(0, 8) == "MKG TKOB"
@@ -236,45 +347,55 @@ static void createNaomiDevices()
 			|| gameId == "VF4 EVOLUTION JAPAN"
 			|| gameId == "VF4 FINAL TUNED JAPAN")
 	{
-		mcfg_Create(MDT_RFIDReaderWriter, 1, 5, 0);
-		mcfg_Create(MDT_RFIDReaderWriter, 2, 5, 1);
+		mcfg_Create(MDT_RFIDReaderWriter, 1, MAPLE_MAIN_DEV_IDX, 0);
+		mcfg_Create(MDT_RFIDReaderWriter, 2, MAPLE_MAIN_DEV_IDX, 1);
 		if (gameId.substr(0, 8) == "MKG TKOB") {
 			insertRfidCard(0);
 			insertRfidCard(1);
 		}
 	}
+	else if (gameId.substr(0, 4) == "WCCF")
+	{
+		if (config::MultiboardSlaves <= 1)
+			// CCD cam
+			mcfg_Create(MDT_WccfCamera, 1, 5, 0);
+	}
 	else if (gameId == "THE KING OF ROUTE66")
 	{
-		mcfg_Create(MDT_SegaController, 1, 5);
+		mcfg_Create(MDT_SegaController, 1, MAPLE_MAIN_DEV_IDX);
 		mcfg_Create(MDT_Microphone, 1, 0);
 	}
 	else if (settings.platform.isNaomi1())
 	{
 		// Connect VMU B1
-		mcfg_Create(MDT_SegaController, 1, 5);
+		mcfg_Create(MDT_SegaController, 1, MAPLE_MAIN_DEV_IDX);
 		mcfg_Create(MDT_SegaVMU, 1, 0);
 		// Connect VMU C1
-		mcfg_Create(MDT_SegaController, 2, 5);
+		mcfg_Create(MDT_SegaController, 2, MAPLE_MAIN_DEV_IDX);
 		mcfg_Create(MDT_SegaVMU, 2, 0);
 	}
-	if (gameId == " DERBY OWNERS CLUB WE ---------"
-			|| gameId == " DERBY OWNERS CLUB ------------"
-			|| gameId == " DERBY OWNERS CLUB II-----------")
+	if (config::MultiboardSlaves <= 1
+			&& (gameId == " DERBY OWNERS CLUB WE ---------"
+				|| gameId == " DERBY OWNERS CLUB ------------"
+				|| gameId == " DERBY OWNERS CLUB II-----------"))
 		card_reader::derbyInit();
 }
 
 static void createAtomiswaveDevices()
 {
+	// Check for and instantiate DreamLink devices first, only main devices are allowed
+	createDreamLinkDevices(0, {0,1,2,3}, {MAPLE_MAIN_DEV_IDX});
+
 	const std::string& gameId = settings.content.gameId;
 	// Looks like two controllers needs to be on bus 0 and 1 for digital inputs
 	// Then other devices on port 2 and 3 for analog axes, light guns, ...
-	mcfg_Create(MDT_SegaController, 0, 5);
-	mcfg_Create(MDT_SegaController, 1, 5);
+	mcfg_Create(MDT_SegaController, 0, MAPLE_MAIN_DEV_IDX);
+	mcfg_Create(MDT_SegaController, 1, MAPLE_MAIN_DEV_IDX);
 	if (NaomiGameInputs != NULL && NaomiGameInputs->axes[0].name != NULL)
 	{
 		// Game needs analog axes
-		mcfg_Create(MDT_SegaController, 2, 5, 0);
-		mcfg_Create(MDT_SegaController, 3, 5, 1);
+		mcfg_Create(MDT_SegaController, 2, MAPLE_MAIN_DEV_IDX, 0);
+		mcfg_Create(MDT_SegaController, 3, MAPLE_MAIN_DEV_IDX, 1);
 		// Faster Than Speed			needs 1 std controller on port 0 (digital inputs) and one on port 2 (analog axes)
 		// Maximum Speed				same
 	}
@@ -283,8 +404,8 @@ static void createAtomiswaveDevices()
 	{
 		// 4 players
 		INFO_LOG(MAPLE, "Enabling 4-player setup for game %s", gameId.c_str());
-		mcfg_Create(MDT_SegaController, 2, 5);
-		mcfg_Create(MDT_SegaController, 3, 5);
+		mcfg_Create(MDT_SegaController, 2, MAPLE_MAIN_DEV_IDX);
+		mcfg_Create(MDT_SegaController, 3, MAPLE_MAIN_DEV_IDX);
 		settings.input.fourPlayerGames = true;
 	}
 	else if (gameId == "Sports Shooting USA"
@@ -295,34 +416,86 @@ static void createAtomiswaveDevices()
 	{
 		// needs 2 std controllers on port 0 & 1 (digital in) and light guns on port 2 & 3
 		INFO_LOG(MAPLE, "Enabling lightgun setup for game %s", gameId.c_str());
-		mcfg_Create(MDT_LightGun, 2, 5, 0);
-		mcfg_Create(MDT_LightGun, 3, 5, 1);
+		mcfg_Create(MDT_LightGun, 2, MAPLE_MAIN_DEV_IDX, 0);
+		mcfg_Create(MDT_LightGun, 3, MAPLE_MAIN_DEV_IDX, 1);
 		settings.input.lightgunGame = true;
 	}
 	else if (gameId == "BASS FISHING SIMULATOR VER.A" || gameId == "DRIVE")
 	{
 		// Sega Bass Fishing Challenge  needs a mouse (track-ball) on port 2
 		// Waiwai drive needs two track-balls
-		mcfg_Create(MDT_Mouse, 2, 5, 0);
-		mcfg_Create(MDT_Mouse, 3, 5, 1);
+		mcfg_Create(MDT_Mouse, 2, MAPLE_MAIN_DEV_IDX, 0);
+		mcfg_Create(MDT_Mouse, 3, MAPLE_MAIN_DEV_IDX, 1);
 		if (gameId == "DRIVE")
 		{
-			MapleDevices[2][5]->config->invertMouseY = true;
-			MapleDevices[3][5]->config->invertMouseY = true;
+			MapleDevices[2][MAPLE_MAIN_DEV_IDX]->config->invertMouseY = true;
+			MapleDevices[3][MAPLE_MAIN_DEV_IDX]->config->invertMouseY = true;
 		}
 		settings.input.mouseGame = true;
 	}
 }
 
+// Touch screen of Fish Life series
+class HKS0100TouchScreen : public SCIFSerialPort::Pipe
+{
+	bool button;
+	int x;
+	int y;
+	std::deque<u8> buffer;
+
+	void update()
+	{
+		if (((mo_buttons[0] & 4) == 0) != button || mo_x_abs[0] != x || mo_y_abs[0] != y)
+		{
+			button = (mo_buttons[0] & 4) == 0;
+			x = mo_x_abs[0];
+			y = mo_y_abs[0];
+			buffer.push_back(0x40 | button);
+			buffer.push_back((x * 3000 / 640) & 0x3f);
+			buffer.push_back(((x * 3000 / 640) >> 6) & 0x3f);
+			buffer.push_back((y * 2294 / 480) & 0x3f);
+			buffer.push_back(((y * 2294 / 480) >> 6) & 0x3f);
+			buffer.push_back(0);
+			buffer.push_back(0);
+		}
+	}
+
+public:
+	void reset()
+	{
+		button = false;
+		x = 0;
+		y = 0;
+		buffer.clear();
+	}
+
+	int available() override {
+		update();
+		return buffer.size();
+	}
+
+	u8 read() override
+	{
+		if (buffer.empty())
+			return 0;
+		u8 b = buffer.front();
+		buffer.pop_front();
+		return b;
+	}
+};
+
 static void createDreamcastDevices()
 {
+	// Check for and instantiate DreamLink devices first
+	createDreamLinkDevices();
+
 	for (int bus = 0; bus < MAPLE_PORTS; ++bus)
 	{
 		switch (config::MapleMainDevices[bus])
 		{
 		case MDT_SegaController:
 		case MDT_SegaControllerXL:
-			mcfg_Create(config::MapleMainDevices[bus], bus, 5);
+			mcfg_Create(config::MapleMainDevices[bus], bus, MAPLE_MAIN_DEV_IDX);
 			if (config::MapleExpansionDevices[bus][0] != MDT_None)
 				mcfg_Create(config::MapleExpansionDevices[bus][0], bus, 0);
 			if (config::MapleExpansionDevices[bus][1] != MDT_None)
@@ -336,7 +509,8 @@ static void createDreamcastDevices()
 		case MDT_PopnMusicController:
 		case MDT_DenshaDeGoController:
 		case MDT_Dreameye:
-			mcfg_Create(config::MapleMainDevices[bus], bus, 5);
+		case MDT_DreamParaParaController:
+			mcfg_Create(config::MapleMainDevices[bus], bus, MAPLE_MAIN_DEV_IDX);
 			if (config::MapleMainDevices[bus] == MDT_FishingController)
 				// integrated vibration pack
 				mcfg_Create(MDT_PurupuruPack, bus, 4);
@@ -346,7 +520,7 @@ static void createDreamcastDevices()
 		case MDT_TwinStick:
 		case MDT_AsciiStick:
 		case MDT_RacingController:
-			mcfg_Create(config::MapleMainDevices[bus], bus, 5);
+			mcfg_Create(config::MapleMainDevices[bus], bus, MAPLE_MAIN_DEV_IDX);
 			if (config::MapleExpansionDevices[bus][0] != MDT_None)
 				mcfg_Create(config::MapleExpansionDevices[bus][0], bus, 0);
 			break;
@@ -357,6 +531,15 @@ static void createDreamcastDevices()
 		default:
 			WARN_LOG(MAPLE, "Invalid device type %d for port %d", (MapleDeviceType)config::MapleMainDevices[bus], bus);
 			break;
+		}
+	}
+	if (settings.content.gameId == "HDR-0094")
+	{
+		// Fish Life
+		static HKS0100TouchScreen hks0100TouchScreen;
+		if (SCIFSerialPort::Instance().getPipe() != &hks0100TouchScreen) {
+			hks0100TouchScreen.reset();
+			SCIFSerialPort::Instance().setPipe(&hks0100TouchScreen);
 		}
 	}
 }
@@ -410,14 +593,27 @@ void mcfg_CreateDevices()
 	vmuDigest();
 }
 
-// Don't destroy the JVS MIE if full is false
+// Don't destroy the JVS MIE or DreamLink if full is false
 void mcfg_DestroyDevices(bool full)
 {
 	for (int i = 0; i < MAPLE_PORTS; i++)
-		for (int j = 0; j <= 5; j++)
+		for (int j = 0; j < MAPLE_DEVS_PER_PORT; j++)
 		{
-			if (MapleDevices[i][j] != nullptr
-					&& (full || MapleDevices[i][j]->get_device_type() != MDT_NaomiJamma))
+			bool resetDevice = true;
+
+			if (!full)
+			{
+				MapleDeviceType devType = MDT_None;
+				if (MapleDevices[i][j] != nullptr)
+				{
+					if (std::dynamic_pointer_cast<MapleLinkDevice>(MapleDevices[i][j]))
+						resetDevice = false;
+					else
+						resetDevice = (MapleDevices[i][j]->get_device_type() != MDT_NaomiJamma);
+				}
+			}
+
+			if (resetDevice)
 			{
 				MapleDevices[i][j].reset();
 			}
@@ -428,6 +624,8 @@ void mcfg_SerializeDevices(Serializer& ser)
 {
 	ser << maple_ddt_pending_reset;
 	ser << SDCKBOccupied;
+	sh4_sched_serialize(ser, maple_schid);
+
 	ser << (u32)mapleDmaOut.size();
 	for (const auto& pair : mapleDmaOut)
 	{
@@ -436,14 +634,15 @@ void mcfg_SerializeDevices(Serializer& ser)
 		ser.serialize(pair.second.data(), pair.second.size());
 	}
 	for (int i = 0; i < MAPLE_PORTS; i++)
-		for (int j = 0; j < 6; j++)
+		for (int j = 0; j < MAPLE_DEVS_PER_PORT; j++)
 		{
 			u8 deviceType = MDT_None;
 			std::shared_ptr<maple_device> device = MapleDevices[i][j];
 			if (device != nullptr)
+				// DreamLink devices will report as MDT_None if no device or unknown device is attached
 				deviceType =  device->get_device_type();
 			ser << deviceType;
-			if (device != nullptr)
+			if (deviceType != MDT_None)
 				device->serialize(ser);
 		}
 }
@@ -452,34 +651,27 @@ void mcfg_DeserializeDevices(Deserializer& deser)
 {
 	if (!deser.rollback())
 		mcfg_DestroyDevices(false);
-	u8 eeprom[sizeof(maple_naomi_jamma::eeprom)];
-	if (deser.version() < Deserializer::V23)
-	{
-		deser >> eeprom;
-		deser.skip(128);	// Unused eeprom space
-		deser.skip<bool>(); // EEPROM_loaded
-	}
 	deser >> maple_ddt_pending_reset;
 	if (deser.version() >= Deserializer::V47)
 		deser >> SDCKBOccupied;
+	if (deser.version() >= Deserializer::V62)
+		sh4_sched_deserialize(deser, maple_schid);
+
 	mapleDmaOut.clear();
-	if (deser.version() >= Deserializer::V23)
+	u32 size;
+	deser >> size;
+	for (u32 i = 0; i < size; i++)
 	{
-		u32 size;
-		deser >> size;
-		for (u32 i = 0; i < size; i++)
-		{
-			u32 address;
-			deser >> address;
-			u32 dataSize;
-			deser >> dataSize;
-			mapleDmaOut.emplace_back(address, std::vector<u32>(dataSize));
-			deser.deserialize(mapleDmaOut.back().second.data(), dataSize);
-		}
+		u32 address;
+		deser >> address;
+		u32 dataSize;
+		deser >> dataSize;
+		mapleDmaOut.emplace_back(address, std::vector<u32>(dataSize));
+		deser.deserialize(mapleDmaOut.back().second.data(), dataSize);
 	}
 
 	for (int i = 0; i < MAPLE_PORTS; i++)
-		for (int j = 0; j < 6; j++)
+		for (int j = 0; j < MAPLE_DEVS_PER_PORT; j++)
 		{
 			u8 deviceType;
 			deser >> deviceType;
@@ -487,16 +679,49 @@ void mcfg_DeserializeDevices(Deserializer& deser)
 			{
 				if (!deser.rollback() && deviceType != MDT_NaomiJamma)
 					mcfg_Create((MapleDeviceType)deviceType, i, j);
-				MapleDevices[i][j]->deserialize(deser);
+
+				std::shared_ptr<maple_device> dev = MapleDevices[i][j];
+				std::shared_ptr<MapleLinkDevice> mapleLink = std::dynamic_pointer_cast<MapleLinkDevice>(dev);
+				if (mapleLink)
+				{
+					// For MapleLink for DreamLink devices, they get to decide if it may deserialize and setup for it
+					const MapleDeviceType typeEnum = static_cast<MapleDeviceType>(deviceType);
+					if (mapleLink->deserializingFor(typeEnum))
+					{
+						dev->deserialize(deser);
+					}
+					else
+					{
+						// Flush the data and require reconnect
+						mcfg_DeserializeDiscardDevice(deser, typeEnum, i, j, dev->player_num);
+						maple_ReconnectDevice(i, j);
+					}
+				}
+				else
+				{
+					dev->deserialize(deser);
+				}
 			}
 		}
-	if (deser.version() < Deserializer::V23 && EEPROM != nullptr)
-		memcpy(EEPROM, eeprom, sizeof(eeprom));
 }
 
-std::shared_ptr<maple_naomi_jamma> getMieDevice()
+void mcfg_SerializeDefaultDevice(Serializer& ser, MapleDeviceType forType, u32 bus, u32 port, int playerNum)
 {
-	if (MapleDevices[0][5] == nullptr || MapleDevices[0][5]->get_device_type() != MDT_NaomiJamma)
+	std::shared_ptr<maple_device> dummyDev = maple_Create(forType);
+	dummyDev->Setup(bus, port, playerNum, false);
+	dummyDev->serialize(ser);
+}
+
+void mcfg_DeserializeDiscardDevice(Deserializer& deser, MapleDeviceType forType, u32 bus, u32 port, int playerNum)
+{
+	std::shared_ptr<maple_device> dummyDev = maple_Create(forType);
+	dummyDev->Setup(bus, port, playerNum, false);
+	dummyDev->deserialize(deser);
+}
+
+std::shared_ptr<MIE> getMieDevice()
+{
+	if (MapleDevices[0][MAPLE_MAIN_DEV_IDX] == nullptr || MapleDevices[0][MAPLE_MAIN_DEV_IDX]->get_device_type() != MDT_NaomiJamma)
 		return nullptr;
-	return std::static_pointer_cast<maple_naomi_jamma>(MapleDevices[0][5]);
+	return std::static_pointer_cast<MIE>(MapleDevices[0][MAPLE_MAIN_DEV_IDX]);
 }

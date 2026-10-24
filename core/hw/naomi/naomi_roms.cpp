@@ -39,11 +39,11 @@ const BIOS_t BIOS[] =
 		"awbios",
 		{
 			// Sammy version
-			{ 0, "bios0.ic23", 0x000000, 0x020000, 0x719b2b0b },
+			{ 0, "bios0.ic23", 0x000000, 0x010000, 0x719b2b0b },
 			//or
-			//{ 0, "bios1.ic23", 0x000000, 0x020000, 0xd3e80a9f },
+			//{ 0, "bios1.ic23", 0x000000, 0x010000, 0xd3e80a9f },
 			// Sega version
-			//{ 0, "fpr-24363.ic48", 0x000000, 0x020000, 0x82a105f0 },
+			//{ 0, "fpr-24363.ic48", 0x000000, 0x010000, 0x82a105f0 },
 		}
 	},
 	{
@@ -1426,27 +1426,27 @@ const Game Games[] =
         M2,
         ROT0,
         {
-            { "epr-22284a.ic22", 0x0000000, 0x400000 },
-            { "mpr-22223.ic1",   0x0800000, 0x800000 },
-            { "mpr-22224.ic2",   0x1000000, 0x800000 },
-            { "mpr-22225.ic3",   0x1800000, 0x800000 },
-            { "mpr-22226.ic4",   0x2000000, 0x800000 },
-            { "mpr-22227.ic5",   0x2800000, 0x800000 },
-            { "mpr-22228.ic6",   0x3000000, 0x800000 },
-            { "mpr-22229.ic7",   0x3800000, 0x800000 },
-            { "mpr-22230.ic8",   0x4000000, 0x800000 },
-            { "mpr-22231.ic9",   0x4800000, 0x800000 },
-            { "mpr-22232.ic10",  0x5000000, 0x800000 },
-            { "mpr-22233.ic11",  0x5800000, 0x800000 },
-            { "mpr-22234.ic12s", 0x6000000, 0x800000 },
-            { "mpr-22235.ic13s", 0x6800000, 0x800000 },
-            { "mpr-22236.ic14s", 0x7000000, 0x800000 },
-            { "mpr-22237.ic15s", 0x7800000, 0x800000 },
-            { "mpr-22238.ic16s", 0x8000000, 0x800000 },
+            { "epr-22284a.ic22", 0x0000000, 0x400000, 0x1e8e067c },
+            { "mpr-22223.ic1",   0x0800000, 0x800000, 0x5159df22 },
+            { "mpr-22224.ic2",   0x1000000, 0x800000, 0xef8bc5a0 },
+            { "mpr-22225.ic3",   0x1800000, 0x800000, 0x80e0fdbd },
+            { "mpr-22226.ic4",   0x2000000, 0x800000, 0xea940bcf },
+            { "mpr-22227.ic5",   0x2800000, 0x800000, 0x300ed93b },
+            { "mpr-22228.ic6",   0x3000000, 0x800000, 0x3dd062c7 },
+            { "mpr-22229.ic7",   0x3800000, 0x800000, 0xda624f37 },
+            { "mpr-22230.ic8",   0x4000000, 0x800000, 0x5a806bb6 },
+            { "mpr-22231.ic9",   0x4800000, 0x800000, 0xc633d57d },
+            { "mpr-22232.ic10",  0x5000000, 0x800000, 0x6f25a6dd },
+            { "mpr-22233.ic11",  0x5800000, 0x800000, 0xcf3ac2df },
+            { "mpr-22234.ic12s", 0x6000000, 0x800000, 0xd8c41648 },
+            { "mpr-22235.ic13s", 0x6800000, 0x800000, 0xf1dedac5 },
+            { "mpr-22236.ic14s", 0x7000000, 0x800000, 0x85f54964 },
+            { "mpr-22237.ic15s", 0x7800000, 0x800000, 0x718dd6bf },
+            { "mpr-22238.ic16s", 0x8000000, 0x800000, 0xfb3e55da },
         },
 		nullptr,
 		nullptr,
-		nullptr,
+		derbyo2k_eeprom_dump,
 		1,
     },
     // Derby Owners Club (JPN, USA, EXP, KOR, AUS) (Rev B)
@@ -1460,25 +1460,25 @@ const Game Games[] =
         M2,
         ROT0,
         {
-            { "epr-22099b.ic22", 0x0000000, 0x0400000 },
-            { "mpr-22085.ic1",   0x0800000, 0x0800000 },
-            { "mpr-22086.ic2",   0x1000000, 0x0800000 },
-            { "mpr-22087.ic3",   0x1800000, 0x0800000 },
-            { "mpr-22088.ic4",   0x2000000, 0x0800000 },
-            { "mpr-22089.ic5",   0x2800000, 0x0800000 },
-            { "mpr-22090.ic6",   0x3000000, 0x0800000 },
-            { "mpr-22091.ic7",   0x3800000, 0x0800000 },
-            { "mpr-22092.ic8",   0x4000000, 0x0800000 },
-            { "mpr-22093.ic9",   0x4800000, 0x0800000 },
-            { "mpr-22094.ic10",  0x5000000, 0x0800000 },
-            { "mpr-22095.ic11",  0x5800000, 0x0800000 },
-            { "mpr-22096.ic12s", 0x6000000, 0x0800000 },
-            { "mpr-22097.ic13s", 0x6800000, 0x0800000 },
-            { "mpr-22098.ic14s", 0x7000000, 0x0800000 },
+            { "epr-22099b.ic22", 0x0000000, 0x0400000, 0x5e708879 },
+            { "mpr-22085.ic1",   0x0800000, 0x0800000, 0xfffe9cc5 },
+            { "mpr-22086.ic2",   0x1000000, 0x0800000, 0x610fe214 },
+            { "mpr-22087.ic3",   0x1800000, 0x0800000, 0xf0cd2a26 },
+            { "mpr-22088.ic4",   0x2000000, 0x0800000, 0x62a7e6db },
+            { "mpr-22089.ic5",   0x2800000, 0x0800000, 0xcb135eb6 },
+            { "mpr-22090.ic6",   0x3000000, 0x0800000, 0x13e44d57 },
+            { "mpr-22091.ic7",   0x3800000, 0x0800000, 0xefa1e2fc },
+            { "mpr-22092.ic8",   0x4000000, 0x0800000, 0xde1ea163 },
+            { "mpr-22093.ic9",   0x4800000, 0x0800000, 0xecbc523b },
+            { "mpr-22094.ic10",  0x5000000, 0x0800000, 0x72af7a70 },
+            { "mpr-22095.ic11",  0x5800000, 0x0800000, 0xae74b61a },
+            { "mpr-22096.ic12s", 0x6000000, 0x0800000, 0xd8c41648 },
+            { "mpr-22097.ic13s", 0x6800000, 0x0800000, 0xf1dedac5 },
+            { "mpr-22098.ic14s", 0x7000000, 0x0800000, 0xf9824d2e },
         },
 		nullptr,
 		nullptr,
-		nullptr,
+		derbyoc_eeprom_dump,
 		1,
     },
     // Derby Owners Club II (JPN, USA, EXP, KOR, AUS) (Rev B)
@@ -1492,22 +1492,22 @@ const Game Games[] =
         M2,
         ROT0,
         {
-            { "epr-22306b.ic22", 0x0000000, 0x0400000 },
-            { "mpr-22295.ic1",   0x0800000, 0x1000000 },
-            { "mpr-22296.ic2",   0x1800000, 0x1000000 },
-            { "mpr-22297.ic3",   0x2800000, 0x1000000 },
-            { "mpr-22298.ic4",   0x3800000, 0x1000000 },
-            { "mpr-22299.ic5",   0x4800000, 0x1000000 },
-            { "mpr-22300.ic6",   0x5800000, 0x1000000 },
-            { "mpr-22301.ic7",   0x6800000, 0x1000000 },
-            { "mpr-22302.ic8",   0x7800000, 0x1000000 },
-            { "mpr-22303.ic9",   0x8800000, 0x1000000 },
-            { "mpr-22304.ic10",  0x9800000, 0x1000000 },
-            { "mpr-22305.ic11",  0xa800000, 0x1000000 },
+            { "epr-22306b.ic22", 0x0000000, 0x0400000, 0xfcac20eb },
+            { "mpr-22295.ic1",   0x0800000, 0x1000000, 0x1085001b },
+            { "mpr-22296.ic2",   0x1800000, 0x1000000, 0xf18cb28b },
+            { "mpr-22297.ic3",   0x2800000, 0x1000000, 0xa78a527b },
+            { "mpr-22298.ic4",   0x3800000, 0x1000000, 0xcd76c7ea },
+            { "mpr-22299.ic5",   0x4800000, 0x1000000, 0xffb96da5 },
+            { "mpr-22300.ic6",   0x5800000, 0x1000000, 0x6fb05214 },
+            { "mpr-22301.ic7",   0x6800000, 0x1000000, 0x52eb076d },
+            { "mpr-22302.ic8",   0x7800000, 0x1000000, 0x86767b0b },
+            { "mpr-22303.ic9",   0x8800000, 0x1000000, 0x73a80bd5 },
+            { "mpr-22304.ic10",  0x9800000, 0x1000000, 0x46c1fb1f },
+            { "mpr-22305.ic11",  0xa800000, 0x1000000, 0x027d0e7b },
         },
 		nullptr,
 		nullptr,
-		nullptr,
+		derbyoc2_eeprom_dump,
 		1,
     },
     // Derby Owners Club World Edition (JPN, USA, EXP, KOR, AUS) (Rev D)
@@ -1532,7 +1532,7 @@ const Game Games[] =
         },
 		nullptr,
 		nullptr,
-		nullptr,
+		derbyocw_eeprom_dump,
 		1,
     },
     // Derby Owners Club World Edition (Rev A)
@@ -1557,7 +1557,7 @@ const Game Games[] =
         },
 		nullptr,
 		nullptr,
-		nullptr,
+		drbyocwc_eeprom_dump,
 		1,
     },
     // Derby Owners Club World Edition (Rev B)
@@ -1582,7 +1582,7 @@ const Game Games[] =
         },
 		nullptr,
 		nullptr,
-		nullptr,
+		drbyocwc_eeprom_dump,
 		1,
     },
     // Derby Owners Club World Edition (Rev C)
@@ -1607,7 +1607,7 @@ const Game Games[] =
         },
 		nullptr,
 		nullptr,
-		nullptr,
+		drbyocwc_eeprom_dump,
 		1,
     },
     // Derby Owners Club World Edition (Rev T)
@@ -1632,7 +1632,7 @@ const Game Games[] =
         },
 		nullptr,
 		nullptr,
-		nullptr,
+		drbyocwc_eeprom_dump,
 		1,
     },
     // Dead or Alive 2 (JPN, USA, EXP, KOR, AUS)
@@ -1837,7 +1837,7 @@ const Game Games[] =
     {
         "f355",
 		nullptr,
-        "Ferrari F355 Challenge (deluxe, no link)",
+        "Ferrari F355 Challenge (deluxe)",
         0x0b000000,
         0x280e8f84,
         "f355dlx",
@@ -1881,7 +1881,7 @@ const Game Games[] =
     {
         "f355twin",
 		nullptr,
-        "Ferrari F355 Challenge (twin/deluxe)",
+        "Ferrari F355 Challenge (twin)",
         0x0b000000,
         0x2806efd4,
         "f355bios",
@@ -1920,7 +1920,7 @@ const Game Games[] =
     {
         "f355twinp",
         "f355twin",
-        "Ferrari F355 Challenge (twin/deluxe, preview)",
+        "Ferrari F355 Challenge (twin, preview)",
         0x0b000000,
         0x2806efd4,
         "f355bios",
@@ -1959,7 +1959,7 @@ const Game Games[] =
     {
         "f355twn2",
 		nullptr,
-        "Ferrari F355 Challenge 2 - International Course Edition (twin/deluxe)",
+        "Ferrari F355 Challenge 2",
         0xb000000,
         0x281666c6,
         "f355bios",
@@ -3174,6 +3174,8 @@ const Game Games[] =
         }
     },
     // Star Horse (satellite)
+	// All star horse require 837-13785 ARCNET&IO BD
+	// (not JVS, many DIP switches and connections for coin hopper, outputs and other I/O)
     {
         "shorse",
 		nullptr,
@@ -3184,14 +3186,14 @@ const Game Games[] =
         M2,
         ROT270,
         {
-            { "epr-23627.ic22", 0x0000000, 0x0400000 },
-            { "mpr-23275.ic1",  0x0800000, 0x1000000 },
-            { "mpr-23276.ic2",  0x1800000, 0x1000000 },
-            { "mpr-23277.ic3",  0x2800000, 0x1000000 },
-            { "mpr-23278.ic4",  0x3800000, 0x1000000 },
-            { "mpr-23279.ic5",  0x4800000, 0x1000000 },
-            { "mpr-23280.ic6",  0x5800000, 0x1000000 },
-            { "mpr-23281.ic7",  0x6800000, 0x0800000 },
+            { "epr-23627.ic22", 0x0000000, 0x0400000, 0x7caccc5e },
+            { "mpr-23275.ic1",  0x0800000, 0x1000000, 0xffc62eab },
+            { "mpr-23276.ic2",  0x1800000, 0x1000000, 0x8b7ce666 },
+            { "mpr-23277.ic3",  0x2800000, 0x1000000, 0x47a6f9c5 },
+            { "mpr-23278.ic4",  0x3800000, 0x1000000, 0xc12b189c },
+            { "mpr-23279.ic5",  0x4800000, 0x1000000, 0xb8b39559 },
+            { "mpr-23280.ic6",  0x5800000, 0x1000000, 0xb1c8daa2 },
+            { "mpr-23281.ic7",  0x6800000, 0x0800000, 0xc0378369 },
 
             //ROM_REGION(0x84, "some_eeprom", 0)
             //ROM_LOAD( "sflash.ic46",   0x000000, 0x000084, CRC(4929e940) SHA1(f8c4277ca0ae5e36b2eed033cc731b8fc4fccafc) )
@@ -3208,25 +3210,25 @@ const Game Games[] =
         M2,
         ROT0,
         {
-            { "epr-23626.ic22", 0x0000000, 0x200000 },
-            { "epr-23626.ic22", 0x0200000, 0x200000 }, //reload
-            { "rom1.ic1s",      0x0800000, 0x800000 },
-            { "rom2.ic2s",      0x1000000, 0x800000 },
-            { "rom3.ic3s",      0x1800000, 0x800000 },
-            { "rom4.ic4s",      0x2000000, 0x800000 },
-            { "rom5.ic5s",      0x2800000, 0x800000 },
-            { "rom6.ic6s",      0x3000000, 0x800000 },
-            { "rom7.ic7s",      0x3800000, 0x800000 },
-            { "rom8.ic8s",      0x4000000, 0x800000 },
-            { "rom9.ic9s",      0x4800000, 0x800000 },
-            { "rom10.ic10s",    0x5000000, 0x800000 },
-            { "rom11.ic11s",    0x5800000, 0x800000 },
-            { "rom12.ic12s",    0x6000000, 0x800000 },
-            { "rom13.ic13s",    0x6800000, 0x800000 },
-            { "rom14.ic14s",    0x7000000, 0x800000 },
-            { "rom15.ic15s",    0x7800000, 0x800000 },
-            { "rom16.ic16s",    0x8000000, 0x800000 },
-            { "rom17.ic17s",    0x8800000, 0x800000 },
+            { "epr-23626.ic22", 0x0000000, 0x200000, 0xd5893a19 },
+            { "epr-23626.ic22", 0x0200000, 0x200000, 0xd5893a19 }, //reload
+            { "rom1.ic1s",      0x0800000, 0x800000, 0xe45ab26f },
+            { "rom2.ic2s",      0x1000000, 0x800000, 0x4d0e4e64 },
+            { "rom3.ic3s",      0x1800000, 0x800000, 0xa18c7ce7 },
+            { "rom4.ic4s",      0x2000000, 0x800000, 0x82001b50 },
+            { "rom5.ic5s",      0x2800000, 0x800000, 0x5e4af8b2 },
+            { "rom6.ic6s",      0x3000000, 0x800000, 0x2950c543 },
+            { "rom7.ic7s",      0x3800000, 0x800000, 0xa2bb8ebb },
+            { "rom8.ic8s",      0x4000000, 0x800000, 0xfde9b537 },
+            { "rom9.ic9s",      0x4800000, 0x800000, 0x4db3e79a },
+            { "rom10.ic10s",    0x5000000, 0x800000, 0x37167167 },
+            { "rom11.ic11s",    0x5800000, 0x800000, 0x927f1edb },
+            { "rom12.ic12s",    0x6000000, 0x800000, 0x05de610d },
+            { "rom13.ic13s",    0x6800000, 0x800000, 0x17ed44c3 },
+            { "rom14.ic14s",    0x7000000, 0x800000, 0x66d7e2a1 },
+            { "rom15.ic15s",    0x7800000, 0x800000, 0x0c701416 },
+            { "rom16.ic16s",    0x8000000, 0x800000, 0x5d8e6e8d },
+            { "rom17.ic17s",    0x8800000, 0x800000, 0xb4c40606 },
             // .18s chip is not present but is tested for an FF fill (pull-up resistors on the PCB's data bus presumably accomplish this)
 
             //ROM_REGION(0x84, "some_eeprom", 0)
@@ -3244,11 +3246,11 @@ const Game Games[] =
         M2,
         ROT0,
         {
-            { "epr-23625.ic22", 0x0000000, 0x0400000 },
-            { "mpr-23231.ic1",  0x0800000, 0x1000000 },
-            { "mpr-23232.ic2",  0x1800000, 0x1000000 },
-            { "mpr-23233.ic3",  0x2800000, 0x1000000 },
-            { "mpr-23234.ic4",  0x3800000, 0x1000000 },
+            { "epr-23625.ic22", 0x0000000, 0x0400000, 0x7300bc6c },
+            { "mpr-23231.ic1",  0x0800000, 0x1000000, 0xe41ddc53 },
+            { "mpr-23232.ic2",  0x1800000, 0x1000000, 0x30f963a0 },
+            { "mpr-23233.ic3",  0x2800000, 0x1000000, 0xd6451cab },
+            { "mpr-23234.ic4",  0x3800000, 0x1000000, 0x44044c14 },
 
             //ROM_REGION(0x84, "some_eeprom", 0)
             //ROM_LOAD( "sflash.ic46",   0x000000, 0x000084, CRC(951684e4) SHA1(0beaf5827064252293223b946c04b8698e7207bb) )
@@ -3265,14 +3267,14 @@ const Game Games[] =
         M2,
         ROT270,
         {
-            { "epr-24122a.ic22", 0x0000000, 0x0400000 },
-            { "mpr-24123.ic1",   0x0800000, 0x1000000 },
-            { "mpr-24124.ic2",   0x1800000, 0x1000000 },
-            { "mpr-24125.ic3",   0x2800000, 0x1000000 },
-            { "mpr-24126.ic4",   0x3800000, 0x1000000 },
-            { "mpr-24127.ic5",   0x4800000, 0x1000000 },
-            { "mpr-24128.ic6",   0x5800000, 0x1000000 },
-            { "mpr-24129.ic7",   0x6800000, 0x1000000 },
+            { "epr-24122a.ic22", 0x0000000, 0x0400000, 0x34ef47d2 },
+            { "mpr-24123.ic1",   0x0800000, 0x1000000, 0x657f0c6d },
+            { "mpr-24124.ic2",   0x1800000, 0x1000000, 0x034f2d83 },
+            { "mpr-24125.ic3",   0x2800000, 0x1000000, 0x103aec1d },
+            { "mpr-24126.ic4",   0x3800000, 0x1000000, 0x9a6f2f59 },
+            { "mpr-24127.ic5",   0x4800000, 0x1000000, 0xbb4af13e },
+            { "mpr-24128.ic6",   0x5800000, 0x1000000, 0xbfdbb853 },
+            { "mpr-24129.ic7",   0x6800000, 0x1000000, 0xc3f0f06a },
         }
     },
     // Star Horse Progress (backup data)
@@ -3286,8 +3288,8 @@ const Game Games[] =
         M2,
         ROT0,
         {
-            { "rom1.ic1s",   0x00800000, 0x00800000 },
-            { "rom2.ic2s",   0x01000000, 0x00800000 },
+            { "rom1.ic1s",   0x00800000, 0x00800000, 0xd1305180 },
+            { "rom2.ic2s",   0x01000000, 0x00800000, 0xcfb9881d },
 
             //ROM_REGION(0x84, "some_eeprom", 0)
             //ROM_LOAD( "sflash.ic37",   0x000000, 0x000084, CRC(fe8f8f5c) SHA1(839461ab736e0228dec7e2512e1692d6ecc4e664) )
@@ -3304,18 +3306,18 @@ const Game Games[] =
         M2,
         ROT0,
         {
-            { "epr-24107a.ic22", 0x00000000, 0x00400000 },
-            { "mpr-24108.ic1",   0x00800000, 0x01000000 },
-            { "mpr-24109.ic2",   0x01800000, 0x01000000 },
-            { "mpr-24110.ic3",   0x02800000, 0x01000000 },
-            { "mpr-24111.ic4",   0x03800000, 0x01000000 },
-            { "mpr-24112.ic5",   0x04800000, 0x01000000 },
-            { "mpr-24113.ic6",   0x05800000, 0x01000000 },
-            { "mpr-24114.ic7",   0x06800000, 0x01000000 },
-            { "mpr-24115.ic8",   0x07800000, 0x01000000 },
-            { "mpr-24116.ic9",   0x08800000, 0x01000000 },
-            { "mpr-24117.ic10",  0x09800000, 0x01000000 },
-            { "mpr-24118.ic11",  0x0a800000, 0x01000000 },
+            { "epr-24107a.ic22", 0x00000000, 0x00400000, 0x8df0f545 },
+            { "mpr-24108.ic1",   0x00800000, 0x01000000, 0xe8e9c09c },
+            { "mpr-24109.ic2",   0x01800000, 0x01000000, 0xa5c103d0 },
+            { "mpr-24110.ic3",   0x02800000, 0x01000000, 0x58a5a8c2 },
+            { "mpr-24111.ic4",   0x03800000, 0x01000000, 0xdcb17013 },
+            { "mpr-24112.ic5",   0x04800000, 0x01000000, 0x711e656b },
+            { "mpr-24113.ic6",   0x05800000, 0x01000000, 0xd6c7d611 },
+            { "mpr-24114.ic7",   0x06800000, 0x01000000, 0xcb1846b7 },
+            { "mpr-24115.ic8",   0x07800000, 0x01000000, 0x73c5168d },
+            { "mpr-24116.ic9",   0x08800000, 0x01000000, 0xe074c41a },
+            { "mpr-24117.ic10",  0x09800000, 0x01000000, 0xd6d33ab2 },
+            { "mpr-24118.ic11",  0x0a800000, 0x01000000, 0x99b64022 },
         }
     },
     // Star Horse Progress (main screens)
@@ -3329,13 +3331,13 @@ const Game Games[] =
         M2,
         ROT0,
         {
-            { "epr-24087b.ic22", 0x00000000, 0x00400000 },
-            { "mpr-24088.ic1",   0x00800000, 0x01000000 },
-            { "mpr-24089.ic2",   0x01800000, 0x01000000 },
-            { "mpr-24090.ic3",   0x02800000, 0x01000000 },
-            { "mpr-24091.ic4",   0x03800000, 0x01000000 },
-            { "mpr-24092.ic5",   0x04800000, 0x01000000 },
-            { "mpr-24093.ic6",   0x05800000, 0x01000000 },
+            { "epr-24087b.ic22", 0x00000000, 0x00400000, 0x9388f109 },
+            { "mpr-24088.ic1",   0x00800000, 0x01000000, 0x386d9a06 },
+            { "mpr-24089.ic2",   0x01800000, 0x01000000, 0x404e231b },
+            { "mpr-24090.ic3",   0x02800000, 0x01000000, 0x48fb173d },
+            { "mpr-24091.ic4",   0x03800000, 0x01000000, 0x7c92174c },
+            { "mpr-24092.ic5",   0x04800000, 0x01000000, 0xd32299a6 },
+            { "mpr-24093.ic6",   0x05800000, 0x01000000, 0x6491dd68 },
         }
     },
     // Star Horse Progress (sound & backup)
@@ -3349,13 +3351,13 @@ const Game Games[] =
         M2,
         ROT0,
         {
-            { "epr-24097a.ic22", 0x00000000, 0x00400000 },
-            { "mpr-24098.ic1",   0x00800000, 0x01000000 },
-            { "mpr-24099.ic2",   0x01800000, 0x01000000 },
-            { "mpr-24100.ic3",   0x02800000, 0x01000000 },
-            { "mpr-24101.ic4",   0x03800000, 0x01000000 },
-            { "mpr-24102.ic5",   0x04800000, 0x01000000 },
-            { "mpr-24103.ic6",   0x05800000, 0x01000000 },
+            { "epr-24097a.ic22", 0x00000000, 0x00400000, 0xec61a9e8 },
+            { "mpr-24098.ic1",   0x00800000, 0x01000000, 0xc55b45be },
+            { "mpr-24099.ic2",   0x01800000, 0x01000000, 0xe3f0f02e },
+            { "mpr-24100.ic3",   0x02800000, 0x01000000, 0xa5f3cbe9 },
+            { "mpr-24101.ic4",   0x03800000, 0x01000000, 0xdaaf9531 },
+            { "mpr-24102.ic5",   0x04800000, 0x01000000, 0x55121ff3 },
+            { "mpr-24103.ic6",   0x05800000, 0x01000000, 0xbfbc3569 },
         }
     },
     // Star Horse 2001 (satellite, Rev B)
@@ -3369,14 +3371,14 @@ const Game Games[] =
         M2,
         ROT270,
         {
-            { "epr-23739b.ic22", 0x00000000, 0x00400000 },
-            { "mpr-23740.ic1",   0x00800000, 0x01000000 },
-            { "mpr-23741.ic2",   0x01800000, 0x01000000 },
-            { "mpr-23742.ic3",   0x02800000, 0x01000000 },
-            { "mpr-23743.ic4",   0x03800000, 0x01000000 },
-            { "mpr-23744.ic5",   0x04800000, 0x01000000 },
-            { "mpr-23745.ic6",   0x05800000, 0x01000000 },
-            { "mpr-23746.ic7",   0x06800000, 0x01000000 },
+            { "epr-23739b.ic22", 0x00000000, 0x00400000, 0x2d19b6a2 },
+            { "mpr-23740.ic1",   0x00800000, 0x01000000, 0xe84f8611 },
+            { "mpr-23741.ic2",   0x01800000, 0x01000000, 0x5fd84c54 },
+            { "mpr-23742.ic3",   0x02800000, 0x01000000, 0x240e1779 },
+            { "mpr-23743.ic4",   0x03800000, 0x01000000, 0xd9dc0a12 },
+            { "mpr-23744.ic5",   0x04800000, 0x01000000, 0x95759982 },
+            { "mpr-23745.ic6",   0x05800000, 0x01000000, 0x0eda5807 },
+            { "mpr-23746.ic7",   0x06800000, 0x01000000, 0x955bb184 },
         }
     },
     // Star Horse 2002 (main screens)
@@ -4966,8 +4968,8 @@ const Game Games[] =
         M4,
         ROT270,
         {
-            { "fpr-24489.ic8",  0x00000000, 0x4000000 },
-            { "fpr-24490.ic9",  0x04000000, 0x4000000 },
+            { "fpr-24489.ic8",  0x00000000, 0x4000000, 0x156797a4 },
+            { "fpr-24490.ic9",  0x04000000, 0x4000000, 0xb6c40348 },
         }
     },
     // Naomi GD Roms
@@ -6139,6 +6141,7 @@ const Game Games[] =
             { "317-0329-jpn.pic", 0, 0x4000, 0x097f5f92 },
         },
         "cdp-10001c",
+		&wccf_inputs,
 	},
 	// World Club Champion Football Serie A 2001-2002 DIMM FIRM Ver.3.03 (CDP-10003)
 	{
@@ -6171,6 +6174,7 @@ const Game Games[] =
 	        // SH4-based camera sensor board connected to MAPLE CN7
         },
         "cdv-10002",
+		&wccf_inputs,
 	},
 	// World Club Champion Football Serie A 2002-2003 Ver.2.34 (Japan) (CDV-10008)
 	{
@@ -6186,6 +6190,7 @@ const Game Games[] =
             { "317-0369-jpn.pic", 0, 0x4000, 0xfb3672ba },
         },
         "cdv-10008",
+		&wccf_inputs,
 	},
 	// World Club Champion Football European Clubs 2004-2005 (Asia) (CDV-10013)
 	{
@@ -6201,6 +6206,7 @@ const Game Games[] =
             { "317-0419-jpn.pic", 0, 0x4000, 0x04fae86b },
         },
         "cdv-10013",
+		&wccf_inputs,
 	},
 	// World Club Champion Football European Clubs 2004-2005 Ver.1.1 (Export) (CDV-10015)
 	{
@@ -6216,6 +6222,7 @@ const Game Games[] =
             { "317-0419-exp.pic", 0, 0x4000, 0x3f5e1445 },
         },
         "cdv-10015",
+		&wccf_inputs,
 	},
 	// World Club Champion Football European Clubs 2004-2005 Ver.3.22 (Export) (CDV-10015P)
 	{
@@ -6231,6 +6238,7 @@ const Game Games[] =
             { "317-0419-exp.pic", 0, 0x4000, 0x3f5e1445 },
         },
         "cdv-10015p",
+		&wccf_inputs,
 	},
 	// World Club Champion Football European Clubs 2004-2005 Ver.1.1 (Japan) (CDV-10020)
 	{
@@ -6246,6 +6254,7 @@ const Game Games[] =
 			{ "317-unk-jpn.pic", 0, 0x4000, 0xa4abd76b },
 		},
 		"cdv-10020",
+		&wccf_inputs,
 	},
 	// World Club Champion Football European Clubs 2004-2005 Ver.1.2 (Japan) (CDV-10021)
 	{
@@ -6261,6 +6270,7 @@ const Game Games[] =
 			{ "317-unk-jpn.pic", 0, 0x4000, 0xa4abd76b },
 		},
 		"cdv-10021",
+		&wccf_inputs,
 	},
 	// World Club Champion Football European Clubs 2005-2006 (Japan) (CDV-10025)
 	{
@@ -6276,6 +6286,7 @@ const Game Games[] =
 			{ "317-0456-jpn.pic", 0, 0x4000, 0xcf3bd834 },
 		},
 		"cdv-10025",
+		&wccf_inputs,
 	},
 	// World Club Champion Football European Clubs 2005-2006 (Export) (CDV-10027)
 	{
@@ -6291,6 +6302,7 @@ const Game Games[] =
 			{ "317-0456-exp.pic", 0, 0x4000, 0xfb7dd592 },
 		},
 		"cdv-10027",
+		&wccf_inputs,
 	},
 
     // AtomisWave Roms
@@ -7311,7 +7323,7 @@ const Game Games[] =
         },
 		nullptr,
 		&clubkart_inputs,
-		nullptr,
+		clubkrt_eeprom_dump,
     },
 	{
     	"clubkrta",
@@ -7338,7 +7350,7 @@ const Game Games[] =
         },
 		nullptr,
 		&clubkart_inputs,
-		nullptr,
+		clubkrt_eeprom_dump,
     },
     {
     	"clubkrtc",
@@ -7365,7 +7377,7 @@ const Game Games[] =
         },
 		nullptr,
 		&clubkart_inputs,
-		nullptr,
+		clubkrt_eeprom_dump,
     },
     {
     	"clubkrt",
@@ -7392,7 +7404,7 @@ const Game Games[] =
         },
 		nullptr,
 		&clubkart_inputs,
-		nullptr,
+		clubkrt_eeprom_dump,
     },
     {
     	"clubkprz",

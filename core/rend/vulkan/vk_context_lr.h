@@ -36,11 +36,8 @@ class FramebufferAttachment;
 class VulkanContext : public GraphicsContext, public FlightManager
 {
 public:
-	VulkanContext();
-	~VulkanContext() override;
-
-	bool init(retro_hw_render_interface_vulkan *render_if);
-	void term() override;
+	~VulkanContext();
+	static void Create(retro_hw_render_interface_vulkan *render_if);
 
 	u32 GetGraphicsQueueFamilyIndex() const { return retro_render_if->queue_index; }
 	void PresentFrame(vk::Image image, vk::ImageView imageView, const vk::Extent2D& extent, float aspectRatio);
@@ -56,8 +53,10 @@ public:
 	void WaitIdle() const { queue.waitIdle(); }
 	void SubmitCommandBuffers(const std::vector<vk::CommandBuffer> &buffers, vk::Fence fence) {
 		retro_render_if->lock_queue(retro_render_if->handle);
-		queue.submit(vk::SubmitInfo(nullptr, nullptr, buffers, nullptr), fence);
+		const vk::SubmitInfo submitInfo(nullptr, nullptr, buffers, nullptr);
+		const vk::Result result = queue.submit(1, &submitInfo, fence);
 		retro_render_if->unlock_queue(retro_render_if->handle);
+		vk::detail::resultCheck(result, "vk::Queue::submit");
 	}
 	vk::DeviceSize GetUniformBufferAlignment() const { return uniformBufferAlignment; }
 	vk::DeviceSize GetStorageBufferAlignment() const { return storageBufferAlignment; }
@@ -88,13 +87,16 @@ public:
 		return vendorID == VENDOR_ATI || vendorID == VENDOR_AMD;
 	}
 	vk::Format GetDepthFormat() const { return depthFormat; }
-	static VulkanContext *Instance() { return contextInstance; }
+	static VulkanContext *Instance() { return static_cast<VulkanContext *>(GraphicsContext::Instance()); }
 	bool SupportsSamplerAnisotropy() const { return samplerAnisotropy; }
 	bool SupportsDedicatedAllocation() const { return dedicatedAllocationSupported; }
+	bool SupportsBufferDeviceAddress() const { return bufferDeviceAddressSupported; }
+	bool supportsDynamicLocalRead() const { return dynamicLocalReadSupported; }
 	bool hasPerPixel() override { return fragmentStoresAndAtomics; }
 	bool hasProvokingVertex() { return provokingVertexSupported; }
 	const VMAllocator& GetAllocator() const { return allocator; }
 	vk::DeviceSize GetMaxMemoryAllocationSize() const { return maxMemoryAllocationSize; }
+	u32 GetMaxStorageBufferRange() const { return maxStorageBufferRange; }
 	f32 GetMaxSamplerAnisotropy() const { return samplerAnisotropy ? maxSamplerAnisotropy : 1.f; }
 	u32 GetVendorID() const { return vendorID; }
 	void addToFlight(Deletable *object) override {
@@ -117,6 +119,9 @@ public:
 	constexpr static int VENDOR_MESA = 0x10005;
 
 private:
+	VulkanContext(retro_hw_render_interface_vulkan *render_if);
+	bool init(retro_hw_render_interface_vulkan *render_if);
+	void term();
 	void beginFrame(vk::Extent2D extent, vk::Image barrierImage);
 	void endFrame(vk::Image barrierImage);
 
@@ -124,17 +129,20 @@ private:
 
 	vk::DeviceSize uniformBufferAlignment = 0;
 	vk::DeviceSize storageBufferAlignment = 0;
-	u32 maxStorageBufferRange = 0;
+	u32 maxStorageBufferRange = 0xFFFFFFFFu;
 	vk::DeviceSize maxMemoryAllocationSize = 0;
 	bool optimalTilingSupported565 = false;
 	bool optimalTilingSupported1555 = false;
 	bool optimalTilingSupported4444 = false;
 public:
-	bool fragmentStoresAndAtomics = false;
-	bool samplerAnisotropy = false;
+	static bool fragmentStoresAndAtomics;
+	static bool samplerAnisotropy;
 	f32 maxSamplerAnisotropy = 0.f;
-	bool dedicatedAllocationSupported = false;
-	bool provokingVertexSupported = false;
+	static bool dedicatedAllocationSupported;
+	static bool provokingVertexSupported;
+	static bool bufferDeviceAddressSupported;
+	static bool dynamicLocalReadSupported;
+
 private:
 	u32 vendorID = 0;
 
@@ -162,8 +170,6 @@ private:
 	std::unique_ptr<VulkanOverlay> overlay;
 
 	retro_vulkan_image retro_image;
-
-	static VulkanContext *contextInstance;
 };
 
 const VkApplicationInfo* VkGetApplicationInfo();

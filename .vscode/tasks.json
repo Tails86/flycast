@@ -1,0 +1,232 @@
+{
+    "tasks": [
+        {
+            "label": "Copy CMakeUserPresets.json",
+            "type": "shell",
+            "windows": {
+                "command": "copy",
+                "args": [
+                    "${workspaceFolder}/.vscode/CMakeWindowsPresets.json",
+                    "${workspaceFolder}/CMakeUserPresets.json"
+                ]
+            },
+            "linux": {
+                "command": "cp",
+                "args": [
+                    "${workspaceFolder}/.vscode/CMakeLinuxPresets.json",
+                    "${workspaceFolder}/CMakeUserPresets.json"
+                ]
+            },
+            "osx": {
+                "command": "CURRENT_ARCH=$(uname -m); sed \"s/{CURRENT_ARCH}/$CURRENT_ARCH/g\" ${workspaceFolder}/.vscode/CMakeDarwinPresets.json > ${workspaceFolder}/CMakeUserPresets.json"
+            },
+            "hide": true
+        },
+        {
+            "label": "CMake: configure",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--preset", "default"],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "problemMatcher": [],
+            "dependsOn": [
+                "Copy CMakeUserPresets.json"
+            ],
+            "hide": true
+        },
+        {
+            "label": "CMake: build",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "--preset", "default"],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "problemMatcher": [],
+            "dependsOn": [
+                "CMake: configure"
+            ],
+            "hide": true
+        },
+        {
+            "label": "Build Release",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "dependsOn": [
+                "CMake: build"
+            ]
+        },
+
+
+        {
+            "label": "CMake: configure (Debug)",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--preset", "debug"],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "problemMatcher": [],
+            "dependsOn": [
+                "Copy CMakeUserPresets.json"
+            ],
+            "hide": true
+        },
+        {
+            "label": "CMake: build (Debug)",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "--preset", "debug"],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "problemMatcher": [],
+            "dependsOn": [
+                "CMake: configure (Debug)"
+            ],
+            "hide": true
+        },
+        {
+            "label": "Build Debug",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "dependsOn": [
+                "CMake: build (Debug)"
+            ]
+        },
+
+
+        {
+            "label": "CMake: configure unit tests (Debug)",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--preset", "unit-tests-debug"],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "problemMatcher": [],
+            "dependsOn": [
+                "Copy CMakeUserPresets.json"
+            ],
+            "hide": true
+        },
+        {
+            "label": "CMake: build unit tests (Debug)",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "--preset", "unit-tests-debug"],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "problemMatcher": [],
+            "dependsOn": [
+                "CMake: configure unit tests (Debug)"
+            ],
+            "hide": true
+        },
+        {
+            "label": "Build Unit Tests (Debug)",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "dependsOn": [
+                "CMake: build unit tests (Debug)"
+            ]
+        },
+
+
+        {
+            "type": "shell",
+            "label": "Build and Run Unit Tests",
+            "args": [],
+            "windows":{
+                "command": "./Hollycast.exe",
+                "options": {
+                    "cwd": "${workspaceFolder}/build-unit-tests-debug/Debug"
+                }
+            },
+            "linux":{
+                "command": "./Hollycast",
+                "options": {
+                    "cwd": "${workspaceFolder}/build-unit-tests-debug"
+                }
+            },
+            "osx":{
+                "command": "./Hollycast",
+                "options": {
+                    "cwd": "${workspaceFolder}/build-unit-tests-debug/Debug/Hollycast.app/Contents/MacOS/"
+                }
+            },
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "dependsOn": [
+                "Build Unit Tests (Debug)"
+            ]
+        },
+
+
+        {
+            "label": "Clean All Build Artifacts",
+            "type": "shell",
+            "command": "rm -rf build*",
+            "windows": {
+                "command": "Get-ChildItem -Path . -Filter 'build*' -Directory | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -Path \"shell/android-studio/build/\", \"shell/android-studio/.gradle/\", \"shell/android-studio/flycast/.cxx/\", \"shell/android-studio/flycast/build/\" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -Path CMakeUserPresets.json -ErrorAction SilentlyContinue; exit 0"
+            },
+            "linux": {
+                "command": "rm -rf build*/ shell/android-studio/build/ shell/android-studio/.gradle/  shell/android-studio/flycast/.cxx/ shell/android-studio/flycast/build/ CMakeUserPresets.json"
+            },
+            "osx": {
+                "command": "zsh -c 'setopt +o nomatch; rm -rf build*/ shell/android-studio/build/ shell/android-studio/.gradle/  shell/android-studio/flycast/.cxx/ shell/android-studio/flycast/build/ CMakeUserPresets.json'"
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            }
+        },
+
+
+        {
+            "type": "shell",
+            "label": "Build Android",
+            "windows": {
+                "command": "./gradlew.bat"
+            },
+            "linux": {
+                "command": "./gradlew"
+            },
+            "osx": {
+                "command": "./gradlew"
+            },
+            "args": ["assembleDebug"],
+            "options": {
+                "cwd": "${workspaceFolder}/shell/android-studio"
+            },
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            }
+        }
+    ],
+    "version": "2.0.0"
+}

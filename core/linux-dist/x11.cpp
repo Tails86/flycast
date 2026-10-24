@@ -1,3 +1,4 @@
+// Portions Copyright 2026 The Hollycast Authors
 #if defined(SUPPORT_X11)
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -18,8 +19,10 @@
 #include "x11_keyboard.h"
 
 #define DEFAULT_FULLSCREEN    false
+
+// These should match WINDOW_WIDTH and WINDOW_HEIGHT in sdl.cpp
 #define DEFAULT_WINDOW_WIDTH  640
-#define DEFAULT_WINDOW_HEIGHT   480
+#define DEFAULT_WINDOW_HEIGHT 480
 
 static void x11_window_set_text(const char *text);
 
@@ -122,7 +125,7 @@ static void destroy_empty_cursor()
 
 static void x11_capture_mouse()
 {
-	x11_window_set_text("Flycast - mouse capture");
+	x11_window_set_text("Hollycast - mouse capture");
 	capturing_mouse = true;
 	Cursor cursor = create_empty_cursor();
 	XDefineCursor(x11_disp, x11_win, cursor);
@@ -133,7 +136,7 @@ static void x11_capture_mouse()
 
 static void x11_uncapture_mouse()
 {
-	x11_window_set_text("Flycast");
+	x11_window_set_text("Hollycast");
 	capturing_mouse = false;
 	XUndefineCursor(x11_disp, x11_win);
 	XUngrabPointer(x11_disp, CurrentTime);
@@ -260,9 +263,17 @@ void input_x11_init()
 	GamepadDevice::Register(x11Mouse);
 }
 
+void input_x11_term()
+{
+	GamepadDevice::Unregister(x11Keyboard);
+	x11Keyboard.reset();
+	GamepadDevice::Unregister(x11Mouse);
+	x11Mouse.reset();
+}
+
 void x11_window_create()
 {
-	if (cfgLoadInt("pvr", "nox11", 0) == 0)
+	if (config::loadInt("pvr", "nox11") == 0)
 	{
 		XInitThreads();
 
@@ -300,15 +311,15 @@ void x11_window_create()
 		sWA.event_mask |= PointerMotionMask | FocusChangeMask;
 		unsigned long ui32Mask = CWBackPixel | CWBorderPixel | CWEventMask | CWColormap;
 
-		x11_width = cfgLoadInt("window", "width", 0);
+		x11_width = config::loadInt("window", "width");
 		if (x11_width == 0)
-			x11_width = cfgLoadInt("x11", "width", DEFAULT_WINDOW_WIDTH);
-		x11_height = cfgLoadInt("window", "height", 0);
-		x11_fullscreen = cfgLoadBool("window", "fullscreen", DEFAULT_FULLSCREEN);
+			x11_width = config::loadInt("x11", "width", DEFAULT_WINDOW_WIDTH);
+		x11_height = config::loadInt("window", "height");
+		x11_fullscreen = config::loadBool("window", "fullscreen", DEFAULT_FULLSCREEN);
 		if (x11_height == 0)
 		{
-			x11_height = cfgLoadInt("x11", "height", DEFAULT_WINDOW_HEIGHT);
-			x11_fullscreen = cfgLoadBool("x11", "fullscreen", DEFAULT_FULLSCREEN);
+			x11_height = config::loadInt("x11", "height", DEFAULT_WINDOW_HEIGHT);
+			x11_fullscreen = config::loadBool("x11", "fullscreen", DEFAULT_FULLSCREEN);
 		}
 
 		if (x11_width < 0 || x11_height < 0)
@@ -350,7 +361,7 @@ void x11_window_create()
 
 		XFlush(x11_disp);
 
-		x11_window_set_text("Flycast");
+		x11_window_set_text("Hollycast");
 	}
 	else
 	{
@@ -380,10 +391,10 @@ void x11_window_destroy()
 	{
 		if (!x11_fullscreen)
 		{
-			cfgSaveInt("window", "width", x11_width);
-			cfgSaveInt("window", "height", x11_height);
+			config::saveInt("window", "width", x11_width);
+			config::saveInt("window", "height", x11_height);
 		}
-		cfgSaveBool("window", "fullscreen", x11_fullscreen);
+		config::saveBool("window", "fullscreen", x11_fullscreen);
 		XDestroyWindow(x11_disp, x11_win);
 		x11_win = (Window)0;
 	}

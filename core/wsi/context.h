@@ -19,7 +19,9 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #pragma once
+#include "emulator.h"
 #include <string>
+#include <cassert>
 
 void initRenderApi(void *window = nullptr, void *display = nullptr);
 void termRenderApi();
@@ -28,13 +30,14 @@ void switchRenderApi();
 class GraphicsContext
 {
 public:
-	virtual ~GraphicsContext() = default;
-	virtual void term() = 0;
+	virtual ~GraphicsContext();
 	virtual void resize() {}
 	virtual std::string getDriverName() = 0;
 	virtual std::string getDriverVersion() = 0;
 	virtual bool isAMD() = 0;
 	virtual bool hasPerPixel() { return false; }
+	// Set the game swap interval: 1 for 60 FPS, 2 for 30 FPS
+	virtual void setSwapInterval(int interval) {}
 
 	void setWindow(void *window, void *display = nullptr) {
 		this->window = window;
@@ -48,9 +51,21 @@ public:
 	static GraphicsContext *Instance() {
 		return instance;
 	}
+	static void Term()
+	{
+		if (instance != nullptr) {
+			delete instance;
+			assert(instance == nullptr);
+		}
+	}
 
 protected:
+	GraphicsContext(void *window, void *display = nullptr);
+
 	void *window = nullptr;
 	void *display = nullptr;
+
+private:
+	static void onEvent(Event event, void *arg);
 	static GraphicsContext *instance;
 };

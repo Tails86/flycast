@@ -17,25 +17,28 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
  */
 #pragma once
+#include "types.h"
+#include "version.h"
+
 #include <string>
 #include <vector>
 #include <cctype>
 #include <iomanip>
 #include <sstream>
-#include "types.h"
-#include "version.h"
+#include <locale>
+#include <string_view>
 
 namespace http {
 
 void init();
 void term();
 
-int get(const std::string& url, std::vector<u8>& content, std::string& content_type);
+using Headers = std::vector<std::pair<std::string, std::string>>;
 
-static inline int get(const std::string& url, std::vector<u8>& content) {
-	 std::string contentType;
-	 return get(url, content, contentType);
-}
+int get(const std::string& url, std::vector<u8>& content,
+		const Headers *reqHeaders = nullptr, Headers *respHeaders = nullptr);
+
+int get(const std::string& url, std::vector<u8>& content, std::string& contentType);
 
 struct PostField
 {
@@ -57,15 +60,18 @@ static inline bool success(int status) {
 	return status >= 200 && status < 300;
 }
 
-static inline std::string urlEncode(const std::string& value)
+static inline std::string urlEncode(const std::string& value, std::string_view additionalSafeCharacters = {})
 {
 	std::ostringstream escaped;
+	escaped.imbue(std::locale::classic());
 	escaped.fill('0');
 	escaped << std::hex;
 
 	for (char c : value)
 	{
-		if (std::isalnum(static_cast<u8>(c)) || c == '-' || c == '_' || c == '.' || c == '~') {
+		if (std::isalnum(static_cast<u8>(c)) || c == '-' || c == '_' || c == '.' || c == '~'
+			|| additionalSafeCharacters.find(c) != std::string_view::npos)
+		{
 			// Keep alphanumeric and other accepted characters intact
 			// https://www.rfc-editor.org/rfc/rfc3986#section-2.3
 			escaped << c;
@@ -82,6 +88,11 @@ static inline std::string urlEncode(const std::string& value)
 	return escaped.str();
 }
 
+static inline std::string urlEncodePath(const std::string& value)
+{
+	return urlEncode(value, "/:");
+}
+
 static inline std::string getUserAgent() {
 	std::string uaVersion(GIT_VERSION);
 	return "Flycast/" + uaVersion.substr(1); // skip 'v'
@@ -90,6 +101,7 @@ static inline std::string getUserAgent() {
 static inline std::string urlDecode(const std::string& encoded)
 {
 	std::ostringstream decoded;
+	decoded.imbue(std::locale::classic());
 
 	for (size_t i = 0; i < encoded.length(); i++)
 	{

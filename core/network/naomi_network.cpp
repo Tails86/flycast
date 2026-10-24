@@ -19,10 +19,14 @@
 #include "naomi_network.h"
 #include "hw/naomi/naomi_flashrom.h"
 #include "cfg/option.h"
+#include "stdclass.h"
 #include "oslib/oslib.h"
+#include "oslib/i18n.h"
+using namespace i18n;
 
 #include <chrono>
 #include <thread>
+#include <map>
 
 NaomiNetwork naomiNetwork;
 
@@ -30,14 +34,6 @@ bool NaomiNetwork::init()
 {
 	if (!config::NetworkEnable)
 		return false;
-#ifdef _WIN32
-	WSADATA wsaData;
-	if (WSAStartup(MAKEWORD(2, 0), &wsaData) != 0)
-	{
-		ERROR_LOG(NETWORK, "WSAStartup failed. errno=%d", get_last_error());
-		throw Exception("WSAStartup failed");
-	}
-#endif
 	if (config::EnableUPnP)
 	{
 		miniupnp.Init();
@@ -102,13 +98,20 @@ bool NaomiNetwork::startNetwork()
 			if (networkStopping)
 				return false;
 
-			std::string notif = slaves.empty() ? "Waiting for players..."
-					: std::to_string(slaves.size()) + " player(s) connected. Waiting...";
+			std::string notif;
+			if (slaves.empty()) {
+				notif = T("Waiting for players...");
+			}
+			else {
+				notif = strprintf(translatePlural("%d player connected. Waiting...", "%d players connected. Waiting...", slaves.size()),
+						(int)slaves.size());
+			}
 			os_notify(notif.c_str(), timeout.count() * 2000);
 
 			poll();
 
-			if (slaves.size() == 3 || (_startNow && !slaves.empty()))
+			if ((maxSlots != 0 && slaves.size() == (unsigned)maxSlots - 1)
+					|| (_startNow && !slaves.empty()))
 				break;
 			std::this_thread::sleep_for(milliseconds(20));
 		}
@@ -125,12 +128,12 @@ bool NaomiNetwork::startNetwork()
 
 			nextPeer = slaves[0].addr;
 
-			os_notify("Starting game", 2000);
-			SetNaomiNetworkConfig(0);
+			os_notify(T("Starting game"), 2000);
+			setNaomiNetworkConfig(0, slotCount);
 
 			return true;
 		}
-		os_notify("No player connected", 8000);
+		os_notify(T("No player connected"), 8000);
 	}
 	else
 	{
@@ -164,7 +167,7 @@ bool NaomiNetwork::startNetwork()
 		}
 
 		NOTICE_LOG(NETWORK, "Connecting to server");
-		os_notify("Connecting to server", 10000);
+		os_notify(T("Connecting to server"), 10000);
 		steady_clock::time_point start_time = steady_clock::now();
 
 		while (!networkStopping && !_startNow && steady_clock::now() - start_time < timeout)
@@ -183,7 +186,7 @@ bool NaomiNetwork::startNetwork()
 		}
 		if (!networkStopping && _startNow)
 		{
-			SetNaomiNetworkConfig(slotId);
+			setNaomiNetworkConfig(slotId, slotCount, config::NaomiSatellite && satelliteSupported);
 			return true;
 		}
 	}
@@ -196,7 +199,9 @@ bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 si
 	switch (packet->type)
 	{
 	case SyncReq:
-		if (config::ActAsServer && !_startNow)
+		if (!config::ActAsServer)
+			break;
+		if (!_startNow)
 		{
 			Slave *slave = nullptr;
 			for (auto& s : slaves)
@@ -207,6 +212,13 @@ bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 si
 				}
 			if (slave == nullptr)
 			{
+				if (maxSlots != 0 && slaves.size() >= (unsigned)maxSlots - 1)
+				{
+					INFO_LOG(NETWORK, "Server is full. Sending NAK");
+					Packet reply(NAck);
+					send(addr, &reply, reply.size());
+					break;
+				}
 				slaves.push_back(Slave());
 				slave = &slaves.back();
 				slave->state = 0; // unused
@@ -238,6 +250,12 @@ bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 si
 				send(&slave->addr, &reply, reply.size());
 			}
 		}
+		else
+		{
+			INFO_LOG(NETWORK, "Server has already started. Sending NAK");
+			Packet reply(NAck);
+			send(addr, &reply, reply.size());
+		}
 		break;
 
 	case SyncReply:
@@ -248,7 +266,7 @@ bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 si
 			nextPeer.sin_family = AF_INET;
 			nextPeer.sin_port = packet->sync.nextNodePort;
 			nextPeer.sin_addr.s_addr = packet->sync.nextNodeIp == 0 ? addr->sin_addr.s_addr : packet->sync.nextNodeIp;
-			std::string notif = "Connected as slot " + std::to_string(slotId);
+			std::string notif = strprintf(T("Connected as slot %d"), slotId);
 			os_notify(notif.c_str(), 2000);
 		}
 		break;
@@ -276,7 +294,7 @@ bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 si
 
 	case NAck:
 		WARN_LOG(NETWORK, "NAK received");
-		throw Exception("NAK received");
+		throw Exception("Server has already started");
 		break;
 
 	default:
@@ -291,7 +309,7 @@ bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 si
 // Sets the game network config using MIE eeprom or bbsram:
 // Node -1 disables network
 // Node 0 is master, nodes 1+ are slave
-void SetNaomiNetworkConfig(int node)
+void setNaomiNetworkConfig(int node, int nodeCount, bool satellite)
 {
 	const std::string& gameId = settings.content.gameId;
 	if (gameId == "ALIEN FRONT")
@@ -337,8 +355,21 @@ void SetNaomiNetworkConfig(int node)
 	}
 	else if (gameId == "VIRTUAL-ON ORATORIO TANGRAM")
 	{
-		write_naomi_eeprom(0x45, node == -1 ? 3
-				: node == 0 ? 0 : 1);
+		u8 v;
+		switch (node)
+		{
+		case -1:
+			v = 3; break;
+		case 0:
+			v = 0; break;
+		default:
+			if (satellite)
+				v = 2;
+			else
+				v = 1;
+			break;
+		}
+		write_naomi_eeprom(0x45, v);
 	}
 	else if (gameId == "WAVE RUNNER GP")
 	{
@@ -353,7 +384,34 @@ void SetNaomiNetworkConfig(int node)
 	}
 	else if (gameId == "CLUB KART IN JAPAN" && settings.content.fileName.substr(0, 6) != "clubkp")
 	{
-		write_naomi_eeprom(0x34, node + 1); // also 03 = satellite
+		u8 v;
+		switch (node)
+		{
+		case -1:
+			v = 0; break;
+		case 0:
+			v = 1; break;
+		default:
+			if (satellite)
+				v = 3;
+			else
+				v = 2;
+			break;
+		}
+		write_naomi_eeprom(0x34, v);
+		if (node != -1)
+		{
+			// car #
+			if (settings.content.fileName.substr(0, 7) == "clubkrt") {
+				u8 b = read_naomi_eeprom(0x4a) & 0xf8;
+				write_naomi_eeprom(0x4a, b | node);
+			}
+			else {
+				// clubk2k3
+				u8 b = read_naomi_eeprom(0x3d) & 0xc7;
+				write_naomi_eeprom(0x3d, b | (node << 3));
+			}
+		}
 	}
 	else if (gameId == "INITIAL D"
 			|| gameId == "INITIAL D Ver.2"
@@ -383,27 +441,100 @@ void SetNaomiNetworkConfig(int node)
 	else if (gameId == "SEGA TETRIS") {
 		write_naomi_eeprom(0x50, node + 1);
 	}
+	else if (gameId.substr(0, 6) == " DERBY")
+	{
+		if (read_naomi_eeprom(3) == 'B' && read_naomi_eeprom(4) == 'D' && read_naomi_eeprom(5) == 'Y')
+		{
+			// derbyoc2: DOC 2 v2.1
+			if (node == -1 && config::MultiboardSlaves <= 1 && !settings.naomi.slave)
+				// no link (satellite)
+				write_naomi_eeprom(0x30, read_naomi_eeprom(0x30) | 1);
+			else
+				write_naomi_eeprom(0x30, read_naomi_eeprom(0x30) & 0xfe);
+		}
+		else
+		{
+			// DOC (BAX0)
+			// DOC 2000 (BBX0)
+			// DOC WE (BEF0)
+			if (config::MultiboardSlaves <= 1 && !settings.naomi.slave)
+			{
+				if (node == -1)
+					// no link
+					write_naomi_eeprom(0x45, (read_naomi_eeprom(0x45) & 0xfc) | 3);
+				else
+					// satellite
+					write_naomi_eeprom(0x45, (read_naomi_eeprom(0x45) & 0xfc) | 2);
+			}
+			else {
+				// Can't disable the network on the main screen
+				write_naomi_eeprom(0x45, (read_naomi_eeprom(0x45) & 0xfc));
+			}
+			if (node != -1 && nodeCount < 5)
+				WARN_LOG(NETWORK,"Derby Owners Club doesn't support less than 4 satellites");
+			write_naomi_eeprom(0x4e, (read_naomi_eeprom(0x4e) & 0xf8) | std::max(nodeCount - 2, 3));
+		}
+	}
+	else if (gameId.substr(0, 4) == "WCCF" && node != -1)
+	{
+		// wccf420e:
+		//	offset 34h left proj=0, right proj=1, sat0=a, sat1=b, ...
+		//	offset 36h
+		//		max sat 4: 86 (1 * 4), 46 (2 + 2)
+		//		max sat 6: 84 (4 + 2), 85 (2 * 3)
+		//		max sat 8: 80 (or 00) (2 * 4), 81 (3 + 3 + 2), 82 (3 + 2 + 3), 83 (2 + 3 + 3)
+		//		msb is show numbers on/off
+		write_naomi_eeprom(0x34, node);
+		/* Not really needed
+		if (nodeCount >= 8)
+			nodeCount = 0x80;	// 2 rows * 4 sats
+		else if (nodeCount >= 6)
+			nodeCount = 0x85;	// 2 rows * 3 sats
+		else
+			nodeCount = 0x86;	// 1 row * 4 sats
+		write_naomi_eeprom(0x36, nodeCount);
+		*/
+	}
 }
 
-bool NaomiNetworkSupported()
+// Returns a pair (max nodes, satellite supported)
+std::pair<int, bool> naomiNetworkMaxNodes()
 {
-	static const char * const games[] = {
-		"ALIEN FRONT", "MOBILE SUIT GUNDAM JAPAN", "MOBILE SUIT GUNDAM DELUXE JAPAN", " BIOHAZARD  GUN SURVIVOR2",
-		"HEAVY METAL JAPAN", "OUTTRIGGER     JAPAN", "SLASHOUT JAPAN VERSION", "SPAWN JAPAN",
-		"SPIKERS BATTLE JAPAN VERSION", "VIRTUAL-ON ORATORIO TANGRAM", "WAVE RUNNER GP", "WORLD KICKS",
-		"F355 CHALLENGE JAPAN", "SEGA TETRIS",
+	// gameId -> (max nodes, satellite supported)
+	static std::map<std::string, std::pair<int, bool>> games {
+		{ "ALIEN FRONT", { 4, false } },
+		{ "MOBILE SUIT GUNDAM JAPAN", { 4, false } },
+		{ "MOBILE SUIT GUNDAM DELUXE JAPAN", { 4, false } },
+		{ " BIOHAZARD  GUN SURVIVOR2", { 2, false } },
+		{ "HEAVY METAL JAPAN", { 2, false } },
+		{ "OUTTRIGGER     JAPAN", { 4, false } },
+		{ "SLASHOUT JAPAN VERSION", { 4, false } },
+		{ "SPAWN JAPAN", { 4, false } },
+		{ "SPIKERS BATTLE JAPAN VERSION", { 4, false } },
+		{ "VIRTUAL-ON ORATORIO TANGRAM", { 3, true } },
+		{ "WAVE RUNNER GP", { 4, false } },
+		{ "WORLD KICKS", { 2, false } },
+		{ "F355 CHALLENGE JAPAN", { 8, false } },
+		{ "SEGA TETRIS", { 2, false } },
+		{ " DERBY OWNERS CLUB WE ---------", { 9, false } },
+		{ " DERBY OWNERS CLUB ------------", { 9, false } },
+		{ " DERBY OWNERS CLUB II-----------", { 9, false } },
 		// Naomi 2
-		"CLUB KART IN JAPAN", "INITIAL D", "INITIAL D Ver.2", "INITIAL D Ver.3", "THE KING OF ROUTE66",
-		"SEGA DRIVING SIMULATOR"
+		{ "CLUB KART IN JAPAN", { 8, true } },
+		{ "INITIAL D", { 2, false } },
+		{ "INITIAL D Ver.2", { 2, false } },
+		{ "INITIAL D Ver.3", { 2, false } },
+		{ "THE KING OF ROUTE66", { 2, false } },
+		{ "SEGA DRIVING SIMULATOR", { 3, false } },
 	};
-	if (!config::NetworkEnable)
-		return false;
+	if (!config::NetworkEnable || settings.naomi.slave)
+		return {};
 	if (settings.content.fileName.substr(0, 6) == "clubkp" || settings.content.fileName == "f355")
 		// Club Kart Prize and F355 (vanilla) don't support networking
-		return false;
-	for (auto game : games)
-		if (settings.content.gameId == game)
-			return true;
-
-	return false;
+		return {};
+	auto it = games.find(settings.content.gameId);
+	if (it == games.end())
+		return {};
+	else
+		return it->second;
 }

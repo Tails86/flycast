@@ -4,6 +4,7 @@
 #include "stdclass.h"
 #include "hw/sh4/sh4_sched.h"
 #include "serialize.h"
+#include "oslib/i18n.h"
 
 Disc* chd_parse(const char* file, std::vector<u8> *digest);
 Disc* gdi_parse(const char* file, std::vector<u8> *digest);
@@ -28,28 +29,42 @@ constexpr Disc* (*drivers[])(const char* path, std::vector<u8> *digest)
 
 static u8 q_subchannel[96];
 
-static bool convertSector(u8* in_buff , u8* out_buff , int from , int to,int sector)
+static u8 bin2bcd(u32 v) {
+	return (u8)((v % 10) | ((v / 10) << 4));
+}
+
+static bool convertSector(u8* in_buff, u8* out_buff, int from, int to, int sector)
 {
 	//get subchannel data, if any
-	if (from == 2448)
-	{
+	if (from == 2448) {
 		memcpy(q_subchannel, in_buff + 2352, 96);
 		from -= 96;
 	}
-	else
+	else {
 		memset(q_subchannel, 0, sizeof(q_subchannel));
+	}
 
 	//if no conversion
-	if (to == from)
-	{
+	if (to == from) {
 		memcpy(out_buff, in_buff, to);
 		return true;
 	}
 	switch (to)
 	{
 	case 2340:
-		verify(from == 2352);
-		memcpy(out_buff, &in_buff[12], 2340);
+		verify(from == 2352 || from == 2336);
+		if (from == 2336)
+		{
+			// 2336 formats have no header, synthesize one from the FAD
+			out_buff[0] = bin2bcd(sector / 75 / 60);
+			out_buff[1] = bin2bcd((sector / 75) % 60);
+			out_buff[2] = bin2bcd(sector % 75);
+			out_buff[3] = 2;
+			memcpy(&out_buff[4], in_buff, 2336);
+		}
+		else {
+			memcpy(out_buff, &in_buff[12], 2340);
+		}
 		break;
 	case 2328:
 		verify(from == 2352);
@@ -93,7 +108,7 @@ Disc* OpenDisc(const std::string& path, std::vector<u8> *digest)
 			return disc;
 	}
 
-	throw FlycastException("Unknown disk format");
+	throw FlycastException(i18n::Ts("Unknown disk format"));
 }
 
 namespace gdr {
@@ -235,6 +250,8 @@ void libGDR_GetToc(u32* to, DiskArea area)
 	else if (disc->type == GdRom)
 		last_track = 2;
 
+	if (first_track - 1 >= disc->tracks.size() || last_track - 1 >= disc->tracks.size())
+		return;
 	//Generate the TOC info
 
 	//-1 for 1..99 0 ..98
@@ -295,11 +312,11 @@ u32 Disc::ReadSectors(u32 FAD, u32 count, u8* dst, u32 fmt, bool stopOnMiss, Loa
 			progress->label = "Loading...";
 			progress->progress = (float)i / count;
 		}
+		if (FAD >= LeadOut.StartFAD && stopOnMiss)
+			return i;
 		if (!readSector(FAD, temp, &secfmt, q_subchannel, &subfmt))
 		{
 			WARN_LOG(GDROM, "Sector Read miss FAD: %d", FAD);
-			if (stopOnMiss)
-				return i;
 			memset(temp, 0, sizeof(temp));
 			secfmt = SECFMT_2352;
 		}
@@ -310,6 +327,10 @@ u32 Disc::ReadSectors(u32 FAD, u32 count, u8* dst, u32 fmt, bool stopOnMiss, Loa
 		}
 		else if (fmt == 2048 && secfmt == SECFMT_2336_MODE2) {
 			memcpy(dst, temp + 8, 2048);
+		}
+		else if (fmt == 2340 && secfmt == SECFMT_2336_MODE2) {
+			// Bleemcast
+			convertSector(temp, dst, 2336, fmt, FAD);
 		}
 		else if (fmt == 2048 && (secfmt == SECFMT_2048_MODE1 || secfmt == SECFMT_2048_MODE2_FORM1)) {
 			memcpy(dst, temp, 2048);
@@ -366,7 +387,7 @@ namespace gdr
 void insertDisk(const std::string& path)
 {
 	if (!doDiscSwap(path))
-		throw FlycastException("This media cannot be loaded");
+		throw FlycastException(i18n::Ts("This media cannot be loaded"));
 	settings.content.path = path;
 	// Drive is busy after the lid was closed
 	sns_asc = 4;

@@ -19,6 +19,7 @@
 #pragma once
 #include "types.h"
 #include "hw/pvr/Renderer_if.h"
+#include "hw/pvr/ta_ctx.h"
 #include <d3d11.h>
 #include "dx11context.h"
 #include "rend/transform_matrix.h"
@@ -27,7 +28,6 @@
 #include "dx11_shaders.h"
 #include "dx11_renderstate.h"
 #include "dx11_naomi2.h"
-#include "rend/tileclip.h"
 #ifndef LIBRETRO
 #include "dx11_driver.h"
 #endif
@@ -48,16 +48,24 @@ struct DX11Renderer : public Renderer
 #ifndef LIBRETRO
 		imguiDriver->setFrameRendered();
 #else
-		theDX11Context.present();
+		DX11Context::Instance()->present();
 #endif
 		return true;
 	}
 
 	bool RenderLastFrame() override;
+	void processCustomTexturePreloads() override;
+	bool supportsGpuTexturePreload() const override { return true; }
 	BaseTextureCacheData *GetTexture(TSP tsp, TCW tcw, int area) override;
 	bool GetLastFrame(std::vector<u8>& data, int& width, int& height) override;
 
 protected:
+	void clearTextureCache() override
+	{
+		texCache.Clear();
+		texCache.Cleanup();
+	}
+
 	struct VertexConstants
 	{
 	    float transMatrix[4][4];
@@ -103,7 +111,8 @@ protected:
 	void renderVideoRouting();
 	void resetContextState();
 	void drawOSD();
-	TileClipping setTileClip(u32 val, int clip_rect[4]);
+	TileClipping setTileClip(u32 val, Rect& rect);
+	void makeSecondAccumFB();
 
 	ComPtr<ID3D11Device> device;
 	ComPtr<ID3D11DeviceContext> deviceContext;
@@ -119,10 +128,14 @@ protected:
 	ComPtr<ID3D11RenderTargetView> rttRenderTarget;
 	ComPtr<ID3D11ShaderResourceView> fbTextureView;
 
+	ComPtr<ID3D11Texture2D> fbSecondAccumTex;
+	ComPtr<ID3D11RenderTargetView> fbSecondAccum;
+	ComPtr<ID3D11ShaderResourceView> fbSecondAccumView;
+
 	BlendStates blendStates;
 	DepthStencilStates depthStencilStates;
 	Samplers *samplers;
-	TransformMatrix<COORD_DIRECTX> matrices;
+	TransformMatrix matrices{ true };
 	D3D11_RECT scissorRect{};
 	u32 width = 0;
 	u32 height = 0;
@@ -131,6 +144,8 @@ protected:
 	Naomi2Helper n2Helper;
 	float aspectRatio = 4.f / 3.f;
 	bool dithering = false;
+	rend_context *rendContext;
+	bool renderingToSecAccum = false;
 
 private:
 	void prepareRttRenderTarget(u32 texAddress);

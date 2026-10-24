@@ -64,10 +64,12 @@ IntOption TextureUpscale(CORE_OPTION_NAME "_texupscale", 1);
 IntOption MaxFilteredTextureSize(CORE_OPTION_NAME "_texupscale_max_filtered_texture_size", 256);
 Option<float> ExtraDepthScale("", 1.f);
 Option<bool> CustomTextures(CORE_OPTION_NAME "_custom_textures");
-Option<bool> PreloadCustomTextures(CORE_OPTION_NAME "_preload_custom_textures");
+Option<int> PreloadCustomTextures(CORE_OPTION_NAME "_preload_custom_textures");
 Option<bool> DumpTextures(CORE_OPTION_NAME "_dump_textures");
+Option<bool> DumpUniqueTextures(CORE_OPTION_NAME "_dump_unique_textures");
 Option<bool> DumpReplacedTextures(CORE_OPTION_NAME "_dump_replaced_textures");
 Option<int> ScreenStretching("", 100);
+Option<bool> StretchToFill("");
 Option<bool> Fog(CORE_OPTION_NAME "_fog", true);
 Option<bool> FloatVMUs("");
 Option<bool> Rotate90("");
@@ -97,6 +99,20 @@ Option<bool> NativeDepthInterpolation(CORE_OPTION_NAME "_native_depth_interpolat
 Option<bool> EmulateFramebuffer(CORE_OPTION_NAME "_emulate_framebuffer", false);
 Option<bool> FixUpscaleBleedingEdge(CORE_OPTION_NAME "_fix_upscale_bleeding_edge", true);
 
+CustomTexturePreloadMode customTexturePreloadMode()
+{
+	const auto mode = static_cast<CustomTexturePreloadMode>(PreloadCustomTextures.get());
+	switch (mode)
+	{
+	case CustomTexturePreloadMode::Off:
+	case CustomTexturePreloadMode::SystemMemory:
+	case CustomTexturePreloadMode::VideoMemory:
+		return mode;
+	default:
+		return CustomTexturePreloadMode::Off;
+	}
+}
+
 // Misc
 
 Option<bool> SerialConsole("");
@@ -114,6 +130,7 @@ Option<bool> RamMod32MB(CORE_OPTION_NAME "_dc_32mb_mod", false);
 
 Option<bool> NetworkEnable("", false);
 Option<bool> ActAsServer("", false);
+Option<bool> NaomiSatellite("", false);
 OptionString DNS("", "dns.flyca.st");
 OptionString NetworkServer("", "");
 Option<int> LocalPort("", 0);
@@ -153,5 +170,33 @@ std::array<std::array<Option<MapleDeviceType>, 2>, 4> MapleExpansionDevices {
 	Option<MapleDeviceType>("", MDT_None),
 	Option<MapleDeviceType>("", MDT_None),
 };
+
+std::array<std::array<Option<int>, 2>, 4> NetworkExpansionDevices{{
+	{{Option<int>("", 0),
+	Option<int>("", 0)}},
+
+	{{Option<int>("", 0),
+	Option<int>("", 0)}},
+
+	{{Option<int>("", 0),
+	Option<int>("", 0)}},
+
+	{{Option<int>("", 0),
+	Option<int>("", 0)}},
+}};
+std::array<std::array<Option<bool>, 2>, 4> DreamLinkSelect{{
+	{{Option<bool>("", true),
+	Option<bool>("", true)}},
+
+	{{Option<bool>("", true),
+	Option<bool>("", true)}},
+
+	{{Option<bool>("", true),
+	Option<bool>("", true)}},
+
+	{{Option<bool>("", true),
+	Option<bool>("", true)}},
+}};
+Option<bool> UsePhysicalVmuMemory(CORE_OPTION_NAME "_linked_vmu_storage", false);
 
 } // namespace config

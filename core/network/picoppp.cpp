@@ -79,8 +79,8 @@ struct GamePortList {
 	uint16_t tcpPorts[10];
 };
 static const GamePortList GamesPorts[] = {
-	{ // Alien Front Online
-		{ "MK-51171" },
+	{ // Alien Front Online, Alien Front (naomi)
+		{ "MK-51171", "ALIEN FRONT" },
 		{ 7980 },
 		{ },
 	},
@@ -170,6 +170,8 @@ static const GamePortList GamesPorts[] = {
 
 static bool pico_thread_running = false;
 extern "C" int dont_reject_opt_vj_hack;
+// ppp: wait until the game sends some data before responding. Required for WinCE games.
+static bool passiveMode = true;
 
 static bool start_pico();
 u32 makeDnsQueryPacket(void *buf, const char *host);
@@ -203,20 +205,25 @@ static int modem_write(pico_device *dev, const void *data, int len)
     return len;
 }
 
-static void write_pico(u8 b) {
+static void write_pico(u8 b)
+{
+	if (passiveMode) {
+		in_buffer.clear();
+		passiveMode = false;
+	}
 	out_buffer.push(b);
 }
 
 static int read_pico()
 {
-	if (in_buffer.empty())
+	if (in_buffer.empty() || passiveMode)
 		return -1;
 	else
 		return in_buffer.pop();
 }
 
 static int pico_available() {
-	return in_buffer.size();
+	return passiveMode ? 0 : in_buffer.size();
 }
 
 class DirectPlay
@@ -396,7 +403,10 @@ private:
 		}
 		else {
 			DEBUG_LOG(NETWORK, "TcpSocket[%s] outbound %d bytes", name.c_str(), (int)len);
-			picoCallback(0);
+			// A read notification can cover more data than fits in sendbuf.
+			// Resume draining after the asynchronous write releases that buffer,
+			// even if no new packet (and therefore no new read event) arrives.
+			picoCallback(pico_sock != nullptr && pico.state != Closed ? PICO_SOCK_EV_RD : 0);
 		}
 	}
 
@@ -1225,6 +1235,7 @@ private:
 void PicoThread::run()
 {
 	ThreadName _("PicoTCP");
+	passiveMode = true;
 	// Find the network ports for the current game
 	ports = nullptr;
 	for (u32 i = 0; i < std::size(GamesPorts) && ports == nullptr; i++)

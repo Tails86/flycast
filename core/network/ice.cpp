@@ -16,19 +16,62 @@
     You should have received a copy of the GNU General Public License
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
  */
-#ifdef USE_ICE
 #include "ice.h"
 #include "types.h"
+#include "oslib/http_client.h"
+#include "json.hpp"
+#include <future>
+
+namespace ice
+{
+
+STUNConfig STUNConfig::get()
+{
+	STUNConfig cfg;
+	cfg.stun_host = "lobby.flyca.st";
+	cfg.stun_port = 25001;
+	cfg.turn_host = cfg.stun_host;
+	cfg.turn_port = cfg.stun_port;
+	cfg.turn_username = "flycast";
+	cfg.turn_password = "rules";
+
+	http::init();
+	std::vector<u8> content;
+	std::string ctype;
+	int status = http::get("https://dcnet.flyca.st/stun.json", content, ctype);
+	if (http::success(status))
+	{
+		using namespace nlohmann;
+		try {
+			json v = json::parse((const char *)&content[0], (const char *)&content.back() + 1);
+			cfg.stun_host = v.at("stun_host").get<std::string>();
+			cfg.stun_port = v.at("stun_port").get<u16>();
+			cfg.turn_host = v.at("turn_host").get<std::string>();
+			cfg.turn_port = v.at("turn_port").get<u16>();
+			cfg.turn_username = v.at("turn_username").get<std::string>();
+			cfg.turn_password = v.at("turn_password").get<std::string>();
+		} catch (const json::exception& e) {
+			WARN_LOG(NETWORK, "Corrupted stun.json file: %s", e.what());
+		}
+	}
+	else {
+		WARN_LOG(NETWORK, "Can't download stun.json: error %d", status);
+	}
+	return cfg;
+}
+}
+
+#if defined(USE_ICE) && defined(USE_WEBSOCKET)
 #include "hw/sh4/modules/modules.h"
 #include "util/tsqueue.h"
 #include "oslib/oslib.h"
-#include "oslib/http_client.h"
 #include "emulator.h"
 #include "log/LogManager.h"
 #include "ui/gui.h"
 #include "ui/gui_util.h"
 #include "stdclass.h"
 #include "hw/sh4/sh4_sched.h"
+#include "oslib/i18n.h"
 #include <juice/juice.h>
 #include <cstring>
 #include <memory>
@@ -55,7 +98,11 @@ static void juiceLogHandler(juice_log_level_t jlevel, const char *message)
 		level = LogTypes::LOG_LEVELS::LINFO;
 		break;
 	case JUICE_LOG_LEVEL_WARN:
-		level = LogTypes::LOG_LEVELS::LWARNING;
+		if (strstr(message, "TURN CreatePermission") != nullptr)
+			// error pops up a lot with standard.relay.metered.ca
+			level = LogTypes::LOG_LEVELS::LINFO;
+		else
+			level = LogTypes::LOG_LEVELS::LWARNING;
 		break;
 	case JUICE_LOG_LEVEL_ERROR:
 	case JUICE_LOG_LEVEL_FATAL:
@@ -117,13 +164,16 @@ public:
 				room = "aeroi";
 			// TODO sega tetris, hell gate
 			else
-				throw FlycastException("Game not supported");
+				throw FlycastException(i18n::Ts("Game not supported"));
 			this->username = username;
 		}
 		EventManager::listen(Event::Start, onEmuEvent, this);
 		EventManager::listen(Event::Terminate, onEmuEvent, this);
 		EventManager::listen(Event::LoadState, onEmuEvent, this);
 		createWebSocket(room);
+		futureStunConfig = std::async(std::launch::async, []() {
+			return STUNConfig::get();
+		});
 	}
 
 	State getState() const {
@@ -233,7 +283,7 @@ private:
 		std::error_code ec;
 		WsClient::connection_ptr con = wsclient.get_connection("ws://lobby.flyca.st/" + room, ec);
 		if (ec)
-			throw FlycastException("Connection to lobby failed: " + ec.message());
+			throw FlycastException(i18n::Ts("Connection to lobby failed:") + ' ' + ec.message());
 		hdl = con->get_handle();
 		// Set handlers
 		con->set_open_handler([this](websocketpp::connection_hdl hdl)
@@ -417,9 +467,11 @@ private:
 	{
 		juice_set_log_level(JUICE_LOG_LEVEL_INFO);
 		juice_set_log_handler(juiceLogHandler);
+		if (futureStunConfig.valid())
+			stunConfig = futureStunConfig.get();
 		juice_config_t config {};
-		config.stun_server_host = "lobby.flyca.st";
-		config.stun_server_port = 25001;
+		config.stun_server_host = stunConfig.stun_host.c_str();
+		config.stun_server_port = stunConfig.stun_port;
 		config.cb_state_changed = [](juice_agent_t *agent, juice_state_t state, void *user_ptr) {
 			((IceSession *)user_ptr)->onJuiceStateChanged(state);
 		};
@@ -431,16 +483,16 @@ private:
 		};
 		config.user_ptr = this;
 		juice_turn_server_t turnServer {};
-		turnServer.host = config.stun_server_host;
-		turnServer.port = config.stun_server_port;
-		turnServer.username = "flycast";
-		turnServer.password = "rules";
+		turnServer.host = stunConfig.turn_host.c_str();
+		turnServer.port = stunConfig.turn_port;
+		turnServer.username = stunConfig.turn_username.c_str();
+		turnServer.password = stunConfig.turn_password.c_str();
 		config.turn_servers = &turnServer;
 		config.turn_servers_count = 1;
 
 		agent = juice_create(&config);
 		if (agent == nullptr)
-			throw FlycastException("Connection failed");
+			throw FlycastException(i18n::Ts("Connection failed"));
 		juice_gather_candidates(agent);
 	}
 
@@ -471,13 +523,13 @@ private:
 			{
 				Lock _(mutex);
 				if (strstr(local, "typ host") != nullptr)
-					statusText = "Direct peer to peer";
+					statusText = i18n::Ts("Direct peer to peer");
 				else if (strstr(local, "typ relay") != nullptr)
-					statusText = "Using relay";
+					statusText = i18n::Ts("Using relay");
 				else
 					// typ srflx: server reflexive (NAT)
 					// typ prflx: peer reflexive (NAT)
-					statusText = "NAT";
+					statusText = i18n::Ts("NAT");
 			}
 			this->state = Playing;
 			setPipe();
@@ -486,7 +538,7 @@ private:
 		}
 		else if (state == JUICE_STATE_FAILED && this->state == Playing)
 		{
-			os_notify("Connection lost", 5000);
+			os_notify(i18n::T("Connection lost"), 5000);
 			if (asioThread != nullptr)
 			{
 				if (matchCode)
@@ -504,7 +556,7 @@ private:
 				this->state = Offline;
 			}
 			Lock _(mutex);
-			statusText = "Connection lost";
+			statusText = i18n::Ts("Connection lost");
 		}
 	}
 
@@ -585,6 +637,8 @@ private:
 	void setPipe();
 
 	juice_agent_t *agent = nullptr;
+	STUNConfig stunConfig;
+	std::future<STUNConfig> futureStunConfig;
 	WsClient wsclient;
 	std::unique_ptr<std::thread> asioThread;
 	websocketpp::connection_hdl hdl;
@@ -1178,4 +1232,4 @@ void displayStats()
 }
 
 }	// namespace ice
-#endif // USE_ICE
+#endif // USE_ICE && USE_WEBSOCKET

@@ -1,3 +1,5 @@
+// Portions Copyright 2026 The Hollycast Authors
+
 #if defined(USE_SDL)
 #include "types.h"
 #include "cfg/cfg.h"
@@ -15,10 +17,12 @@
 #include "sdl_keyboard.h"
 #include "sdl_keyboard_mac.h"
 #include "wsi/context.h"
+#include "ui/gui.h"
 #include "emulator.h"
 #include "stdclass.h"
 #include "imgui.h"
 #include "hw/naomi/card_reader.h"
+#include "hw/naomi/multiboard.h"
 #if !defined(_WIN32) && !defined(__APPLE__) && !defined(__SWITCH__)
 #include "linux-dist/icon.h"
 #endif
@@ -29,16 +33,25 @@
 #include "nswitch.h"
 #include "switch_gamepad.h"
 #endif
-#include "dreamlink.h"
+#include "dreamlink/dreamlinkgamepad.h"
+#include "oslib/resources.h"
+#include "oslib/i18n.h"
 #include <unordered_map>
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <cstdio>
+#include <memory>
 
 static SDL_Window* window = NULL;
 static u32 windowFlags;
 
+// Used only when no saved desktop window size exists.
+// These should match DEFAULT_WINDOW_WIDTH and DEFAULT_WINDOW_HEIGHT in core/linux-dist/x11.cpp
 #define WINDOW_WIDTH  640
 #define WINDOW_HEIGHT  480
 
-static std::unordered_map<u64, std::shared_ptr<SDLMouse>> sdl_mice;
+static std::unordered_map<u32, std::shared_ptr<SDLMouse>> sdl_mice;
 static std::shared_ptr<SDLKeyboardDevice> sdl_keyboard;
 static bool window_fullscreen;
 static bool window_maximized;
@@ -82,9 +95,14 @@ static void sdl_open_joystick(int index)
 #elif defined(USE_DREAMLINK_DEVICES)
 		std::shared_ptr<SDLGamepad> gamepad;
 		if (DreamLinkGamepad::isDreamcastController(index))
-			gamepad = std::make_shared<DreamLinkGamepad>(index < MAPLE_PORTS ? index : -1, index, pJoystick);
+		{
+			NOTICE_LOG(INPUT, "Dreamcast controller found!");
+			gamepad = createDreamLinkGamepad(index < MAPLE_PORTS ? index : -1, index, pJoystick);
+		}
 		else
+		{
 			gamepad = std::make_shared<SDLGamepad>(index < MAPLE_PORTS ? index : -1, index, pJoystick);
+		}
 #else
 		std::shared_ptr<SDLGamepad> gamepad = std::make_shared<SDLGamepad>(index < MAPLE_PORTS ? index : -1, index, pJoystick);
 #endif
@@ -104,10 +122,15 @@ static void sdl_close_joystick(SDL_JoystickID instance)
 
 static void setWindowTitleGame()
 {
-	if (settings.naomi.slave)
-		SDL_SetWindowTitle(window, ("Flycast - Multiboard Slave " + cfgLoadStr("naomi", "BoardId", "")).c_str());
-	else
-		SDL_SetWindowTitle(window, ("Flycast - " + settings.content.title).c_str());
+	std::string title = config::loadStr("window", "title");
+	if (title.empty())
+	{
+		if (settings.naomi.slave)
+			title = "Multiboard Slave " + config::loadStr("naomi", "BoardId");
+		else
+			title = settings.content.title;
+	}
+	SDL_SetWindowTitle(window, ("Hollycast - " + title).c_str());
 }
 
 static void captureMouse(bool capture)
@@ -130,7 +153,7 @@ static void captureMouse(bool capture)
 		{
 			if (config::UseRawInput)
 				SDL_ShowCursor(SDL_DISABLE);
-			SDL_SetWindowTitle(window, "Flycast - mouse capture");
+			SDL_SetWindowTitle(window, "Hollycast - mouse capture");
 			mouseCaptured = true;
 		}
 	}
@@ -141,7 +164,7 @@ static void emuEventCallback(Event event, void *)
 	switch (event)
 	{
 	case Event::Terminate:
-		SDL_SetWindowTitle(window, "Flycast");
+		SDL_SetWindowTitle(window, "Hollycast");
 		sdl_stopHaptic(0);
 		break;
 	case Event::Pause:
@@ -204,7 +227,7 @@ void input_sdl_init()
 		// We want joystick events even if we loose focus
 		SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 #ifdef _WIN32
-		if (cfgLoadBool("input", "DisableXInput", false))
+		if (config::loadBool("input", "DisableXInput", false))
 		{
 			// Disable XInput for some old joysticks
 			NOTICE_LOG(INPUT, "Disabling XInput, using DirectInput");
@@ -284,6 +307,11 @@ void input_sdl_quit()
 	EventManager::unlisten(Event::Pause, emuEventCallback);
 	EventManager::unlisten(Event::Resume, emuEventCallback);
 	SDLGamepad::closeAllGamepads();
+	for (auto [id, mouse] : sdl_mice)
+		GamepadDevice::Unregister(mouse);
+	sdl_mice.clear();
+	GamepadDevice::Unregister(sdl_keyboard);
+	sdl_keyboard.reset();
 	SDL_QuitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC);
 }
 
@@ -295,7 +323,7 @@ inline void SDLMouse::setAbsPos(int x, int y)
 		Mouse::setAbsPos(x, y, width, height);
 }
 
-static std::shared_ptr<SDLMouse> getMouse(u64 mouseId)
+static std::shared_ptr<SDLMouse> getMouse(u32 mouseId)
 {
 	auto& mouse = sdl_mice[mouseId];
 	if (mouse == nullptr)
@@ -306,6 +334,35 @@ static std::shared_ptr<SDLMouse> getMouse(u64 mouseId)
 	return mouse;
 }
 
+static u32 openFileEventType()
+{
+	static const u32 eventType = SDL_RegisterEvents(1);
+	return eventType;
+}
+
+// Queue a game to be started from the main loop.
+// A user event is used rather than SDL_DROPFILE because sdl2-compat doesn't carry over
+// the file name of drop events pushed by the application, and crashes when converting them back.
+bool sdl_queue_open_file(const char *path)
+{
+	if (openFileEventType() == (u32)-1)
+		return false;
+	if (SDL_WasInit(SDL_INIT_EVENTS) == 0 && SDL_InitSubSystem(SDL_INIT_EVENTS) != 0)
+		return false;
+
+	SDL_Event event = {};
+	event.type = openFileEventType();
+	event.user.data1 = SDL_strdup(path);
+	if (event.user.data1 == nullptr)
+		return false;
+	if (SDL_PushEvent(&event) != 1)
+	{
+		SDL_free(event.user.data1);
+		return false;
+	}
+	return true;
+}
+
 void input_sdl_handle()
 {
 	SDLGamepad::UpdateRumble();
@@ -313,6 +370,12 @@ void input_sdl_handle()
 	SDL_Event event;
 	while (SDL_PollEvent(&event))
 	{
+		if (event.type == openFileEventType())
+		{
+			gui_start_game((const char *)event.user.data1);
+			SDL_free(event.user.data1);
+			continue;
+		}
 		switch (event.type)
 		{
 			case SDL_QUIT:
@@ -324,6 +387,31 @@ void input_sdl_handle()
 				checkRawInput();
 				if (event.key.repeat == 0)
 				{
+					// Alt-Return and F11 toggle full screen
+					if (event.type == SDL_KEYDOWN
+							&& ((event.key.keysym.sym == SDLK_RETURN && (event.key.keysym.mod & KMOD_ALT))
+								|| (event.key.keysym.sym == SDLK_F11 && (event.key.keysym.mod & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT | KMOD_GUI)) == 0)))
+					{
+						if (window_fullscreen)
+						{
+							SDL_SetWindowFullscreen(window, 0);
+							if (!gameRunning || !mouseCaptured)
+								SDL_ShowCursor(SDL_ENABLE);
+						}
+						else
+						{
+							SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+							if (gameRunning)
+								SDL_ShowCursor(SDL_DISABLE);
+						}
+						window_fullscreen = !window_fullscreen;
+						break;
+					}
+					// Route other keyboard events to master in multiboard mode
+					if (settings.naomi.slave) {
+						Multiboard::keyboardEvent(event.key.keysym.scancode, event.type == SDL_KEYDOWN);
+						break;
+					}
 					auto is_key_mapped = [](u32 code) -> bool {
 						const InputMapping::InputSet inputSet{InputMapping::InputDef::from_button(code)};
 #if defined(_WIN32) && !defined(TARGET_UWP)
@@ -346,27 +434,9 @@ void input_sdl_handle()
 							return (sdl_keyboard->get_input_mapping()->get_button_id(0, inputSet) != EMU_BTN_NONE);
 						}
 					};
+
 					if (event.type == SDL_KEYDOWN)
 					{
-						// Alt-Return and F11 toggle full screen
-						if ((event.key.keysym.sym == SDLK_RETURN && (event.key.keysym.mod & KMOD_ALT))
-								|| (event.key.keysym.sym == SDLK_F11 && (event.key.keysym.mod & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT | KMOD_GUI)) == 0))
-						{
-							if (window_fullscreen)
-							{
-								SDL_SetWindowFullscreen(window, 0);
-								if (!gameRunning || !mouseCaptured)
-									SDL_ShowCursor(SDL_ENABLE);
-							}
-							else
-							{
-								SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-								if (gameRunning)
-									SDL_ShowCursor(SDL_DISABLE);
-							}
-							window_fullscreen = !window_fullscreen;
-							break;
-						}
 						// Left-Alt + Left-CTRL toggles mouse capture
 						if ((event.key.keysym.mod & KMOD_LALT) && (event.key.keysym.mod & KMOD_LCTRL)
 								&& !(is_key_mapped(SDL_SCANCODE_LALT) || is_key_mapped(SDL_SCANCODE_LCTRL)))
@@ -388,23 +458,18 @@ void input_sdl_handle()
 				break;
 
 			case SDL_WINDOWEVENT:
-				if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED
+			{
+				bool displayMetricsEvent = event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED
 						|| event.window.event == SDL_WINDOWEVENT_RESTORED
 						|| event.window.event == SDL_WINDOWEVENT_MINIMIZED
-						|| event.window.event == SDL_WINDOWEVENT_MAXIMIZED)
+						|| event.window.event == SDL_WINDOWEVENT_MAXIMIZED
+						|| event.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED;
+				if (displayMetricsEvent)
 				{
-#ifdef USE_VULKAN
-					if (windowFlags & SDL_WINDOW_VULKAN)
-						SDL_Vulkan_GetDrawableSize(window, &settings.display.width, &settings.display.height);
-					else
-#endif
-#ifdef USE_OPENGL
-					if (windowFlags & SDL_WINDOW_OPENGL)
-						SDL_GL_GetDrawableSize(window, &settings.display.width, &settings.display.height);
-					else
-#endif
-						SDL_GetWindowSize(window, &settings.display.width, &settings.display.height);
+					bool scaleChanged = sdl_update_display_metrics(window, windowFlags);
 					GraphicsContext::Instance()->resize();
+					if (scaleChanged)
+						gui_updateStyle();
 				}
 				else if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
 				{
@@ -417,6 +482,7 @@ void input_sdl_handle()
 						SDL_ShowCursor(SDL_ENABLE);
 				}
 				break;
+			}
 
 			case SDL_JOYBUTTONDOWN:
 			case SDL_JOYBUTTONUP:
@@ -474,7 +540,7 @@ void input_sdl_handle()
 				break;
 
 			case SDL_MOUSEMOTION:
-				gui_set_mouse_position(event.motion.x, event.motion.y);
+				gui_set_mouse_position(event.motion.x, event.motion.y, false);
 				checkRawInput();
 				if (!config::UseRawInput)
 				{
@@ -499,12 +565,12 @@ void input_sdl_handle()
 			case SDL_MOUSEBUTTONUP:
 				{
 					Uint8 button;
-					gui_set_mouse_position(event.button.x, event.button.y);
+					gui_set_mouse_position(event.button.x, event.button.y, false);
 					// Swap middle and right clicks for GUI
 					button = event.button.button;
 					if (button == SDL_BUTTON_MIDDLE || button == SDL_BUTTON_RIGHT)
 						button ^= 1;
-					gui_set_mouse_button(button - 1, event.button.state == SDL_PRESSED);
+					gui_set_mouse_button(button - 1, event.button.state == SDL_PRESSED, false);
 					checkRawInput();
 					if (!config::UseRawInput)
 					{
@@ -552,6 +618,7 @@ void input_sdl_handle()
 
 			case SDL_DROPFILE:
 				gui_start_game(event.drop.file);
+				SDL_free(event.drop.file);
 				break;
 
 			// Switch touchscreen support
@@ -561,7 +628,7 @@ void input_sdl_handle()
 					auto mouse = getMouse(0);
 					int x = event.tfinger.x * settings.display.width;
 					int y = event.tfinger.y * settings.display.height;
-					gui_set_mouse_position(x, y);
+					gui_set_mouse_position(x, y, true);
 					if (mouseCaptured && gameRunning && event.type == SDL_FINGERMOTION)
 					{
 						int dx = event.tfinger.dx * settings.display.width;
@@ -572,7 +639,7 @@ void input_sdl_handle()
 						mouse->setAbsPos(x, y);
 					if (event.type == SDL_FINGERDOWN) {
 						mouse->setButton(Mouse::LEFT_BUTTON, true);
-						gui_set_mouse_button(0, true);
+						gui_set_mouse_button(0, true, true);
 					}
 				}
 				break;
@@ -581,8 +648,8 @@ void input_sdl_handle()
 					auto mouse = getMouse(0);
 					int x = event.tfinger.x * settings.display.width;
 					int y = event.tfinger.y * settings.display.height;
-					gui_set_mouse_position(x, y);
-					gui_set_mouse_button(0, false);
+					gui_set_mouse_position(x, y, true);
+					gui_set_mouse_button(0, false, true);
 					mouse->setAbsPos(x, y);
 					mouse->setButton(Mouse::LEFT_BUTTON, false);
 				}
@@ -591,7 +658,66 @@ void input_sdl_handle()
 	}
 }
 
+void sdlReceiveSlaveKeyboardEvent(u16 scancode, bool pressed)
+{
+	sdl_keyboard->input((SDL_Scancode)scancode, pressed);
+	if (pressed)
+	{
+		u32 flags = SDL_GetWindowFlags(window);
+		if ((flags & SDL_WINDOW_INPUT_FOCUS) == 0)
+		{
+			SDL_SetWindowInputFocus(window);
+			// Doesn't raise the window on linux but shows a popup "Flycast is ready"
+			// Likely to be the same on other platforms for security reasons.
+			SDL_RaiseWindow(window);
+		}
+	}
+}
+
 static float hdpiScaling = 1.f;
+
+bool sdl_update_display_metrics(SDL_Window *window, u32 windowFlags)
+{
+	float oldPointScale = settings.display.pointScale;
+	float oldDpi = settings.display.dpi;
+
+	int windowWidth = 0;
+	int windowHeight = 0;
+	SDL_GetWindowSize(window, &windowWidth, &windowHeight);
+
+#ifdef USE_VULKAN
+	if (windowFlags & SDL_WINDOW_VULKAN)
+		SDL_Vulkan_GetDrawableSize(window, &settings.display.width, &settings.display.height);
+	else
+#endif
+#ifdef USE_OPENGL
+	if (windowFlags & SDL_WINDOW_OPENGL)
+		SDL_GL_GetDrawableSize(window, &settings.display.width, &settings.display.height);
+	else
+#endif
+	{
+		settings.display.width = windowWidth;
+		settings.display.height = windowHeight;
+	}
+
+	if (windowWidth > 0)
+		settings.display.pointScale = (float)settings.display.width / windowWidth;
+
+	int displayIndex = SDL_GetWindowDisplayIndex(window);
+	if (displayIndex >= 0)
+	{
+		float hdpi, vdpi;
+		if (SDL_GetDisplayDPI(displayIndex, nullptr, &hdpi, &vdpi) == 0)
+			settings.display.dpi = roundf(std::max(hdpi, vdpi));
+	}
+	else {
+		WARN_LOG(RENDERER, "Cannot get the window display index: %s", SDL_GetError());
+	}
+
+	sdl_fix_steamdeck_dpi(window);
+
+	return settings.display.pointScale != oldPointScale || settings.display.dpi != oldDpi;
+}
 
 static inline void get_window_state()
 {
@@ -621,6 +747,13 @@ HWND getNativeHwnd()
 }
 #endif
 
+#ifdef _WIN32
+static bool is_point_in_rect(int x, int y, const SDL_Rect& r) {
+    return (x >= r.x && x < (r.x + r.w) &&
+            y >= r.y && y < (r.y + r.h));
+}
+#endif
+
 bool sdl_recreate_window(u32 flags)
 {
 	windowFlags = flags;
@@ -646,6 +779,53 @@ bool sdl_recreate_window(u32 flags)
         }
         SDL_UnloadObject(shcoreDLL);
     }
+#elif defined(__linux__)
+    // Enable HiDPI mode on Linux (GNOME, Wayland, etc.)
+    // First, try to get GNOME scale factor from environment variable or GSettings
+    hdpiScaling = 1.f;
+
+    // Check GDK_SCALE environment variable (used by GTK/GNOME applications)
+    const char* gdkScale = getenv("GDK_SCALE");
+    if (gdkScale != nullptr) {
+        char* endptr;
+        float scale = strtof(gdkScale, &endptr);
+        if (scale > 0 && endptr != gdkScale) {
+            hdpiScaling = scale;
+            NOTICE_LOG(COMMON, "Using GDK_SCALE: %.2f", hdpiScaling);
+        }
+    }
+
+    // If GDK_SCALE not set, try to detect GNOME scale factor
+    if (hdpiScaling == 1.f) {
+        // Try using GSettings to read org.gnome.desktop.interface scale-factor
+        // This requires gsettings or dconf
+        FILE* fp = popen("gsettings get org.gnome.desktop.interface scaling-factor 2>/dev/null", "r");
+        if (fp != nullptr) {
+            char buffer[32];
+            if (fgets(buffer, sizeof(buffer), fp) != nullptr) {
+                // Output format: "uint32 2" for scale factor 2
+                int scale = 0;
+                if (sscanf(buffer, "uint32 %d", &scale) == 1 && scale > 0) {
+                    hdpiScaling = static_cast<float>(scale);
+                    NOTICE_LOG(COMMON, "Using GNOME scale factor: %.2f", hdpiScaling);
+                }
+            }
+            pclose(fp);
+        }
+    }
+
+    // Fallback: use SDL's DPI detection
+    if (hdpiScaling == 1.f) {
+        float dpi;
+        if (SDL_GetDisplayDPI(0, &dpi, nullptr, nullptr) == 0 && dpi > 0) {
+            // Standard DPI is 96, so scale factor is DPI/96
+            hdpiScaling = dpi / 96.f;
+            if (hdpiScaling > 1.2f)  // Only apply if noticeably different
+                NOTICE_LOG(COMMON, "Using SDL detected DPI: %.2f (scale %.2f)", dpi, hdpiScaling);
+            else
+                hdpiScaling = 1.f;  // Don't apply tiny scaling differences
+        }
+    }
 #endif
 
 #ifdef __SWITCH__
@@ -663,39 +843,55 @@ bool sdl_recreate_window(u32 flags)
 		settings.display.uiScale = 1.4f;
 	}
 #else
-	windowPos.x = cfgLoadInt("window", "left", windowPos.x);
-	windowPos.y = cfgLoadInt("window", "top", windowPos.y);
-	windowPos.w = cfgLoadInt("window", "width", windowPos.w);
-	windowPos.h = cfgLoadInt("window", "height", windowPos.h);
-	window_fullscreen = cfgLoadBool("window", "fullscreen", window_fullscreen);
-	window_maximized = cfgLoadBool("window", "maximized", window_maximized);
+	windowPos.x = config::loadInt("window", "left", windowPos.x);
+	windowPos.y = config::loadInt("window", "top", windowPos.y);
+	windowPos.w = config::loadInt("window", "width", windowPos.w);
+	windowPos.h = config::loadInt("window", "height", windowPos.h);
+	window_fullscreen = config::loadBool("window", "fullscreen", window_fullscreen);
+	window_maximized = config::loadBool("window", "maximized", window_maximized);
 	if (window != nullptr)
 		get_window_state();
+#endif
 
-	// Check if the saved window position is on a valid display, preventing Flycast from opening on a screen no longer pluged in
-	bool validPosition = false;
+	// Workaround for Windows only
+	// This is not an issue in Linux or macOS as the window will always snap to visible area in those
+#ifdef _WIN32
+	// Ensure the top 2 corners of the window will be visible (spanning multiple monitors allowed)
+	bool topLeftVisible = false;
+	bool topRightVisible = false;
 	int numDisplays = SDL_GetNumVideoDisplays();
 	if (numDisplays > 0) {
 		for (int i = 0; i < numDisplays; i++) {
 			SDL_Rect bounds;
-			if (SDL_GetDisplayBounds(i, &bounds) == 0) {
-				// Check if the window position is inside this display
-				if (windowPos.x >= bounds.x && windowPos.x < bounds.x + bounds.w &&
-					windowPos.y >= bounds.y && windowPos.y < bounds.y + bounds.h) {
-					validPosition = true;
+			if (SDL_GetDisplayUsableBounds(i, &bounds) == 0) {
+				// windowPos doesn't include title bar
+				// Using y-1 as "top" to ensure at least 1 pixel of the title bar is visible
+				if (is_point_in_rect(windowPos.x, windowPos.y - 1, bounds)) {
+					topLeftVisible = true;
+				}
+
+				if (is_point_in_rect(windowPos.x + windowPos.w - 1, windowPos.y - 1, bounds)) {
+					topRightVisible = true;
+				}
+
+				if (topLeftVisible && topRightVisible) {
+					// Window confirmed visible
 					break;
 				}
 			}
 		}
 
-		// If position is invalid, reset to primary display, avoiding Flycast from opening in a missing window and not being seen when windowed
-		if (!validPosition) {
+		// If position is invalid, reset to defaults
+		if (!topLeftVisible || !topRightVisible) {
 			NOTICE_LOG(COMMON, "Saved window position is not on any connected display, resetting to primary display");
 			windowPos.x = SDL_WINDOWPOS_UNDEFINED;
 			windowPos.y = SDL_WINDOWPOS_UNDEFINED;
+			windowPos.w = WINDOW_WIDTH;
+			windowPos.h = WINDOW_HEIGHT;
 		}
 	}
 #endif
+
 	if (window != nullptr)
 	{
 		SDL_DestroyWindow(window);
@@ -712,7 +908,7 @@ bool sdl_recreate_window(u32 flags)
 	flags |= SDL_WINDOW_FULLSCREEN;
 #endif
 
-	window = SDL_CreateWindow("Flycast", windowPos.x, windowPos.y,
+	window = SDL_CreateWindow("Hollycast", windowPos.x, windowPos.y,
 			windowPos.w * hdpiScaling, windowPos.h * hdpiScaling, flags);
 	if (window == nullptr)
 	{
@@ -736,16 +932,19 @@ bool sdl_recreate_window(u32 flags)
 
 #if !defined(GLES) && !defined(_WIN32) && !defined(__SWITCH__) && !defined(__APPLE__)
 	// Set the window icon
-	u32 pixels[48 * 48];
-	for (int i = 0; i < 48 * 48; i++)
-		pixels[i] = window_icon[i + 2];
-	SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(pixels, 48, 48, 32, 4 * 48, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
-	if (surface == NULL)
-	  INFO_LOG(COMMON, "Creating icon surface failed: %s", SDL_GetError());
-	else
-	{
-		SDL_SetWindowIcon(window, surface);
-		SDL_FreeSurface(surface);
+	size_t size;
+	auto data = resource::load("Hollycast48.bmp", size);
+	if (!data) {
+		ERROR_LOG(COMMON, "Failed to load window icon resource");
+	} else {
+		SDL_Surface *surface = SDL_LoadBMP_RW(SDL_RWFromConstMem(data.get(), size), 1);
+		if (surface == nullptr)
+			INFO_LOG(COMMON, "Creating icon surface failed: %s", SDL_GetError());
+		else
+		{
+			SDL_SetWindowIcon(window, surface);
+			SDL_FreeSurface(surface);
+		}
 	}
 #endif
 
@@ -771,9 +970,16 @@ bool sdl_recreate_window(u32 flags)
 	else
 	{
 		SDL_DisplayMode mode{};
-		if (SDL_GetDesktopDisplayMode(displayIndex, &mode) == 0) {
+		if (SDL_GetDesktopDisplayMode(displayIndex, &mode) == 0)
+		{
 			NOTICE_LOG(RENDERER, "Monitor refresh rate: %d Hz (%d x %d)", mode.refresh_rate, mode.w, mode.h);
-			settings.display.refreshRate = mode.refresh_rate;
+			if (mode.refresh_rate < 60)
+				settings.display.refreshRate = 60.f;
+			else if (mode.refresh_rate % 10 == 9)
+				// Fix Windows reporting 59 Hz or 119 Hz
+				settings.display.refreshRate = mode.refresh_rate + 1;
+			else
+				settings.display.refreshRate = mode.refresh_rate;
 			if (flags & SDL_WINDOW_FULLSCREEN)
 			{
 				settings.display.width = mode.w;
@@ -830,11 +1036,16 @@ void sdl_window_create()
 			die("error initializing SDL Video subsystem");
 		}
 #if defined(__APPLE__) && defined(USE_VULKAN)
-		SDL_Vulkan_LoadLibrary("libvulkan.dylib");
+		SDL_Vulkan_LoadLibrary("@executable_path/../Frameworks/libMoltenVK.dylib");
 #endif
 	}
 	sdlDeInit.initialized = true;
-	initRenderApi();
+	try {
+		initRenderApi();
+	} catch (const FlycastException& e) {
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, i18n::T("Hollycast Error"), e.what(), nullptr);
+		throw;
+	}
 	// ImGui copy & paste
 	ImGui::GetIO().GetClipboardTextFn = getClipboardText;
 	ImGui::GetIO().SetClipboardTextFn = setClipboardText;
@@ -850,12 +1061,12 @@ void sdl_window_destroy()
 	if (!settings.naomi.slave && settings.naomi.drivingSimSlave == 0)
 	{
 		get_window_state();
-		cfgSaveInt("window", "left", windowPos.x);
-		cfgSaveInt("window", "top", windowPos.y);
-		cfgSaveInt("window", "width", windowPos.w);
-		cfgSaveInt("window", "height", windowPos.h);
-		cfgSaveBool("window", "maximized", window_maximized);
-		cfgSaveBool("window", "fullscreen", window_fullscreen);
+		config::saveInt("window", "left", windowPos.x);
+		config::saveInt("window", "top", windowPos.y);
+		config::saveInt("window", "width", windowPos.w);
+		config::saveInt("window", "height", windowPos.h);
+		config::saveBool("window", "maximized", window_maximized);
+		config::saveBool("window", "fullscreen", window_fullscreen);
 	}
 #endif
 	termRenderApi();
@@ -872,10 +1083,13 @@ void sdl_fix_steamdeck_dpi(SDL_Window *window)
 	{
 		int displayIndex = SDL_GetWindowDisplayIndex(window);
 		SDL_DisplayMode mode;
-		SDL_GetDisplayMode(displayIndex, 0, &mode);
+		const char *displayName = nullptr;
+		if (displayIndex < 0 || SDL_GetDisplayMode(displayIndex, 0, &mode) != 0
+				|| (displayName = SDL_GetDisplayName(displayIndex)) == nullptr)
+			return;
 		if (displayIndex == 0
-				&& (strcmp(SDL_GetDisplayName(displayIndex), "ANX7530 U 3\"") == 0
-						|| strcmp(SDL_GetDisplayName(displayIndex), "XWAYLAND0 3\"") == 0)
+				&& (strcmp(displayName, "ANX7530 U 3\"") == 0
+						|| strcmp(displayName, "XWAYLAND0 3\"") == 0)
 				&& mode.w == 1280 && mode.h == 800)
 			settings.display.dpi = 206;
 	}

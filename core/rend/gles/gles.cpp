@@ -8,10 +8,10 @@
 #include "rend/gles/postprocess.h"
 #include "vmu_xhair.h"
 #endif
-#include "rend/transform_matrix.h"
 #include "wsi/gl_context.h"
 #include "emulator.h"
 #include "naomi2.h"
+#include "oslib/i18n.h"
 
 #ifdef TEST_AUTOMATION
 #include "cfg/cfg.h"
@@ -19,6 +19,7 @@
 
 #include <cmath>
 #include <memory>
+#include <string>
 
 #ifdef GLES
 #ifndef GL_RED
@@ -31,6 +32,115 @@
 #define GL_MINOR_VERSION                  0x821C
 #endif
 #endif
+
+namespace
+{
+#if defined(_WIN32)
+using TextureStorage2DProc = void (__stdcall *)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+using CompressedTextureSubImage2DProc = void (__stdcall *)(GLenum, GLint, GLint, GLint,
+		GLsizei, GLsizei, GLenum, GLsizei, const void *);
+#else
+using TextureStorage2DProc = void (*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+using CompressedTextureSubImage2DProc = void (*)(GLenum, GLint, GLint, GLint,
+		GLsizei, GLsizei, GLenum, GLsizei, const void *);
+#endif
+
+#if !defined(TARGET_IPHONE)
+TextureStorage2DProc textureStorage2DProc = nullptr;
+CompressedTextureSubImage2DProc compressedTextureSubImage2DProc = nullptr;
+#endif
+}
+
+bool hasGlExtension(const char *wanted)
+{
+#if !defined(GLES2)
+	if (!gl.is_gles && gl.gl_major >= 3)
+	{
+		GLint count = 0;
+		glGetIntegerv(GL_NUM_EXTENSIONS, &count);
+		for (GLint i = 0; i < count; ++i)
+		{
+			const char *extension = reinterpret_cast<const char *>(glGetStringi(GL_EXTENSIONS, i));
+			if (extension != nullptr && !strcmp(extension, wanted))
+				return true;
+		}
+		return false;
+	}
+#endif
+	const char *extensions = reinterpret_cast<const char *>(glGetString(GL_EXTENSIONS));
+	if (extensions == nullptr)
+		return false;
+	const std::string allExtensions = std::string(" ") + extensions + " ";
+	return allExtensions.find(std::string(" ") + wanted + " ") != std::string::npos;
+}
+
+namespace
+{
+void findTextureStorageSupport()
+{
+	gl.textureStorageSupported = false;
+#if !defined(TARGET_IPHONE)
+	textureStorage2DProc = nullptr;
+	compressedTextureSubImage2DProc = nullptr;
+#endif
+	const bool core = gl.is_gles
+			? gl.gl_major >= 3
+			: gl.gl_major > 4 || (gl.gl_major == 4 && gl.gl_minor >= 2);
+	const bool arb = !gl.is_gles && hasGlExtension("GL_ARB_texture_storage");
+	const bool ext = hasGlExtension("GL_EXT_texture_storage");
+	if (!core && !arb && !ext)
+		return;
+
+#if defined(TARGET_IPHONE)
+	gl.textureStorageSupported = core;
+#else
+#if defined(LIBRETRO)
+	const char *procName = core || arb ? "glTexStorage2D" : "glTexStorage2DEXT";
+	glsm_ctx_proc_address_t procAddress{};
+	if (glsm_ctl(GLSM_CTL_PROC_ADDRESS_GET, &procAddress) && procAddress.addr != nullptr)
+	{
+		textureStorage2DProc = reinterpret_cast<TextureStorage2DProc>(procAddress.addr(procName));
+		compressedTextureSubImage2DProc = reinterpret_cast<CompressedTextureSubImage2DProc>(
+				procAddress.addr("glCompressedTexSubImage2D"));
+	}
+#else
+	if (core || arb)
+		textureStorage2DProc = reinterpret_cast<TextureStorage2DProc>(glTexStorage2D);
+	else
+		textureStorage2DProc = reinterpret_cast<TextureStorage2DProc>(glTexStorage2DEXT);
+	compressedTextureSubImage2DProc = reinterpret_cast<CompressedTextureSubImage2DProc>(
+			glCompressedTexSubImage2D);
+#endif
+	gl.textureStorageSupported = textureStorage2DProc != nullptr
+			&& compressedTextureSubImage2DProc != nullptr;
+#endif
+}
+}
+
+bool allocateImmutableTextureStorage(GLsizei levels, GLenum internalFormat,
+		GLsizei width, GLsizei height)
+{
+	if (!gl.textureStorageSupported)
+		return false;
+#if defined(TARGET_IPHONE)
+	glTexStorage2D(GL_TEXTURE_2D, levels, internalFormat, width, height);
+#else
+	textureStorage2DProc(GL_TEXTURE_2D, levels, internalFormat, width, height);
+#endif
+	return true;
+}
+
+void uploadCompressedTextureSubImage2D(GLint level, GLsizei width, GLsizei height,
+		GLenum format, GLsizei imageSize, const void *data)
+{
+#if defined(TARGET_IPHONE)
+	glCompressedTexSubImage2D(GL_TEXTURE_2D, level, 0, 0, width, height,
+			format, imageSize, data);
+#else
+	compressedTextureSubImage2DProc(GL_TEXTURE_2D, level, 0, 0, width, height,
+			format, imageSize, data);
+#endif
+}
 
 //Fragment and vertex shaders code
 
@@ -149,6 +259,12 @@ uniform lowp vec2 texSize;
 #if DITHERING == 1
 uniform lowp vec4 ditherDivisor;
 #endif
+#if SECACCUM == 1
+uniform sampler2D secAccum;
+#if TARGET_GL == GLES2 || TARGET_GL == GL2
+uniform lowp vec2 secAccumSize;
+#endif
+#endif
 
 /* Vertex input*/
 INTERPOLATION in highp vec4 vtx_base;
@@ -265,6 +381,7 @@ void main()
 			discard;
 	#endif
 	
+#if SECACCUM == 0
 	highp vec4 color = vtx_base;
 	highp vec4 offset = vtx_offs;
 	#if pp_Gouraud == 1 && TARGET_GL != GLES2 && DIV_POS_Z != 1
@@ -347,9 +464,16 @@ void main()
 		if (cp_AlphaTestValue > color.a)
 			discard;
 		color.a = 1.0;
-	#endif 
-
+	#endif
 	//color.rgb = vec3(vtx_uv.z * sp_FOG_DENSITY / 128.0);
+#else
+	// SECACCUM == 1
+	#if TARGET_GL != GLES2 && TARGET_GL != GL2
+		mediump vec2 secAccumSize = vec2(textureSize(secAccum, 0));
+	#endif
+	highp vec4 color = texture(secAccum, gl_FragCoord.xy / secAccumSize);
+#endif
+
 #if TARGET_GL != GLES2
 #if DIV_POS_Z == 1
 	highp float w = 100000.0 / vtx_uv.z;
@@ -402,12 +526,10 @@ gl_ctx gl;
 GLuint fogTextureId;
 GLuint paletteTextureId;
 
-glm::mat4 ViewportMatrix;
-
 #ifdef TEST_AUTOMATION
 void do_swap_automation()
 {
-	static FILE* video_file = fopen(cfgLoadStr("record", "rawvid","").c_str(), "wb");
+	static FILE* video_file = fopen(config::loadStr("record", "rawvid").c_str(), "wb");
 	extern bool do_screenshot;
 
 	GlFramebuffer *framebuffer = gl.ofbo2.ready ? gl.ofbo2.framebuffer.get() : gl.ofbo.framebuffer.get();
@@ -463,7 +585,7 @@ void termGLCommon()
 #ifdef VIDEO_ROUTING
 	os_VideoRoutingTermGL();
 #endif
-	gl.quad.reset();
+	gl.quadDrawer.reset();
 
 	// palette, fog
 	glcache.DeleteTextures(1, &fogTextureId);
@@ -479,6 +601,7 @@ void termGLCommon()
 	gl.ofbo2.framebuffer.reset();
 	gl.fbscaling.framebuffer.reset();
 	gl.videorouting.framebuffer.reset();
+	gl.secondaryBuffer.reset();
 	termVmuLightgun();
 #ifdef LIBRETRO
 	postProcessor.term();
@@ -495,6 +618,11 @@ static void gles_term()
 	termGLCommon();
 
 	gl_delete_shaders();
+	// Restore the gl context to a decent state in case of exception
+	if (gl.ofbo.origFbo != 0)
+		glBindFramebuffer(GL_FRAMEBUFFER, gl.ofbo.origFbo);
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	glActiveTexture(GL_TEXTURE0);
 }
 
 bool testBlitFramebuffer();
@@ -502,9 +630,9 @@ bool testBlitFramebuffer();
 void findGLVersion()
 {
 	gl.index_type = GL_UNSIGNED_INT;
-	gl.gl_major = theGLContext.getMajorVersion();
-	gl.gl_minor = theGLContext.getMinorVersion();
-	gl.is_gles = theGLContext.isGLES();
+	gl.gl_major = GLGraphicsContext::Instance()->getMajorVersion();
+	gl.gl_minor = GLGraphicsContext::Instance()->getMinorVersion();
+	gl.is_gles = GLGraphicsContext::Instance()->isGLES();
 	if (gl.is_gles)
 	{
 		gl.border_clamp_supported = false;
@@ -567,6 +695,7 @@ void findGLVersion()
     	gl.highp_float_supported = true;
     	gl.border_clamp_supported = true;
 	}
+	findTextureStorageSupport();
 	gl.max_anisotropy = 1.f;
 #if !defined(GLES2)
 	if (gl.gl_major >= 3)
@@ -694,7 +823,8 @@ GLuint gl_CompileAndLink(const char *vertexShader, const char *fragmentShader)
 		// Dump the shaders source for troubleshooting
 		INFO_LOG(RENDERER, "// VERTEX SHADER\n%s\n// END", vertexShader);
 		INFO_LOG(RENDERER, "// FRAGMENT SHADER\n%s\n// END", fragmentShader);
-		die("shader compile fail\n");
+		throw RendererException(i18n::T("OpenGL shader compilation failed"));
+		// FIXME MINIDUMP-8A1, MINIDUMP-8A2, MINIDUMP-7YE
 	}
 	glDetachShader(program, vs);
 	glDetachShader(program, ps);
@@ -709,7 +839,7 @@ GLuint gl_CompileAndLink(const char *vertexShader, const char *fragmentShader)
 PipelineShader *GetProgram(bool cp_AlphaTest, bool pp_InsideClipping,
 		bool pp_Texture, bool pp_UseAlpha, bool pp_IgnoreTexA, u32 pp_ShadInstr, bool pp_Offset,
 		u32 pp_FogCtrl, bool pp_Gouraud, bool pp_BumpMap, bool fog_clamping, bool trilinear,
-		int palette, bool naomi2, bool dithering)
+		int palette, bool naomi2, bool dithering, bool secAccum)
 {
 	u32 rv=0;
 
@@ -729,6 +859,7 @@ PipelineShader *GetProgram(bool cp_AlphaTest, bool pp_InsideClipping,
 	rv <<= 1; rv |= naomi2;
 	rv <<= 1, rv |= !settings.platform.isNaomi2() && config::NativeDepthInterpolation;
 	rv <<= 1; rv |= dithering;
+	rv <<= 1; rv |= secAccum;
 
 	PipelineShader *shader = &gl.shaders[rv];
 	if (shader->program == 0)
@@ -749,6 +880,7 @@ PipelineShader *GetProgram(bool cp_AlphaTest, bool pp_InsideClipping,
 		shader->naomi2 = naomi2;
 		shader->divPosZ = !settings.platform.isNaomi2() && config::NativeDepthInterpolation;
 		shader->dithering = dithering;
+		shader->secAccum = secAccum;
 		CompilePipelineShader(shader);
 	}
 
@@ -788,6 +920,7 @@ public:
 		addConstant("pp_Palette", s->palette);
 		addConstant("DIV_POS_Z", s->divPosZ);
 		addConstant("DITHERING", s->dithering);
+		addConstant("SECACCUM", s->secAccum);
 
 		addSource(PixelCompatShader);
 		addSource(GouraudSource);
@@ -859,6 +992,12 @@ bool CompilePipelineShader(PipelineShader* s)
 	s->ditherDivisor = glGetUniformLocation(s->program, "ditherDivisor");
 	s->texSize = glGetUniformLocation(s->program, "texSize");
 
+	// Set secAccum uniform to texture slot 3
+	gu = glGetUniformLocation(s->program, "secAccum");
+	if (gu != -1)
+		glUniform1i(gu, 3);
+	s->secAccumSize = glGetUniformLocation(s->program, "secAccumSize");
+
 	if (s->naomi2)
 		initN2Uniforms(s);
 
@@ -909,7 +1048,11 @@ static void gl_create_resources()
 #ifndef LIBRETRO
 	if (gl.gl_major >= 3)
 		// will be used later. Better fail fast
-		verify(glGenVertexArrays != nullptr);
+		if (glGenVertexArrays == nullptr) {
+			ERROR_LOG(RENDERER, "glGenVertexArrays function is null");
+			throw RendererException("OpenGL initialization failed");
+		}
+
 #endif
 
 	//create vbos
@@ -917,7 +1060,7 @@ static void gl_create_resources()
 	gl.vbo.modvols = std::make_unique<GlBuffer>(GL_ARRAY_BUFFER);
 	gl.vbo.idxs = std::make_unique<GlBuffer>(GL_ELEMENT_ARRAY_BUFFER);
 
-	gl.quad = std::make_unique<GlQuadDrawer>();
+	gl.quadDrawer = std::make_unique<GlQuadDrawer>();
 }
 
 GLuint gl_CompileShader(const char* shader,GLuint type);
@@ -985,6 +1128,7 @@ bool OpenGLRenderer::Init()
 	updateFogTable = true;
 	TextureCacheData::SetDirectXColorOrder(false);
 	TextureCacheData::setUploadToGPUFlavor();
+	custom_texture.setCapabilities(TextureCacheData::getCustomTextureCapabilities());
 
 	return true;
 }
@@ -995,25 +1139,25 @@ static void updateFogTexture(u8 *fog_table, GLenum texture_slot, GLint fog_image
 	if (fogTextureId == 0)
 	{
 		fogTextureId = glcache.GenTexture();
-		glcache.BindTexture(GL_TEXTURE_2D, fogTextureId);
-		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glBindTexture(GL_TEXTURE_2D, fogTextureId);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	}
 	else {
-		glcache.BindTexture(GL_TEXTURE_2D, fogTextureId);
+		glBindTexture(GL_TEXTURE_2D, fogTextureId);
 	}
 
 	u8 temp_tex_buffer[256];
 	MakeFogTexture(temp_tex_buffer);
 
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    GLint internalformat;
-    if (gl.is_gles && fog_image_format == GL_RED)
-    	internalformat = GL_R8;
-    else
-    	internalformat = fog_image_format;
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	GLint internalformat;
+	if (gl.is_gles && fog_image_format == GL_RED)
+		internalformat = GL_R8;
+	else
+		internalformat = fog_image_format;
 	glTexImage2D(GL_TEXTURE_2D, 0, internalformat, 128, 2, 0, fog_image_format, GL_UNSIGNED_BYTE, temp_tex_buffer);
 	glCheck();
 
@@ -1026,14 +1170,14 @@ static void updatePaletteTexture(GLenum texture_slot)
 	if (paletteTextureId == 0)
 	{
 		paletteTextureId = glcache.GenTexture();
-		glcache.BindTexture(GL_TEXTURE_2D, paletteTextureId);
-		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glBindTexture(GL_TEXTURE_2D, paletteTextureId);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	}
 	else {
-		glcache.BindTexture(GL_TEXTURE_2D, paletteTextureId);
+		glBindTexture(GL_TEXTURE_2D, paletteTextureId);
 	}
 
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -1054,8 +1198,8 @@ void OpenGLRenderer::drawOSD()
 void OpenGLRenderer::Process(TA_context* ctx)
 {
 	if (gl.gl_major < 3 && settings.platform.isNaomi2())
-		throw FlycastException("OpenGL ES 3.0+ required for Naomi 2");
-
+		throw RendererException(i18n::T("OpenGL ES 3.0+ required for Naomi 2"));
+	gl.rendContext = &ctx->rend;
 	if (resetTextureCache) {
 		TexCache.Clear();
 		resetTextureCache = false;
@@ -1070,6 +1214,8 @@ void OpenGLRenderer::Process(TA_context* ctx)
 		updatePaletteTexture(getPaletteTextureSlot());
 		updatePalette = false;
 	}
+	if (!ctx->rend.isRTT && ctx->rend.swapInterval > 0)
+		GraphicsContext::Instance()->setSwapInterval(ctx->rend.swapInterval);
 	ta_parse(ctx, gl.prim_restart_fixed_supported || gl.prim_restart_supported);
 }
 
@@ -1079,13 +1225,13 @@ static void upload_vertex_indices()
 	{
 		static std::vector<u16> short_idx;
 		short_idx.clear();
-		short_idx.reserve(pvrrc.idx.size());
-		for (u32 i : pvrrc.idx)
+		short_idx.reserve(gl.rendContext->idx.size());
+		for (u32 i : gl.rendContext->idx)
 			short_idx.push_back(i);
 		gl.vbo.idxs->update(short_idx.data(), short_idx.size() * sizeof(u16));
 	}
 	else
-		gl.vbo.idxs->update(pvrrc.idx.data(), pvrrc.idx.size() * sizeof(decltype(*pvrrc.idx.data())));
+		gl.vbo.idxs->update(gl.rendContext->idx.data(), gl.rendContext->idx.size() * sizeof(decltype(*gl.rendContext->idx.data())));
 	glCheck();
 }
 
@@ -1094,9 +1240,9 @@ bool OpenGLRenderer::renderFrame(int width, int height)
 	if (!config::EmulateFramebuffer)
 		initVideoRoutingFrameBuffer();
 	
-	bool is_rtt = pvrrc.isRTT;
+	bool is_rtt = gl.rendContext->isRTT;
 
-	float vtx_max_fZ = pvrrc.fZ_max;
+	float vtx_max_fZ = gl.rendContext->fZ_max;
 
 	//sanitise the values, now with NaN detection (for omap)
 	//0x49800000 is 1024*1024. Using integer math to avoid issues w/ infs and nans
@@ -1106,11 +1252,8 @@ bool OpenGLRenderer::renderFrame(int width, int height)
 	//add some extra range to avoid clipping border cases
 	vtx_max_fZ *= 1.001f;
 
-	TransformMatrix<COORD_OPENGL> matrices(pvrrc, is_rtt ? pvrrc.getFramebufferWidth() : width,
-			is_rtt ? pvrrc.getFramebufferHeight() : height);
-	ShaderUniforms.ndcMat = matrices.GetNormalMatrix();
-	const glm::mat4& scissor_mat = matrices.GetScissorMatrix();
-	ViewportMatrix = matrices.GetViewportMatrix();
+	gl.matrices.CalcMatrices(gl.rendContext, width, height);
+	ShaderUniforms.ndcMat = gl.matrices.GetNormalMatrix();
 
 	ShaderUniforms.depth_coefs[0] = 2.f / vtx_max_fZ;
 	ShaderUniforms.depth_coefs[1] = -1.f;
@@ -1124,8 +1267,8 @@ bool OpenGLRenderer::renderFrame(int width, int height)
 	//Fog density constant
 	ShaderUniforms.fog_den_float = FOG_DENSITY.get() * config::ExtraDepthScale;
 
-	pvrrc.fog_clamp_min.getRGBAColor(ShaderUniforms.fog_clamp_min);
-	pvrrc.fog_clamp_max.getRGBAColor(ShaderUniforms.fog_clamp_max);
+	gl.rendContext->fog_clamp_min.getRGBAColor(ShaderUniforms.fog_clamp_min);
+	gl.rendContext->fog_clamp_max.getRGBAColor(ShaderUniforms.fog_clamp_max);
 	
 	if (config::ModifierVolumes)
 	{
@@ -1145,10 +1288,10 @@ bool OpenGLRenderer::renderFrame(int width, int height)
 
 	ShaderUniforms.PT_ALPHA=(PT_ALPHA_REF&0xFF)/255.0f;
 
-	if (config::EmulateFramebuffer && pvrrc.fb_W_CTRL.fb_dither && pvrrc.fb_W_CTRL.fb_packmode <= 3)
+	if (config::EmulateFramebuffer && gl.rendContext->fb_W_CTRL.fb_dither && gl.rendContext->fb_W_CTRL.fb_packmode <= 3)
 	{
 		ShaderUniforms.dithering = true;
-		switch (pvrrc.fb_W_CTRL.fb_packmode)
+		switch (gl.rendContext->fb_W_CTRL.fb_packmode)
 		{
 		case 0: // 0555 KRGB 16 bit
 		case 3: // 1555 ARGB 16 bit
@@ -1188,10 +1331,8 @@ bool OpenGLRenderer::renderFrame(int width, int height)
 #endif
 #endif
 	//setup render target first
-	if (is_rtt)
-	{
-		if (BindRTT() == 0)
-			return false;
+	if (is_rtt) {
+		outputFB = BindRTT();
 	}
 	else
 	{
@@ -1199,24 +1340,22 @@ bool OpenGLRenderer::renderFrame(int width, int height)
 		this->height = height;
 		getVideoShift(gl.ofbo.shiftX, gl.ofbo.shiftY);
 #ifdef LIBRETRO
-		if (config::EmulateFramebuffer)
-		{
-			if (init_output_framebuffer(width, height) == 0)
-				return false;
+		if (config::EmulateFramebuffer) {
+			outputFB = init_output_framebuffer(width, height);
 		}
 		else
 		{
-			glBindFramebuffer(GL_FRAMEBUFFER, postProcessor.getFramebuffer(width, height));
+			outputFB = postProcessor.getFramebuffer(width, height);
+			if (outputFB != nullptr)
+				outputFB->bind();
 			glViewport(0, 0, width, height);
 		}
 #else
-		if (init_output_framebuffer(width, height) == 0)
-			return false;
+		outputFB = init_output_framebuffer(width, height);
 #endif
 	}
-
-	bool wide_screen_on = !is_rtt && config::Widescreen && !matrices.IsClipped()
-			&& !config::Rotate90 && !config::EmulateFramebuffer;
+	if (outputFB == nullptr)
+		return false;
 
 	//Color is cleared by the background plane
 
@@ -1232,86 +1371,44 @@ bool OpenGLRenderer::renderFrame(int width, int height)
 	else
 		glcache.ClearColor(0.f, 0.f, 0.f, 0.f);
 
-	if (is_rtt || pvrrc.clearFramebuffer)
+	if (is_rtt || gl.rendContext->clearFramebuffer)
 		glClear(GL_COLOR_BUFFER_BIT);
 	//move vertex to gpu
 	//Main VBO
-	gl.vbo.geometry->update(&pvrrc.verts[0], pvrrc.verts.size() * sizeof(decltype(pvrrc.verts[0])));
+	gl.vbo.geometry->update(&gl.rendContext->verts[0], gl.rendContext->verts.size() * sizeof(decltype(gl.rendContext->verts[0])));
 
 	upload_vertex_indices();
 
 	//Modvol VBO
-	if (!pvrrc.modtrig.empty())
-		gl.vbo.modvols->update(&pvrrc.modtrig[0], pvrrc.modtrig.size() * sizeof(decltype(pvrrc.modtrig[0])));
+	if (!gl.rendContext->modtrig.empty())
+		gl.vbo.modvols->update(&gl.rendContext->modtrig[0], gl.rendContext->modtrig.size() * sizeof(decltype(gl.rendContext->modtrig[0])));
 
-	if (!wide_screen_on)
-	{
-		float fWidth;
-		float fHeight;
-		float min_x;
-		float min_y;
-		if (!is_rtt)
-		{
-			glm::vec4 clip_min(pvrrc.fb_X_CLIP.min, pvrrc.fb_Y_CLIP.min, 0, 1);
-			glm::vec4 clip_dim(pvrrc.fb_X_CLIP.max - pvrrc.fb_X_CLIP.min + 1,
-							   pvrrc.fb_Y_CLIP.max - pvrrc.fb_Y_CLIP.min + 1, 0, 0);
-			clip_min = scissor_mat * clip_min;
-			clip_dim = scissor_mat * clip_dim;
-
-			min_x = clip_min[0];
-			min_y = clip_min[1];
-			fWidth = clip_dim[0];
-			fHeight = clip_dim[1];
-			if (fWidth < 0)
-			{
-				min_x += fWidth;
-				fWidth = -fWidth;
-			}
-			if (fHeight < 0)
-			{
-				min_y += fHeight;
-				fHeight = -fHeight;
-			}
-			if (matrices.GetSidebarWidth() > 0)
-			{
-				float scaled_offs_x = matrices.GetSidebarWidth();
-
-				glcache.Enable(GL_SCISSOR_TEST);
-				glcache.Scissor(0, 0, (GLsizei)lroundf(scaled_offs_x), (GLsizei)height);
-				glClear(GL_COLOR_BUFFER_BIT);
-				glcache.Scissor(width - scaled_offs_x, 0, (GLsizei)lroundf(scaled_offs_x + 1.f), (GLsizei)height);
-				glClear(GL_COLOR_BUFFER_BIT);
-			}
-		}
-		else
-		{
-			min_x = (float)pvrrc.getFramebufferMinX();
-			min_y = (float)pvrrc.getFramebufferMinY();
-			fWidth = (float)pvrrc.getFramebufferWidth() - min_x;
-			fHeight = (float)pvrrc.getFramebufferHeight() - min_y;
-			if (config::RenderResolution > 480 && !config::RenderToTextureBuffer)
-			{
-				float scale = config::RenderResolution / 480.f;
-				min_x *= scale;
-				min_y *= scale;
-				fWidth *= scale;
-				fHeight *= scale;
-			}
-		}
+	Rect scissor = gl.matrices.getBaseScissor();
+	ShaderUniforms.base_clipping.x = scissor.origin.x;
+	ShaderUniforms.base_clipping.y = scissor.origin.y;
+	ShaderUniforms.base_clipping.width = scissor.size.x;
+	ShaderUniforms.base_clipping.height = scissor.size.y;
+	if (is_rtt) {
+		// Render to texture
 		ShaderUniforms.base_clipping.enabled = true;
-		ShaderUniforms.base_clipping.x = (int)lroundf(min_x);
-		ShaderUniforms.base_clipping.y = (int)lroundf(min_y);
-		ShaderUniforms.base_clipping.width = (int)lroundf(fWidth);
-		ShaderUniforms.base_clipping.height = (int)lroundf(fHeight);
-		glcache.Scissor(ShaderUniforms.base_clipping.x, ShaderUniforms.base_clipping.y, ShaderUniforms.base_clipping.width, ShaderUniforms.base_clipping.height);
-		glcache.Enable(GL_SCISSOR_TEST);
 	}
 	else
 	{
-		ShaderUniforms.base_clipping.enabled = false;
+		// Render to screen
+		if (scissor.origin.x != 0 || scissor.origin.y != 0
+				|| scissor.size.x < (int)gl.rendContext->framebufferWidth
+				|| scissor.size.y < (int)gl.rendContext->framebufferHeight)
+			ShaderUniforms.base_clipping.enabled = true;
+		else
+			ShaderUniforms.base_clipping.enabled = false;
+	}
+	if (ShaderUniforms.base_clipping.enabled) {
+		glcache.Scissor(ShaderUniforms.base_clipping.x, ShaderUniforms.base_clipping.y,
+				ShaderUniforms.base_clipping.width, ShaderUniforms.base_clipping.height);
+		glcache.Enable(GL_SCISSOR_TEST);
 	}
 
-	DrawStrips();
+	drawStrips();
 #ifdef LIBRETRO
 	if (!is_rtt && !config::EmulateFramebuffer)
 		postProcessor.render(glsm_get_current_framebuffer());
@@ -1352,14 +1449,27 @@ void OpenGLRenderer::initVideoRoutingFrameBuffer()
 void OpenGLRenderer::Term()
 {
 	TexCache.Clear();
+	clearGpuPreloadedTextures();
 	gles_term();
+}
+
+void OpenGLRenderer::processCustomTexturePreloads()
+{
+	custom_texture.processGpuPreloads([this](u32 hash,
+			const PreparedCustomTexture& texture) {
+		GpuPreloadedTexture::Ptr gpuTexture = TextureCacheData::createGpuPreloadedTexture(texture);
+		if (!gpuTexture)
+			return false;
+		addGpuPreloadedTexture(hash, std::move(gpuTexture));
+		return true;
+	});
 }
 
 bool OpenGLRenderer::Render()
 {
 	saveCurrentFramebuffer();
-	renderFrame(pvrrc.framebufferWidth, pvrrc.framebufferHeight);
-	if (pvrrc.isRTT) {
+	renderFrame(gl.rendContext->framebufferWidth, gl.rendContext->framebufferHeight);
+	if (gl.rendContext->isRTT) {
 		restoreCurrentFramebuffer();
 		return false;
 	}

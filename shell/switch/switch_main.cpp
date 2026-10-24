@@ -1,5 +1,6 @@
 /*
     This file is part of Flycast.
+	Portions Copyright 2026 The Hollycast Authors
 
     Flycast is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,16 +22,27 @@
 #include "emulator.h"
 #include "ui/mainui.h"
 #include "oslib/directory.h"
+#include "oslib/i18n.h"
 #include <vector>
 #include <string>
+
+static void warmUpSwitchExceptions()
+{
+	try {
+		throw 1;
+	} catch (...) {
+	}
+}
 
 int main(int argc, char *argv[])
 {
 	socketInitializeDefault();
 	nxlinkStdio();
 	//appletSetFocusHandlingMode(AppletFocusHandlingMode_NoSuspend);
+	nifmInitialize(NifmServiceType_User);
 
 	LogManager::Init();
+	i18n::init();
 
 	// Set directories
 	flycast::mkdir("/flycast", 0755);
@@ -44,13 +56,22 @@ int main(int argc, char *argv[])
 	add_system_data_dir("./");
 	add_system_data_dir("data/");
 
-	if (flycast_init(argc, argv))
-		die("Flycast initialization failed");
+	warmUpSwitchExceptions();
 
-	mainui_loop();
+	if (flycast_init(argc, argv))
+		die("Hollycast initialization failed");
+
+	try {
+		mainui_loop();
+	} catch (const std::exception& e) {
+		ERROR_LOG(BOOT, "mainui_loop error: %s", e.what());
+	} catch (...) {
+		ERROR_LOG(BOOT, "mainui_loop unknown exception");
+	}
 
 	flycast_term();
 
+	nifmExit();
 	socketExit();
 
 	return 0;
@@ -65,7 +86,7 @@ namespace hostfs
 
 void saveScreenshot(const std::string& name, const std::vector<u8>& data)
 {
-	throw FlycastException("Not supported on Switch");
+	throw FlycastException(i18n::Ts("Not supported on Switch"));
 }
 
 }

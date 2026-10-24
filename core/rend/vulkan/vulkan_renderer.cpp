@@ -26,6 +26,7 @@
 
 bool BaseVulkanRenderer::BaseInit(vk::RenderPass renderPass, int subpass)
 {
+	custom_texture.setCapabilities(Texture::getCustomTextureCapabilities());
 	texCommandPool.Init();
 	fbCommandPool.Init();
 	quadPipeline = std::make_unique<QuadPipeline>(false, false);
@@ -46,6 +47,7 @@ void BaseVulkanRenderer::Term()
 	framebufferDrawer.reset();
 	quadPipeline.reset();
 	textureCache.Clear();
+	clearGpuPreloadedTextures();
 	fogTexture = nullptr;
 	paletteTexture = nullptr;
 	texCommandPool.Term();
@@ -53,6 +55,38 @@ void BaseVulkanRenderer::Term()
 	framebufferTextures.clear();
 	framebufferTexIndex = 0;
 	shaderManager.term();
+}
+
+void BaseVulkanRenderer::processCustomTexturePreloads()
+{
+	custom_texture.processGpuPreloads([this](u32 hash,
+			const PreparedCustomTexture& texture) {
+		GpuPreloadedTexture::Ptr gpuTexture;
+		try
+		{
+			texCommandPool.BeginFrame();
+			vk::CommandBuffer commandBuffer = texCommandPool.Allocate();
+			commandBuffer.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+			gpuTexture = Texture::createGpuPreloadedTexture(texture, commandBuffer);
+			commandBuffer.end();
+			texCommandPool.EndFrameAndWait();
+		}
+		catch (const vk::SystemError& exception)
+		{
+			texCommandPool.abortFrame();
+			throw FlycastException(exception.what());
+		}
+		catch (...)
+		{
+			texCommandPool.abortFrame();
+			throw;
+		}
+		if (!gpuTexture)
+			return false;
+		Texture::releaseGpuPreloadStaging(gpuTexture);
+		addGpuPreloadedTexture(hash, std::move(gpuTexture));
+		return true;
+	});
 }
 
 BaseTextureCacheData *BaseVulkanRenderer::GetTexture(TSP tsp, TCW tcw, int area)
@@ -65,7 +99,7 @@ BaseTextureCacheData *BaseVulkanRenderer::GetTexture(TSP tsp, TCW tcw, int area)
 		// This kills performance when a frame is skipped and lots of texture updated each frame
 		//if (textureCache.IsInFlight(tf, true))
 		//	textureCache.DestroyLater(tf);
-		tf->SetCommandBuffer(texCommandBuffer);
+		tf->SetCommandBuffer(texCommandBuffer, &texCommandPool);
 		if (!tf->Update())
 		{
 			tf->SetCommandBuffer(nullptr);
@@ -74,11 +108,10 @@ BaseTextureCacheData *BaseVulkanRenderer::GetTexture(TSP tsp, TCW tcw, int area)
 	}
 	else if (tf->IsCustomTextureAvailable())
 	{
-		tf->deferDeleteResource(&texCommandPool);
-		tf->SetCommandBuffer(texCommandBuffer);
+		tf->SetCommandBuffer(texCommandBuffer, &texCommandPool);
 		tf->CheckCustomTexture();
 	}
-	tf->SetCommandBuffer(nullptr);
+	tf->SetCommandBuffer(nullptr, nullptr);
 	textureCache.SetInFlight(tf);
 
 	return tf;
@@ -86,6 +119,7 @@ BaseTextureCacheData *BaseVulkanRenderer::GetTexture(TSP tsp, TCW tcw, int area)
 
 void BaseVulkanRenderer::Process(TA_context* ctx)
 {
+	rendContext = &ctx->rend;
 	if (!ctx->rend.isRTT) {
 		framebufferRendered = false;
 		if (!config::EmulateFramebuffer)
@@ -103,6 +137,9 @@ void BaseVulkanRenderer::Process(TA_context* ctx)
 	texCommandBuffer = texCommandPool.Allocate();
 	texCommandBuffer.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
 
+	if (!ctx->rend.isRTT && ctx->rend.swapInterval > 0)
+		GetContext()->setSwapInterval(ctx->rend.swapInterval);
+
 	ta_parse(ctx, true);
 
 	// TODO can't update fog or palette twice in multi render
@@ -119,6 +156,7 @@ void BaseVulkanRenderer::ReInitOSD()
 
 void BaseVulkanRenderer::RenderFramebuffer(const FramebufferInfo& info)
 {
+	rendContext = nullptr;
 	framebufferTexIndex = (framebufferTexIndex + 1) % GetContext()->GetSwapChainSize();
 
 	if (framebufferTextures.size() != GetContext()->GetSwapChainSize())
@@ -229,6 +267,7 @@ bool BaseVulkanRenderer::presentFramebuffer()
 		return false;
 	GetContext()->PresentFrame(fbTexture->GetImage(), fbTexture->GetImageView(), fbTexture->getSize(),
 			getDCFramebufferAspectRatio());
+	framebufferRendered = false;
 	return true;
 }
 
@@ -238,68 +277,86 @@ public:
 	bool Init() override
 	{
 		NOTICE_LOG(RENDERER, "VulkanRenderer::Init");
+		try {
+			textureDrawer.Init(&samplerManager, &shaderManager, &textureCache);
+			textureDrawer.SetCommandPool(&texCommandPool);
 
-		textureDrawer.Init(&samplerManager, &shaderManager, &textureCache);
-		textureDrawer.SetCommandPool(&texCommandPool);
+			screenDrawer.Init(&samplerManager, &shaderManager, viewport);
+			screenDrawer.SetCommandPool(&texCommandPool);
+			BaseInit(screenDrawer.GetRenderPass());
+			emulateFramebuffer = config::EmulateFramebuffer;
 
-		screenDrawer.Init(&samplerManager, &shaderManager, viewport);
-		screenDrawer.SetCommandPool(&texCommandPool);
-		BaseInit(screenDrawer.GetRenderPass());
-		emulateFramebuffer = config::EmulateFramebuffer;
-
-		return true;
+			return true;
+		} catch (const vk::SystemError& e) {
+			ERROR_LOG(RENDERER, "Vulkan system error %s", e.what());
+			return false;
+		}
 	}
 
 	void Term() override
 	{
-		DEBUG_LOG(RENDERER, "VulkanRenderer::Term");
-		GetContext()->WaitIdle();
-		texCommandPool.Term(); // make sure all in-flight buffers are returned
-		screenDrawer.Term();
-		textureDrawer.Term();
-		samplerManager.term();
-		BaseVulkanRenderer::Term();
+		try {
+			DEBUG_LOG(RENDERER, "VulkanRenderer::Term");
+			GetContext()->WaitIdle();
+			texCommandPool.Term(); // make sure all in-flight buffers are returned
+			screenDrawer.Term();
+			textureDrawer.Term();
+			samplerManager.term();
+			BaseVulkanRenderer::Term();
+		} catch (const vk::SystemError& e) {
+			ERROR_LOG(RENDERER, "Vulkan system error %s", e.what());
+		}
 	}
 
 	void Process(TA_context* ctx) override
 	{
-		if (emulateFramebuffer != config::EmulateFramebuffer)
-		{
-			screenDrawer.EndRenderPass();
-			VulkanContext::Instance()->WaitIdle();
-			screenDrawer.Term();
-			screenDrawer.Init(&samplerManager, &shaderManager, viewport);
-			BaseInit(screenDrawer.GetRenderPass());
-			emulateFramebuffer = config::EmulateFramebuffer;
+		try {
+			if (emulateFramebuffer != config::EmulateFramebuffer)
+			{
+				screenDrawer.EndRenderPass();
+				VulkanContext::Instance()->WaitIdle();
+				screenDrawer.Term();
+				screenDrawer.Init(&samplerManager, &shaderManager, viewport);
+				BaseInit(screenDrawer.GetRenderPass());
+				emulateFramebuffer = config::EmulateFramebuffer;
+			}
+			else if (ctx->rend.isRTT || resetTextureCache) {
+				screenDrawer.EndRenderPass();
+			}
+			BaseVulkanRenderer::Process(ctx);
+		} catch (const vk::OutOfDeviceMemoryError& e) {
+			ERROR_LOG(RENDERER, "Vulkan out of device memory: %s", e.what());
+			throw RendererException("Out of device memory");
+		} catch (const vk::SystemError& e) {
+			ERROR_LOG(RENDERER, "Vulkan system error %s", e.what());
+			throw RendererException("Vulkan system error");
 		}
-		else if (ctx->rend.isRTT) {
-			screenDrawer.EndRenderPass();
-		}
-		BaseVulkanRenderer::Process(ctx);
 	}
 
 	bool Render() override
 	{
 		try {
 			Drawer *drawer;
-			if (pvrrc.isRTT)
+			if (rendContext->isRTT)
 				drawer = &textureDrawer;
 			else {
-				resize(pvrrc.framebufferWidth, pvrrc.framebufferHeight);
+				resize(rendContext->framebufferWidth, rendContext->framebufferHeight);
 				drawer = &screenDrawer;
 			}
-
+			drawer->setRendContext(rendContext);
 			drawer->Draw(fogTexture.get(), paletteTexture.get());
-			if (config::EmulateFramebuffer || pvrrc.isRTT)
+			if (config::EmulateFramebuffer || rendContext->isRTT)
 				// delay ending the render pass in case of multi render
 				drawer->EndRenderPass();
 
-			return !pvrrc.isRTT;
+			return !rendContext->isRTT;
+		} catch (const vk::OutOfDeviceMemoryError& e) {
+			ERROR_LOG(RENDERER, "Vulkan out of device memory: %s", e.what());
+			throw RendererException("Out of device memory");
 		} catch (const vk::SystemError& e) {
 			// Sometimes happens when resizing the window
-			WARN_LOG(RENDERER, "Vulkan system error %s", e.what());
-
-			return false;
+			ERROR_LOG(RENDERER, "Vulkan system error %s", e.what());
+			throw RendererException("Vulkan system error");
 		}
 	}
 
@@ -307,10 +364,15 @@ public:
 	{
 		if (clearLastFrame)
 			return false;
-		if (config::EmulateFramebuffer || framebufferRendered)
-			return presentFramebuffer();
-		else
-			return screenDrawer.PresentFrame();
+		try {
+			if (config::EmulateFramebuffer || framebufferRendered)
+				return presentFramebuffer();
+			else
+				return screenDrawer.PresentFrame();
+		} catch (const vk::SystemError& e) {
+			ERROR_LOG(RENDERER, "Vulkan system error %s", e.what());
+			throw RendererException("Vulkan system error");
+		}
 	}
 
 protected:
@@ -321,6 +383,12 @@ protected:
 		BaseVulkanRenderer::resize(w, h);
 		GetContext()->WaitIdle();
 		screenDrawer.Init(&samplerManager, &shaderManager, viewport);
+	}
+
+
+	void clearTextureCache() override {
+		screenDrawer.EndRenderPass();
+		BaseVulkanRenderer::clearTextureCache();
 	}
 
 private:

@@ -2,6 +2,7 @@
 	Created on: Apr 20, 2020
 
 	Copyright 2020 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of flycast.
 
@@ -20,6 +21,7 @@
  */
 #pragma once
 #include "types.h"
+#include "stdclass.h"
 
 #include <atomic>
 #include <future>
@@ -27,7 +29,8 @@
 #include <mutex>
 #include <utility>
 #include <vector>
-#include <time.h>
+#include <chrono>
+#include <ctime>
 
 void loadGameSpecificSettings();
 void SaveSettings();
@@ -39,6 +42,8 @@ void dc_savestate(int index = 0, const u8 *pngData = nullptr, u32 pngSize = 0);
 void dc_loadstate(int index = 0);
 time_t dc_getStateCreationDate(int index);
 void dc_getStateScreenshot(int index, std::vector<u8>& pngData);
+bool dc_savestateAllowed();
+inline constexpr int NUM_SAVE_SLOTS = 10;
 
 enum class Event {
 	Start,
@@ -49,7 +54,8 @@ enum class Event {
 	VBlank,
 	Network,
 	DiskChange,
-	max = DiskChange
+	LocaleChange,
+	max = LocaleChange
 };
 
 class EventManager
@@ -66,7 +72,11 @@ public:
 	}
 
 	static void event(Event event) {
-		instance().broadcastEvent(event);
+		instance().handleEvent(event);
+	}
+
+	static bool isGameRunning() {
+		return instance().running;
 	}
 
 private:
@@ -78,8 +88,10 @@ private:
 
 	void registerEvent(Event event, Callback callback, void *param);
 	void unregisterEvent(Event event, Callback callback, void *param);
+	void handleEvent(Event event);
 	void broadcastEvent(Event event);
 
+	std::atomic<bool> running = false;
 	std::array<std::vector<std::pair<Callback, void *>>, static_cast<size_t>(Event::max) + 1> callbacks;
 };
 
@@ -185,6 +197,41 @@ public:
 
 	Sh4Executor *getSh4Executor();
 
+	void run(std::function<void()> func) {
+		runner.runOnThread(func);
+	}
+
+	/**
+	 * Run a function after the given duration of time has passed
+	 * @param[in] sh4Duration Time duration as sh4 clock ticks
+	 * @param[in] func The function to execute after the given duration has passed
+	 */
+	void runIn(u64 sh4Duration, const std::function<void()>& func);
+
+	/**
+	 * Run a function after a specified duration.
+	 * @tparam Rep The representation type (int, double, etc.)
+	 * @tparam Period The ratio representing the tick period (seconds, milli, etc.)
+	 * @param[in] duration The duration to wait before execution
+	 * @param[in] func The function to execute after the given duration has passed
+	 */
+	template <typename Rep, typename Period>
+	void runIn(std::chrono::duration<Rep, Period> duration, const std::function<void()>& func)
+	{
+		using Sh4Duration = std::chrono::duration<u64, std::ratio<1, SH4_MAIN_CLOCK>>;
+
+		u64 ticks = std::chrono::duration_cast<Sh4Duration>(duration).count();
+
+		runIn(ticks, func);
+	}
+
+	/**
+	 * Run a function at the given time point
+	 * @param[in] sh4TimePoint Time point as sh4 clock
+	 * @param[in] func The function to execute at the given time point
+	 */
+	void runAt(u64 sh4TimePoint, const std::function<void()>& func);
+
 	void dc_reset(bool hard); // for tests only
 
 private:
@@ -205,13 +252,13 @@ private:
 	bool resetRequested = false;
 	bool singleStep = false;
 	u64 startTime = 0;
-	bool renderTimeout = false;
 	u32 stepRangeFrom = 0;
 	u32 stepRangeTo = 0;
 	bool stopRequested = false;
 	std::mutex mutex;
 	Sh4Executor *interpreter = nullptr;
 	Sh4Executor *recompiler = nullptr;
+	ScheduledThreadRunner<u64> runner;
 };
 extern Emulator emu;
 

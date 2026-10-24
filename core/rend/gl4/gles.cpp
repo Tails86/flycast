@@ -33,7 +33,7 @@
 //Fragment and vertex shaders code
 
 const char* ShaderHeader = R"(
-layout(r32ui, binding = 4) uniform coherent restrict highp uimage2D abufferPointerImg;
+layout(r32ui, binding = 0) uniform coherent restrict highp uimage2D abufferPointerImg;
 
 layout(binding = 0, offset = 0) uniform atomic_uint buffer_index;
 )"
@@ -166,6 +166,9 @@ uniform bool ignore_tex_alpha[2];
 uniform int shading_instr[2];
 uniform int fog_control[2];
 #endif
+#if SECACCUM == 1
+uniform sampler2D secAccum;
+#endif
 
 // Input
 INTERPOLATION in vec4 vtx_base;
@@ -286,6 +289,7 @@ void main()
 			discard;
 	#endif
 	
+#if SECACCUM == 0
 	vec4 color = vtx_base;
 	vec4 offset = vtx_offs;
 	bool area1 = false;
@@ -422,7 +426,11 @@ void main()
 	#endif
 
 	//color.rgb=vec3(gl_FragCoord.w * sp_FOG_DENSITY / 128.0);
-	
+#else
+	// SECACCUM == 1
+	vec4 color = texture(secAccum, gl_FragCoord.xy / vec2(textureSize(secAccum, 0)));
+#endif
+
 	#if PASS == PASS_COLOR 
 		FragColor = color;
 	#elif PASS == PASS_OIT
@@ -472,7 +480,7 @@ public:
 class Fragment4ShaderSource : public OpenGl4Source
 {
 public:
-	Fragment4ShaderSource(const gl4PipelineShader* s) : OpenGl4Source()
+	Fragment4ShaderSource(const gl4PipelineShader* s) : OpenGl4Source(s->pass == Pass::OIT)
 	{
 		addConstant("cp_AlphaTest", s->cp_AlphaTest);
 		addConstant("pp_ClipInside", s->pp_InsideClipping);
@@ -490,6 +498,7 @@ public:
 		addConstant("NOUVEAU", gl.mesa_nouveau);
 		addConstant("PASS", (int)s->pass);
 		addConstant("DIV_POS_Z", s->divPosZ);
+		addConstant("SECACCUM", s->secAccum);
 
 		addSource(ShaderHeader);
 		addSource(gl4PixelPipelineShader);
@@ -584,6 +593,10 @@ bool gl4CompilePipelineShader(gl4PipelineShader* s, const char *fragment_source 
 	s->palette_index = glGetUniformLocation(s->program, "palette_index");
 	s->ditherDivisor = glGetUniformLocation(s->program, "ditherDivisor");
 
+	gu = glGetUniformLocation(s->program, "secAccum");
+	if (gu != -1)
+		glUniform1i(gu, 7);		// GL_TEXTURE7
+
 	if (s->naomi2)
 		initN2Uniforms(s);
 
@@ -619,6 +632,12 @@ static void gl4_term()
 		vao.term();
 	for (auto& vao : gl4.vbo.modvol_vao)
 		vao.term();
+	// Restore the gl context to a decent state in case of exception
+	if (gl.ofbo.origFbo != 0)
+		glBindFramebuffer(GL_FRAMEBUFFER, gl.ofbo.origFbo);
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	glActiveTexture(GL_TEXTURE0);
+	glBindSampler(0, 0);
 }
 
 static void create_modvol_shader()
@@ -663,63 +682,44 @@ static void gl_create_resources()
 	}
 	GlVertexArray::unbind();
 
-	gl.quad = std::make_unique<GlQuadDrawer>();
+	gl.quadDrawer = std::make_unique<GlQuadDrawer>();
 	glCheck();
 }
 
-struct OpenGL4Renderer : OpenGLRenderer
+void OpenGL4Renderer::Term()
 {
-	bool Init() override;
+	termABuffer();
+	framebuffers[0].reset();
+	framebuffers[1].reset();
+	glDeleteSamplers(2, texSamplers);
+	texSamplers[0] = texSamplers[1] = 0;
 
-	void Term() override
-	{
-		termABuffer();
-		glcache.DeleteTextures(1, &stencilTexId);
-		stencilTexId = 0;
-		glcache.DeleteTextures(1, &depthTexId);
-		depthTexId = 0;
-		glcache.DeleteTextures(2, opaqueTexId);
-		opaqueTexId[0] = opaqueTexId[1] = 0;
-		glDeleteFramebuffers(2, geom_fbo);
-		geom_fbo[0] = geom_fbo[1] = 0;
-		glDeleteSamplers(2, texSamplers);
-		texSamplers[0] = texSamplers[1] = 0;
+	TexCache.Clear();
+	clearGpuPreloadedTextures();
+	termGLCommon();
+	gl4_term();
+}
 
-		TexCache.Clear();
-		termGLCommon();
-		gl4_term();
-	}
-
-	bool Render() override
-	{
-		saveCurrentFramebuffer();
-		renderFrame(pvrrc.framebufferWidth, pvrrc.framebufferHeight);
-		if (pvrrc.isRTT) {
-			restoreCurrentFramebuffer();
-			return false;
-		}
-
-		if (!config::EmulateFramebuffer)
-		{
-			frameRendered = true;
-			clearLastFrame = false;
-			drawOSD();
-			renderVideoRouting();
-		}
+bool OpenGL4Renderer::Render()
+{
+	saveCurrentFramebuffer();
+	renderFrame(gl.rendContext->framebufferWidth, gl.rendContext->framebufferHeight);
+	if (gl.rendContext->isRTT) {
 		restoreCurrentFramebuffer();
-
-		return true;
+		return false;
 	}
 
-	GLenum getFogTextureSlot() const override {
-		return GL_TEXTURE5;
+	if (!config::EmulateFramebuffer)
+	{
+		frameRendered = true;
+		clearLastFrame = false;
+		drawOSD();
+		renderVideoRouting();
 	}
-	GLenum getPaletteTextureSlot() const override {
-		return GL_TEXTURE6;
-	}
+	restoreCurrentFramebuffer();
 
-	bool renderFrame(int width, int height);
-};
+	return true;
+}
 
 //setup
 void gl_DebugOutput(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length,
@@ -728,10 +728,9 @@ void gl_DebugOutput(GLenum source, GLenum type, GLuint id, GLenum severity, GLsi
 bool OpenGL4Renderer::Init()
 {
 	findGLVersion();
-	if ((!gl.is_gles && (gl.gl_major < 4 || (gl.gl_major == 4 && gl.gl_minor < 3)))
-			|| (gl.is_gles && (gl.gl_major < 3 || (gl.gl_major == 3 && gl.gl_minor < 2))))
+	if (!GLGraphicsContext::Instance()->hasPerPixel())
 	{
-		WARN_LOG(RENDERER, "Warning: OpenGL version doesn't support per-pixel sorting.");
+		WARN_LOG(RENDERER, "OpenGL context doesn't support the resources required for per-pixel sorting.");
 		return false;
 	}
 	INFO_LOG(RENDERER, "Per-pixel sorting enabled");
@@ -757,69 +756,42 @@ bool OpenGL4Renderer::Init()
 	updateFogTable = true;
 	TextureCacheData::SetDirectXColorOrder(false);
 	TextureCacheData::setUploadToGPUFlavor();
+	custom_texture.setCapabilities(TextureCacheData::getCustomTextureCapabilities());
 
 	return true;
 }
 
 static void resize(int w, int h)
 {
-	if (w > max_image_width || h > max_image_height || stencilTexId == 0)
+	if (w > max_image_width || h > max_image_height || framebuffers[0] == nullptr)
 	{
 		if (w > max_image_width)
 			max_image_width = w;
 		if (h > max_image_height)
 			max_image_height = h;
 
-		if (stencilTexId != 0)
-		{
-			glcache.DeleteTextures(1, &stencilTexId);
-			stencilTexId = 0;
-		}
-		if (depthTexId != 0)
-		{
-			glcache.DeleteTextures(1, &depthTexId);
-			depthTexId = 0;
-		}
-		if (opaqueTexId[0] != 0)
-		{
-			glcache.DeleteTextures(2, opaqueTexId);
-			opaqueTexId[0] = 0;
-		}
+		framebuffers[0].reset();
+		framebuffers[1].reset();
 		gl4CreateTextures(max_image_width, max_image_height);
 		reshapeABuffer(max_image_width, max_image_height);
 	}
 }
 
-bool OpenGL4Renderer::renderFrame(int width, int height)
+bool OpenGL4Renderer::renderFrame(int rendering_width, int rendering_height)
 {
 	if (!config::EmulateFramebuffer)
 		initVideoRoutingFrameBuffer();
 	
-	const bool is_rtt = pvrrc.isRTT;
+	const bool is_rtt = gl.rendContext->isRTT;
 
-	TransformMatrix<COORD_OPENGL> matrices(pvrrc, is_rtt ? pvrrc.getFramebufferWidth() : width,
-			is_rtt ? pvrrc.getFramebufferHeight() : height);
-	gl4ShaderUniforms.ndcMat = matrices.GetNormalMatrix();
-	const glm::mat4& scissor_mat = matrices.GetScissorMatrix();
-	ViewportMatrix = matrices.GetViewportMatrix();
+	gl.matrices.CalcMatrices(gl.rendContext, rendering_width, rendering_height);
+	gl4ShaderUniforms.ndcMat = gl.matrices.GetNormalMatrix();
 	
 	/*
 		Handle Dc to screen scaling
 	*/
-	int rendering_width;
-	int rendering_height;
-	if (is_rtt)
-	{
-		float scaling = config::RenderToTextureBuffer ? 1.f : config::RenderResolution / 480.f;
-		rendering_width = pvrrc.getFramebufferWidth() * scaling; // FIXME hscale?
-		rendering_height = pvrrc.getFramebufferHeight() * scaling;
-	}
-	else
-	{
-		rendering_width = width;
-		rendering_height = height;
+	if (!is_rtt)
 		getVideoShift(gl.ofbo.shiftX, gl.ofbo.shiftY);
-	}
 	resize(rendering_width, rendering_height);
 	
 	//VERT and RAM fog color constants
@@ -829,8 +801,8 @@ bool OpenGL4Renderer::renderFrame(int width, int height)
 	//Fog density constant
 	gl4ShaderUniforms.fog_den_float = FOG_DENSITY.get() * config::ExtraDepthScale;
 
-	pvrrc.fog_clamp_min.getRGBAColor(gl4ShaderUniforms.fog_clamp_min);
-	pvrrc.fog_clamp_max.getRGBAColor(gl4ShaderUniforms.fog_clamp_max);
+	gl.rendContext->fog_clamp_min.getRGBAColor(gl4ShaderUniforms.fog_clamp_min);
+	gl.rendContext->fog_clamp_max.getRGBAColor(gl4ShaderUniforms.fog_clamp_max);
 	
 	if (config::ModifierVolumes)
 	{
@@ -847,25 +819,25 @@ bool OpenGL4Renderer::renderFrame(int width, int height)
 
 	glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX);
 
-	GLuint output_fbo;
 	//setup render target first
-	if (is_rtt)
-		output_fbo = BindRTT(false);
+	if (is_rtt) {
+		outputFB = BindRTT(false);
+	}
 	else
 	{
-		this->width = width;
-		this->height = height;
+		this->width = rendering_width;
+		this->height = rendering_height;
 #ifdef LIBRETRO
 		if (config::EmulateFramebuffer)
-			output_fbo = init_output_framebuffer(width, height);
+			outputFB = init_output_framebuffer(rendering_width, rendering_height);
 		else
-			output_fbo = postProcessor.getFramebuffer(width, height);
-		glViewport(0, 0, width, height);
+			outputFB = postProcessor.getFramebuffer(rendering_width, rendering_height);
+		glViewport(0, 0, rendering_width, rendering_height);
 #else
-		output_fbo = init_output_framebuffer(rendering_width, rendering_height);
+		outputFB = init_output_framebuffer(rendering_width, rendering_height);
 #endif
 	}
-	if (output_fbo == 0)
+	if (outputFB == nullptr)
 		return false;
 
 	gl4.vbo.nextBuffer();
@@ -875,19 +847,19 @@ bool OpenGL4Renderer::renderFrame(int width, int height)
 
 	//Main VBO
 	//move vertex to gpu
-	gl4.vbo.getVertexBuffer()->update(pvrrc.verts.data(), pvrrc.verts.size() * sizeof(decltype(*pvrrc.verts.data())));
-	gl4.vbo.getIndexBuffer()->update(pvrrc.idx.data(), pvrrc.idx.size() * sizeof(decltype(*pvrrc.idx.data())));
+	gl4.vbo.getVertexBuffer()->update(gl.rendContext->verts.data(), gl.rendContext->verts.size() * sizeof(decltype(*gl.rendContext->verts.data())));
+	gl4.vbo.getIndexBuffer()->update(gl.rendContext->idx.data(), gl.rendContext->idx.size() * sizeof(decltype(*gl.rendContext->idx.data())));
 
 	//Modvol VBO
-	if (!pvrrc.modtrig.empty())
-		gl4.vbo.getModVolBuffer()->update(pvrrc.modtrig.data(), pvrrc.modtrig.size() * sizeof(decltype(*pvrrc.modtrig.data())));
+	if (!gl.rendContext->modtrig.empty())
+		gl4.vbo.getModVolBuffer()->update(gl.rendContext->modtrig.data(), gl.rendContext->modtrig.size() * sizeof(decltype(*gl.rendContext->modtrig.data())));
 
 	// TR PolyParam data
-	if (!pvrrc.global_param_tr.empty())
+	if (!gl.rendContext->global_param_tr.empty())
 	{
-		std::vector<u32> trPolyParams(pvrrc.global_param_tr.size() * 2);
+		std::vector<u32> trPolyParams(gl.rendContext->global_param_tr.size() * 2);
 		int i = 0;
-		for (const PolyParam& pp : pvrrc.global_param_tr)
+		for (const PolyParam& pp : gl.rendContext->global_param_tr)
 		{
 			trPolyParams[i++] = (pp.tsp.full & 0xffff00c0) | ((pp.isp.full >> 16) & 0xe400) | ((pp.pcw.full >> 7) & 1);
 			trPolyParams[i++] = pp.tsp1.full;
@@ -903,75 +875,32 @@ bool OpenGL4Renderer::renderFrame(int width, int height)
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, gl4.vbo.getPolyParamBuffer()->getName());
 	glCheck();
 
-	if (is_rtt || !config::Widescreen || matrices.IsClipped() || config::Rotate90 || config::EmulateFramebuffer)
-	{
-		float fWidth;
-		float fHeight;
-		float min_x;
-		float min_y;
-		if (!is_rtt)
-		{
-			glm::vec4 clip_min(pvrrc.fb_X_CLIP.min, pvrrc.fb_Y_CLIP.min, 0, 1);
-			glm::vec4 clip_dim(pvrrc.fb_X_CLIP.max - pvrrc.fb_X_CLIP.min + 1,
-							   pvrrc.fb_Y_CLIP.max - pvrrc.fb_Y_CLIP.min + 1, 0, 0);
-			clip_min = scissor_mat * clip_min;
-			clip_dim = scissor_mat * clip_dim;
-
-			min_x = clip_min[0];
-			min_y = clip_min[1];
-			fWidth = clip_dim[0];
-			fHeight = clip_dim[1];
-			if (fWidth < 0)
-			{
-				min_x += fWidth;
-				fWidth = -fWidth;
-			}
-			if (fHeight < 0)
-			{
-				min_y += fHeight;
-				fHeight = -fHeight;
-			}
-			if (matrices.GetSidebarWidth() > 0)
-			{
-				float scaled_offs_x = matrices.GetSidebarWidth();
-
-				glcache.Enable(GL_SCISSOR_TEST);
-				glcache.Scissor(0, 0, (GLsizei)lroundf(scaled_offs_x), rendering_height);
-				glClear(GL_COLOR_BUFFER_BIT);
-				glcache.Scissor((GLint)lroundf(rendering_width - scaled_offs_x), 0, (GLsizei)lroundf(scaled_offs_x) + 1, rendering_height);
-				glClear(GL_COLOR_BUFFER_BIT);
-			}
-		}
-		else
-		{
-			min_x = (float)pvrrc.getFramebufferMinX();
-			min_y = (float)pvrrc.getFramebufferMinY();
-			fWidth = (float)pvrrc.getFramebufferWidth() - min_x;
-			fHeight = (float)pvrrc.getFramebufferHeight() - min_y;
-			if (config::RenderResolution > 480 && !config::RenderToTextureBuffer)
-			{
-				float scale = config::RenderResolution / 480.f;
-				min_x *= scale;
-				min_y *= scale;
-				fWidth *= scale;
-				fHeight *= scale;
-			}
-		}
+	Rect scissor = gl.matrices.getBaseScissor();
+	gl4ShaderUniforms.base_clipping.x = scissor.origin.x;
+	gl4ShaderUniforms.base_clipping.y = scissor.origin.y;
+	gl4ShaderUniforms.base_clipping.width = scissor.size.x;
+	gl4ShaderUniforms.base_clipping.height = scissor.size.y;
+	if (is_rtt) {
+		// Render to texture
 		gl4ShaderUniforms.base_clipping.enabled = true;
-		gl4ShaderUniforms.base_clipping.x = (int)lroundf(min_x);
-		gl4ShaderUniforms.base_clipping.y = (int)lroundf(min_y);
-		gl4ShaderUniforms.base_clipping.width = (int)lroundf(fWidth);
-		gl4ShaderUniforms.base_clipping.height = (int)lroundf(fHeight);
+	}
+	else
+	{
+		// Render to screen
+		if (scissor.origin.x != 0 || scissor.origin.y != 0
+				|| scissor.size.x < (int)gl.rendContext->framebufferWidth
+				|| scissor.size.y < (int)gl.rendContext->framebufferHeight)
+			gl4ShaderUniforms.base_clipping.enabled = true;
+		else
+			gl4ShaderUniforms.base_clipping.enabled = false;
+	}
+	if (gl4ShaderUniforms.base_clipping.enabled) {
 		glcache.Scissor(gl4ShaderUniforms.base_clipping.x, gl4ShaderUniforms.base_clipping.y,
 				gl4ShaderUniforms.base_clipping.width, gl4ShaderUniforms.base_clipping.height);
 		glcache.Enable(GL_SCISSOR_TEST);
 	}
-	else
-	{
-		gl4ShaderUniforms.base_clipping.enabled = false;
-	}
 
-	gl4DrawStrips(output_fbo, rendering_width, rendering_height);
+	drawStrips(rendering_width, rendering_height);
 #ifdef LIBRETRO
 	if (!is_rtt && !config::EmulateFramebuffer)
 		postProcessor.render(glsm_get_current_framebuffer());

@@ -17,13 +17,15 @@ enum MapleDeviceType
 	MDT_NaomiJamma       =  9,
 	MDT_None             = 10,
 	MDT_RFIDReaderWriter = 11,
-	MDT_MaracasController    = 12,
-	MDT_FishingController    = 13,
-	MDT_PopnMusicController  = 14,
-	MDT_RacingController     = 15,
-	MDT_DenshaDeGoController = 16,
-	MDT_Dreameye             = 17,
-	MDT_SegaControllerXL     = 18,
+	MDT_MaracasController       = 12,
+	MDT_FishingController       = 13,
+	MDT_PopnMusicController     = 14,
+	MDT_RacingController        = 15,
+	MDT_DenshaDeGoController    = 16,
+	MDT_Dreameye                = 17,
+	MDT_SegaControllerXL        = 18,
+	MDT_DreamParaParaController = 19,
+	MDT_WccfCamera				= 20,
 	MDT_Count
 };
 
@@ -45,6 +47,11 @@ enum PlainJoystickTriggerId
 	PJTI_L2 = 2,
 	PJTI_R2 = 3,
 	PJTI_Count = 4
+};
+
+enum class MaplePortType {
+	user_accessible,
+	built_in,
 };
 
 struct PlainJoystickState
@@ -76,6 +83,7 @@ public:
 	void GetMouseInput(u8& buttons, int& x, int& y, int& wheel);
 	void GetKeyboardInput(u8& shift, u8 keys[6]);
 	void SetImage(u8 *img);
+	void ResetImage();
 
 	static void (*UpdateVibration)(u32 port, float power, float inclination, u32 duration_ms);
 	bool invertMouseY = false;
@@ -117,11 +125,46 @@ void mcfg_DestroyDevices(bool full = true);
 void mcfg_SerializeDevices(Serializer& ser);
 void mcfg_DeserializeDevices(Deserializer& deser);
 
+//! Serialize a default device state to the Serializer without installing the device
+//! @param[out] ser The serializer to write to
+//! @param[in] forType The device type to serialize
+//! @param[in] bus The bus to serialize
+//! @param[in] port The port to serialize
+//! @param[in] playerNum The player number to serialize
+void mcfg_SerializeDefaultDevice(Serializer& ser, MapleDeviceType forType, u32 bus, u32 port, int playerNum = -1);
+//! Deserialize and discard a device from the stream
+//! @param[in,out] deser The deserializer to increment the pointer of
+//! @param[in] forType The device type to discard
+//! @param[in] bus The bus to deserialize
+//! @param[in] port The port to deserialize
+//! @param[in] playerNum The player number to deserialize
+void mcfg_DeserializeDiscardDevice(Deserializer& deser, MapleDeviceType forType, u32 bus, u32 port, int playerNum = -1);
+
+constexpr int maple_getPortCount(MapleDeviceType type, MaplePortType port)
+{
+	switch (type)
+	{
+		case MDT_FishingController:
+			return port == MaplePortType::user_accessible ? 0 : 1;
+		case MDT_SegaController:
+		case MDT_SegaControllerXL:
+			return 2;
+		case MDT_LightGun:
+		case MDT_TwinStick:
+		case MDT_AsciiStick:
+		case MDT_RacingController:
+			return 1;
+		default:
+			return 0;
+	}
+}
+
 bool maple_atomiswave_coin_chute(int slot);
 void push_vmu_screen(int bus_id, int bus_port, u8* buffer);
+void reset_vmu_screen(int bus_id, int bus_port);
 void insertRfidCard(int playerNum);
 const u8 *getRfidCardData(int playerNum);
 void setRfidCardData(int playerNum, u8 *data);
 
-struct maple_naomi_jamma;
-std::shared_ptr<maple_naomi_jamma> getMieDevice();
+struct MIE;
+std::shared_ptr<MIE> getMieDevice();

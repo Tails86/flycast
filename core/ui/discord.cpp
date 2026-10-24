@@ -1,5 +1,6 @@
 /*
 	Copyright 2024 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -22,7 +23,7 @@
 #include "gui.h"
 #include "discord_rpc.h"
 #include <cstring>
-#include <time.h>
+#include <ctime>
 
 #define FLYCAST_APPID "1212789289851559946"
 
@@ -73,12 +74,12 @@ private:
         	discordPresence.largeImageKey = imageUrl.c_str();
         	discordPresence.largeImageText = settings.content.title.c_str();
         	discordPresence.smallImageKey = "icon-512";
-        	discordPresence.smallImageText = "Flycast is a Dreamcast, Naomi and Atomiswave emulator";
+		discordPresence.smallImageText = "Hollycast is a Dreamcast, Naomi and Atomiswave emulator";
         }
         else
         {
         	discordPresence.largeImageKey = "icon-512";
-        	discordPresence.largeImageText = "Flycast is a Dreamcast, Naomi and Atomiswave emulator";
+		discordPresence.largeImageText = "Hollycast is a Dreamcast, Naomi and Atomiswave emulator";
         }
         if (settings.network.online)
         	discordPresence.details = "Online";

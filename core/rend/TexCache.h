@@ -17,6 +17,7 @@
 #pragma once
 #include "oslib/oslib.h"
 #include "hw/pvr/Renderer_if.h"
+#include "hw/pvr/ta_ctx.h"
 #include "cfg/option.h"
 #include "texconv.h"
 #include "CustomTexture.h"
@@ -71,10 +72,13 @@ public:
 		texture_hash = other.texture_hash;
 		old_vqtexture_hash = other.old_vqtexture_hash;
 		old_texture_hash = other.old_texture_hash;
-		std::swap(custom_image_data, other.custom_image_data);
-		custom_width = other.custom_width;
-		custom_height = other.custom_height;
-		custom_load_in_progress = 0;
+		std::swap(customPayload, other.customPayload);
+		std::swap(gpuPreloadedTexture, other.gpuPreloadedTexture);
+		customRequestId = other.customRequestId;
+		other.customRequestId = {};
+		is_custom_replaced = other.is_custom_replaced;
+		usingGpuPreloadedTexture = other.usingGpuPreloadedTexture;
+		customMipLevels = other.customMipLevels;
 		gpuPalette = other.gpuPalette;
 		area = other.area;
 	}
@@ -105,11 +109,12 @@ public:
 	u32 texture_hash;			// xxhash of texture data, used for custom textures
 	u32 old_vqtexture_hash;		// legacy hash for vq textures
 	u32 old_texture_hash;		// legacy hash
-	u8* custom_image_data;		// loaded custom image data
-	u32 custom_width;
-	u32 custom_height;
-	std::atomic_int custom_load_in_progress;
+	PreparedCustomTexture::Ptr customPayload;
+	GpuPreloadedTexture::Ptr gpuPreloadedTexture;
+	CustomTextureRequestId customRequestId;
 	bool is_custom_replaced;	// True if the texture currently on the GPU is the custom replacement
+	bool usingGpuPreloadedTexture = false;
+	u8 customMipLevels = 0;
 	bool gpuPalette;
 	u8 area;
 
@@ -123,6 +128,8 @@ public:
 
 	bool IsMipmapped()
 	{
+		if (is_custom_replaced && customMipLevels <= 1)
+			return false;
 		return tcw.MipMapped != 0 && tcw.ScanOrder == 0 && config::UseMipmaps;
 	}
 
@@ -143,14 +150,18 @@ public:
 
 	bool IsCustomTextureAvailable()
 	{
-		return custom_load_in_progress == 0 && custom_image_data != NULL;
+		return (gpuPreloadedTexture != nullptr && !usingGpuPreloadedTexture)
+				|| customPayload != nullptr
+				|| custom_texture.isRequestComplete(customRequestId);
 	}
 
 	void ComputeHash();
 	bool Update();
 	virtual void UploadToGPU(int width, int height, const u8 *temp_tex_buffer, bool mipmapped, bool mipmapsIncluded = false) = 0;
+	virtual bool uploadCustomTexture(const PreparedCustomTexture& texture, bool mipmapped);
+	virtual bool useGpuPreloadedTexture(const GpuPreloadedTexture::Ptr& texture) { return false; }
 	virtual bool Force32BitTexture(TextureType type) const { return false; }
-	void CheckCustomTexture();
+	bool CheckCustomTexture();
 	//true if : dirty or paletted texture and hashes don't match
 	bool NeedsUpdate();
 	virtual bool Delete();
@@ -287,12 +298,11 @@ void ReadFramebuffer(const FramebufferInfo& info, PixelBuffer<u32>& pb, int& wid
 
 // width and height in pixels. linestride in bytes
 template<int Red = 0, int Green = 1, int Blue = 2, int Alpha = 3>
-void WriteFramebuffer(u32 width, u32 height, const u8 *data, u32 dstAddr, FB_W_CTRL_type fb_w_ctrl, u32 linestride, FB_X_CLIP_type xclip, FB_Y_CLIP_type yclip);
+void WriteFramebuffer(u32 width, u32 height, const u8 *data, u32 dstAddr, FB_W_CTRL_type fb_w_ctrl, u32 linestride, const Rect& clip);
 
 // width and height in pixels. linestride in bytes
 template<int Red = 0, int Green = 1, int Blue = 2, int Alpha = 3>
-void WriteTextureToVRam(u32 width, u32 height, const u8 *data, u16 *dst, FB_W_CTRL_type fb_w_ctrl, u32 linestride);
-void getRenderToTextureDimensions(u32& width, u32& height, u32& pow2Width, u32& pow2Height);
+void WriteTextureToVRam(u32 width, u32 height, const u8 *data, u16 *dst, FB_W_CTRL_type fb_w_ctrl, u32 linestride, const Rect& clip);
 
 static inline void MakeFogTexture(u8 *tex_data)
 {

@@ -1,5 +1,6 @@
 /*
 	Copyright 2021 flyinghead
+	Portions Copyright 2026 The Hollycast Authors
 
 	This file is part of Flycast.
 
@@ -22,6 +23,7 @@
 #include "cfg/option.h"
 #include "nowide/fstream.hpp"
 #include "storage.h"
+#include "oslib/http_client.h"
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -41,6 +43,10 @@
 #endif
 #include "profiler/fc_profiler.h"
 #include "input/gamepad_device.h"
+#include "input/dreampotato.h"
+#include "i18n.h"
+
+#include <filesystem>
 
 namespace hostfs
 {
@@ -102,6 +108,41 @@ std::string getVmuPath(const std::string& port, bool save)
 		return rpath;
 	return wpath;
 }
+
+#ifdef DREAMPOTATO_INTEGRATED_MODE
+std::string getDreamPotatoPath()
+{
+	std::vector<std::string> dreamPotatoFileNames =
+#if defined(_WIN32)
+		// Expect either DreamPotato in a subfolder (most conventional) or just DreamPotato.exe (likely for custom path cases)
+		{ "DreamPotato/DreamPotato.exe", "DreamPotato.exe" };
+#elif defined(TARGET_MAC)
+		// Expect DreamPotato.app side-by-side with Hollycast.app, or, DreamPotato executable possibly in a subfolder
+		{ "DreamPotato.app/Contents/MacOS/DreamPotato", "DreamPotato/DreamPotato", "DreamPotato"  };
+#else
+		// Expect DreamPotato.AppImage side-by-side with Hollycast.AppImage, or, DreamPotato executable possibly in a subfolder
+		{ "DreamPotato.AppImage", "DreamPotato-linux-x64.AppImage", "DreamPotato/DreamPotato", "DreamPotato" };
+#endif
+
+	for (const std::string& dreamPotatoFileName : dreamPotatoFileNames) {
+		if (!config::DreamPotatoFolderPath.get().empty())
+		{
+			try {
+				std::string fullpath = hostfs::storage().getSubPath(config::DreamPotatoFolderPath, dreamPotatoFileName);
+				if (hostfs::storage().exists(fullpath))
+					return fullpath;
+			} catch (const hostfs::StorageException& e) {
+			}
+		}
+
+		std::string dreamPotatoPath = hostfs::storage().getSubPath(os_GetAppContainingDir(), dreamPotatoFileName);
+		if (file_exists(dreamPotatoPath))
+			return dreamPotatoPath;
+	}
+
+	return "";
+}
+#endif // DREAMPOTATO_INTEGRATED_MODE
 
 std::string getArcadeFlashPath()
 {
@@ -204,6 +245,8 @@ std::string getSavestatePath(int index, bool writable)
 	state_file = state_file + index_str + ".state";
 	if (index == -1)
 		state_file += ".net";
+	if (index == -2)
+		state_file += ".tmp";
 
 	static std::string lastFile;
 	static std::string lastPath;
@@ -300,7 +343,7 @@ std::string getTextureDumpPath()
 	return get_writable_data_path("texdump/");
 }
 
-#if defined(__unix__) && !defined(__ANDROID__)
+#if (defined(__unix__) && !defined(__ANDROID__)) || defined(__HAIKU__)
 
 static std::string runCommand(const std::string& cmd)
 {
@@ -347,7 +390,7 @@ void saveScreenshot(const std::string& name, const std::vector<u8>& data)
 		StorageFolder^ folder = KnownFolders::PicturesLibrary;	// or SavedPictures?
 		if (folder == nullptr) {
 			INFO_LOG(COMMON, "KnownFolders::PicturesLibrary is null");
-			throw FlycastException("Can't find Pictures library");
+			throw FlycastException(i18n::Ts("Can't find Pictures library"));
 		}
 		nowide::wstackstring wstr;
 		wchar_t *wname = wstr.convert(name.c_str());
@@ -459,13 +502,18 @@ void os_SetupInput()
 	if (config::UseRawInput)
 		rawinput::init();
 #endif
+	dreampotato::update();
 }
 
 void os_TermInput()
 {
+	dreampotato::term();
 #if defined(USE_SDL)
 	input_sdl_quit();
 #else
+	#if defined(SUPPORT_X11)
+		input_x11_term();
+	#endif
 	#if defined(USE_EVDEV)
 		input_evdev_close();
 	#endif
@@ -485,6 +533,26 @@ void os_UpdateInputState()
 	input_sdl_handle();
 #elif defined(USE_EVDEV)
 	input_evdev_handle();
+#endif
+}
+
+int os_OpenFolder(const char* path)
+{
+#if !defined(USE_SDL)
+	return -1;
+#else
+	std::filesystem::path absolutePath = std::filesystem::absolute(path).lexically_normal();
+	std::string encodedPath = http::urlEncodePath(absolutePath.generic_string());
+	// A file url generally has the form 'file://<host>/<path>'.
+	// Since our file is on localhost, we can leave '<host>' blank.
+	// The absolute path on Windows does not start with '/', so an extra '/' is required in its prefix.
+	// We are also deliberately not handling Windows UNC paths here. The UI doesn't allow selecting them and it doesn't look like SDL_OpenURL works with them.
+#ifdef _WIN32
+ 	std::string fileUri = "file:///" + encodedPath;
+#else
+ 	std::string fileUri = "file://" + encodedPath;
+#endif
+	return SDL_OpenURL(fileUri.c_str());
 #endif
 }
 

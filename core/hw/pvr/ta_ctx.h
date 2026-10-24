@@ -3,6 +3,7 @@
 #include "ta_structs.h"
 #include "pvr_regs.h"
 #include "oslib/oslib.h"
+#include <glm/glm.hpp>
 
 #include <algorithm>
 #include <vector>
@@ -43,7 +44,6 @@ struct PolyParam
 	ISP_TSP isp;
 	float zvZ;
 	u32 tileclip;
-	//float zMin,zMax;
 	TSP tsp1;
 	TCW tcw1;
 	BaseTextureCacheData *texture1;
@@ -227,23 +227,39 @@ struct SortedTriangle
 	u32 count;
 };
 
+struct Rect
+{
+	Rect() = default;
+	Rect(const glm::ivec2& origin, const glm::ivec2& size)
+		: origin(origin), size(size)
+	{}
+
+	glm::ivec2 origin;
+	glm::ivec2 size;
+
+	glm::ivec2 bottomRight() const {
+		return origin + size - glm::ivec2(1, 1);
+	}
+};
+
 struct rend_context
 {
 	f32 fZ_max;
 
 	bool isRTT;
 	bool clearFramebuffer;
-	
-	TA_GLOB_TILE_CLIP_type ta_GLOB_TILE_CLIP;
+
+	glm::ivec2 globClip;
 	SCALER_CTL_type scaler_ctl;
-	FB_X_CLIP_type fb_X_CLIP;
-	FB_Y_CLIP_type fb_Y_CLIP;
+	Rect fbClip;
+	Rect tileClip;
 	u32 fb_W_LINESTRIDE;
 	u32 fb_W_SOF1;
 	FB_W_CTRL_type fb_W_CTRL;
 	u32 framebufferWidth;
 	u32 framebufferHeight;
-	
+	int swapInterval;
+
 	RGBAColor fog_clamp_min;
 	RGBAColor fog_clamp_max;
 
@@ -286,34 +302,6 @@ struct rend_context
 	}
 
 	void newRenderPass();
-
-	// For RTT TODO merge with framebufferWidth/Height
-	u32 getFramebufferWidth() const
-	{
-		u32 w = fb_X_CLIP.max + 1;
-		if (fb_W_LINESTRIDE != 0)
-			// Happens for Flag to Flag, Virtua Tennis?
-			w = std::min(fb_W_LINESTRIDE * 4, w);
-		return w;
-	}
-	u32 getFramebufferHeight() const
-	{
-		u32 h = fb_Y_CLIP.max + 1;
-		if (scaler_ctl.vscalefactor < 0x400)
-			h = h * 1024 / scaler_ctl.vscalefactor;
-		return h;
-	}
-	u32 getFramebufferMinX() const
-	{
-		return fb_X_CLIP.min;
-	}
-	u32 getFramebufferMinY() const
-	{
-		u32 y = fb_Y_CLIP.min;
-		if (scaler_ctl.vscalefactor < 0x400)
-			y = y * 1024 / scaler_ctl.vscalefactor;
-		return y;
-	}
 };
 
 #define TA_DATA_SIZE 8_MB
@@ -339,7 +327,7 @@ struct TA_context
 			recv:   idx: 33528, vtx: 23451, op: 128, pt: 4, tr: 133, mvo: 14, modt: 342
 			sc:     idx: 26150, vtx: 17417, op: 162, pt: 12, tr: 244, mvo: 6, modt: 2044
 			doa2le: idx: 47178, vtx: 34046, op: 868, pt: 0, tr: 354, mvo: 92, modt: 976 (overruns)
-			ika:    idx: 46748, vtx: 33818, op: 984, pt: 9, tr: 234, mvo: 10, modt: 16, ov: 0  
+			ika:    idx: 46748, vtx: 33818, op: 984, pt: 9, tr: 234, mvo: 10, modt: 16, ov: 0
 			ct:     idx: 30920, vtx: 21468, op: 752, pt: 0, tr: 360, mvo: 101, modt: 732, ov: 0
 			sa2:    idx: 36094, vtx: 24520, op: 1330, pt: 10, tr: 177, mvo: 39, modt: 360, ov: 0
 	*/
@@ -404,9 +392,9 @@ TA_context *tactx_Alloc();
 #define TACTX_NONE (0xFFFFFFFF)
 
 void SetCurrentTARC(u32 addr);
-bool QueueRender(TA_context* ctx);
-TA_context* DequeueRender();
-void FinishRender(TA_context* ctx);
+bool SetRender(TA_context* ctx);
+TA_context* GetRender();
+void FinishRender(bool resetRender);
 
 //must be moved to proper header
 void FillBGP(TA_context* ctx);
@@ -427,6 +415,7 @@ u32 ta_get_list_type();
 void ta_set_list_type(u32 listType);
 void ta_parse_reset();
 void getRegionTileAddrAndSize(u32& address, u32& size);
+void setTileClipping(rend_context& ctx);
 
 void sortTriangles(rend_context& ctx, RenderPass& pass, const RenderPass& previousPass);
 void sortPolyParams(std::vector<PolyParam>& polys, int first, int end, rend_context& ctx);

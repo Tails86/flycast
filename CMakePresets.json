@@ -1,23 +1,157 @@
 {
-    "version": 2,
+    "version": 6,
     "configurePresets": [
         {
-            "name": "clang",
-            "generator": "Ninja",
-            "binaryDir": "build-clang",
+            "name": "base",
+            "binaryDir": "build",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "USE_DISCORD": "ON"
+            },
+            "hidden": true
+        },
+        {
+            "name": "windows",
+            "inherits": ["base"],
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
             }
         },
         {
-            "name": "gcc",
-            "generator": "Ninja",
-            "binaryDir": "build-gcc",
+            "name": "linux",
+            "inherits": ["base"],
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
             }
+        },
+        {
+            "name": "darwin",
+            "inherits": ["base"],
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            },
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_XCODE_GENERATE_SCHEME": "YES",
+                "USE_BREAKPAD": "NO",
+                "MOLTENVK_DYLIB": "/usr/local/lib/libMoltenVK.dylib"
+            },
+            "generator": "Xcode"
+        },
+        {
+            "name": "windows-debug",
+            "description": "Convenience alias for windows preset.",
+            "inherits": ["windows"],
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "linux-debug",
+            "inherits": ["linux"],
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "binaryDir": "build-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "darwin-debug",
+            "description": "Convenience alias for darwin preset.",
+            "inherits": ["darwin"],
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "windows-unit-tests-debug",
+            "inherits": ["windows-debug"],
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "binaryDir": "build-unit-tests-debug",
+            "cacheVariables": {
+                "ENABLE_CTEST": "ON"
+            }
+        },
+        {
+            "name": "linux-unit-tests-debug",
+            "inherits": ["linux-debug"],
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "binaryDir": "build-unit-tests-debug",
+            "cacheVariables": {
+                "ENABLE_CTEST": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "windows",
+            "configurePreset": "windows",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "linux",
+            "configurePreset": "linux",
+            "environment": {
+                "MAKEFLAGS": "-j", "$comment": "max parallelism"
+            }
+        },
+        {
+            "name": "darwin",
+            "configurePreset": "darwin",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "windows-debug",
+            "inherits": ["windows"],
+            "configurePreset": "windows-debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "linux-debug",
+            "inherits": ["linux"],
+            "configurePreset": "linux-debug"
+        },
+        {
+            "name": "darwin-debug",
+            "inherits": ["darwin"],
+            "configurePreset": "darwin-debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "windows-unit-tests-debug",
+            "configurePreset": "windows-unit-tests-debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "linux-unit-tests-debug",
+            "configurePreset": "linux-unit-tests-debug",
+            "configuration": "Debug"
         }
     ]
 }

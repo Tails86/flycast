@@ -1,16 +1,20 @@
 #include "Renderer_if.h"
 #include "spg.h"
+#include "rend/CustomTexture.h"
 #include "rend/texconv.h"
 #include "rend/transform_matrix.h"
+#include "pvr_mem.h"
 #include "cfg/option.h"
 #include "emulator.h"
 #include "serialize.h"
 #include "hw/holly/holly_intc.h"
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_core.h"
+#include "hw/sh4/sh4_sched.h"
 #include "profiler/fc_profiler.h"
 #include "network/ggpo.h"
 
+#include <cassert>
 #include <mutex>
 #include <deque>
 
@@ -29,14 +33,9 @@ static cResetEvent vramRollback;
 
 // direct framebuffer write detection
 static bool render_called = false;
-u32 fb_watch_addr_start;
-u32 fb_watch_addr_end;
-bool fb_dirty;
 
 static bool pend_rend;
 static bool rendererEnabled = true;
-
-TA_context* _pvrrc;
 
 static bool presented;
 static u32 fbAddrHistory[2] { 1, 1 };
@@ -76,6 +75,29 @@ public:
 							break;
 						}
 					if (!dupe || type == Present) {
+						// Bound the queue to keep the emu-thread producer and
+						// the renderer-thread consumer from drifting apart.
+						// Render/RenderFramebuffer/Stop are already deduplicated
+						// above, but Present is intentionally allowed to repeat
+						// and can stack up indefinitely if the consumer stalls
+						// (notably under libretro frontends, which drive the
+						// swap from their own video callback). Unbounded growth
+						// here is the producer side of progressive audio/video
+						// drift in long sessions: the SH4 keeps running ahead
+						// while pending Presents pile up. Drop the oldest
+						// pending Present to keep latency bounded.
+						constexpr size_t MAX_QUEUE_DEPTH = 4;
+						if (queue.size() >= MAX_QUEUE_DEPTH)
+						{
+							for (auto it = queue.begin(); it != queue.end(); ++it)
+							{
+								if (it->type == Present)
+								{
+									queue.erase(it);
+									break;
+								}
+							}
+						}
 						queue.push_back(msg);
 						dupe = false;
 					}
@@ -174,26 +196,33 @@ private:
 	{
 		FC_PROFILE_SCOPE;
 
-		_pvrrc = DequeueRender();
-		if (_pvrrc == nullptr)
+		TA_context *taContext = GetRender();
+		if (taContext == nullptr)
 			return;
+		renderer->processGpuCleanupOperations();
 
-		if (!_pvrrc->rend.isRTT)
-		{
-			int width, height;
-			getScaledFramebufferSize(_pvrrc->rend, width, height);
-			_pvrrc->rend.framebufferWidth = width;
-			_pvrrc->rend.framebufferHeight = height;
-		}
-		bool renderToScreen = !_pvrrc->rend.isRTT && !config::EmulateFramebuffer;
+		// tile clipping is used to calculate framebuffer size in RTT below
+		setTileClipping(taContext->rend);
+		int width, height;
+		getScaledFramebufferSize(taContext->rend, width, height);
+		taContext->rend.framebufferWidth = width;
+		taContext->rend.framebufferHeight = height;
+		bool renderToScreen = !taContext->rend.isRTT && !config::EmulateFramebuffer;
 #ifdef LIBRETRO
 		if (renderToScreen)
-			retro_resize_renderer(_pvrrc->rend.framebufferWidth, _pvrrc->rend.framebufferHeight,
+			retro_resize_renderer(taContext->rend.framebufferWidth, taContext->rend.framebufferHeight,
 					getOutputFramebufferAspectRatio());
 #endif
 		{
 			FC_PROFILE_SCOPE_NAMED("Renderer::Process");
-			renderer->Process(_pvrrc);
+			try {
+				renderer->Process(taContext);
+			} catch (...) {
+				renderEnd.Set();
+				rend_allow_rollback();
+				FinishRender(true);
+				throw;
+			}
 		}
 
 		if (renderToScreen)
@@ -202,7 +231,14 @@ private:
 		rend_allow_rollback();
 		{
 			FC_PROFILE_SCOPE_NAMED("Renderer::Render");
-			renderer->Render();
+			try {
+				renderer->Render();
+			} catch (...) {
+				if (!renderToScreen)
+					renderEnd.Set();
+				FinishRender(true);
+				throw;
+			}
 		}
 
 		if (!renderToScreen)
@@ -211,13 +247,13 @@ private:
 			present();
 
 		//clear up & free data ..
-		FinishRender(_pvrrc);
-		_pvrrc = nullptr;
+		FinishRender(true);
 	}
 
 	void renderFramebuffer(const FramebufferInfo& config)
 	{
 		FC_PROFILE_SCOPE;
+		renderer->processGpuCleanupOperations();
 
 #ifdef LIBRETRO
 		int w, h;
@@ -261,6 +297,117 @@ bool rend_single_frame(const bool& enabled)
 			return false;
 	return true;
 }
+
+class SwapIntervalDetector
+{
+public:
+	SwapIntervalDetector() {
+		EventManager::listen(Event::LoadState, eventHandler, this);
+		reset();
+	}
+	~SwapIntervalDetector() {
+		EventManager::unlisten(Event::LoadState, eventHandler, this);
+	}
+
+	void render()
+	{
+		u64 now = sh4_sched_now64();
+		if (lastRender != 0)
+			renderInterval = now - lastRender;
+		lastRender = now;
+		renders++;
+	}
+
+	void vblank()
+	{
+		avgRenderInterval = 0.1f * renderInterval + 0.9f * avgRenderInterval;
+
+		// Force transition to 60 FPS if the game swap interval is 1 for 3 consecutive frames.
+		// Displaying a 60 FPS game at 30 FPS makes the game run in slo-mo and breaks audio.
+		if (renders != 0)
+		{
+			renders = 0;
+			rendersFullSpeed++;
+			if (rendersFullSpeed >= 3)
+			{
+				// force 60/50 FPS now
+				lastInterval = 1;
+				currentInterval = 1;
+				return;
+			}
+		}
+		else {
+			rendersFullSpeed = 0;
+		}
+
+		const float vblankPerRender = avgRenderInterval / (SPG_CONTROL.isPAL() ? 20_sh4ms : 16667_sh4us);
+		int interval = std::round(vblankPerRender);
+		float frac = std::abs(vblankPerRender - interval);
+
+		if ((interval == 2 && frac <= .05f)
+				|| (interval == 1 && frac <= .2f))
+		{
+			if (lastInterval == (int)interval)
+			{
+				if (++stable >= 10)
+					currentInterval = std::min(lastInterval, 2);
+				unstable = 0;
+			}
+			else
+			{
+				stable = 0;
+				lastInterval = interval;
+				unstable++;
+			}
+		}
+		else {
+			stable = 0;
+			unstable++;
+		}
+		if (unstable >= 30 && vblankPerRender < 2.f)
+			// Force swap interval to 1 if the frame rate is off over 30 frames
+			// Helps with games that render slightly above 30 FPS (ECCO 33 FPS, Armada ~40 FPS)
+			currentInterval = 1;
+	}
+
+	int swapInterval() const {
+		return currentInterval;
+	}
+
+	void reset()
+	{
+		lastInterval = 1;
+		stable = 0;
+		unstable = 0;
+		currentInterval = 1;
+
+		lastRender = 0;
+		renderInterval = 0;
+		avgRenderInterval = 0.f;
+		renders = 0;
+		rendersFullSpeed = 0;
+	}
+
+private:
+	static void eventHandler(Event event, void *arg) {
+		SwapIntervalDetector *self = (SwapIntervalDetector *)arg;
+		self->lastRender = 0;
+		self->lastInterval = 1;
+	}
+
+	int lastInterval;
+	int stable;
+	int unstable;
+	int currentInterval;
+
+	u64 lastRender;
+	u64 renderInterval;
+	float avgRenderInterval;
+	int renders;
+	int rendersFullSpeed;
+};
+static SwapIntervalDetector swapIntervalDetector;
+
 
 Renderer* rend_GLES2();
 Renderer* rend_GL4();
@@ -330,17 +477,80 @@ bool rend_init_renderer()
 
 void rend_term_renderer()
 {
+	// Drain and stop the queue first so that any in-flight Render/Present
+	// messages cannot be dispatched against a renderer that is about to be
+	// destroyed. This is called from many libretro entry points (context
+	// reset/destroy, deinit, content load, renderer switch) where the emu
+	// thread may still be holding queued work; without cancelling first
+	// we can race the consumer thread into a null renderer dereference and
+	// also leave the producer side wedged, which manifests as audio/video
+	// drift after a renderer switch.
+	rend_cancel_emu_wait();
+
 	if (renderer != nullptr)
 	{
+		custom_texture.invalidateGpuPreloads();
 		renderer->Term();
 		delete renderer;
 		renderer = nullptr;
 	}
 }
 
+void rend_process_custom_texture_preloads()
+{
+	if (renderer != nullptr)
+	{
+		renderer->processGpuCleanupOperations();
+		renderer->processCustomTexturePreloads();
+	}
+}
+
+bool rend_supports_gpu_texture_preload()
+{
+	return renderer != nullptr && renderer->supportsGpuTexturePreload();
+}
+
+std::shared_ptr<GpuPreloadedTexture> Renderer::findGpuPreloadedTexture(
+		u32 currentHash, u32 oldVqHash, u32 oldHash) const
+{
+	const auto find = [this](u32 hash) -> std::shared_ptr<GpuPreloadedTexture> {
+		const auto found = gpuPreloadedTextures.find(hash);
+		return found == gpuPreloadedTextures.end() ? nullptr : found->second;
+	};
+	if (auto texture = find(currentHash))
+		return texture;
+	if (oldVqHash != 0)
+		if (auto texture = find(oldVqHash))
+			return texture;
+	if (oldHash != 0)
+		return find(oldHash);
+	return nullptr;
+}
+
+void Renderer::addGpuPreloadedTexture(u32 hash, std::shared_ptr<GpuPreloadedTexture> texture)
+{
+	assert(texture);
+	gpuPreloadedTextures.emplace(hash, std::move(texture));
+}
+
+void Renderer::clearGpuPreloadedTextures()
+{
+	gpuPreloadedTextures.clear();
+}
+
+void Renderer::processGpuCleanupOperations()
+{
+	if (custom_texture.consumeGpuCleanupOperations())
+	{
+		clearTextureCache();
+		clearGpuPreloadedTextures();
+		resetTextureCache = false;
+	}
+}
+
 void rend_reset()
 {
-	FinishRender(DequeueRender());
+	FinishRender(true);
 	render_called = false;
 	pend_rend = false;
 	FrameCount = 1;
@@ -349,6 +559,7 @@ void rend_reset()
 	rendererEnabled = true;
 	fbAddrHistory[0] = 1;
 	fbAddrHistory[1] = 1;
+	swapIntervalDetector.reset();
 }
 
 void rend_start_render()
@@ -391,10 +602,13 @@ void rend_start_render()
 	ctx->rend.fb_W_SOF1 = FB_W_SOF1;
 	ctx->rend.fb_W_CTRL.full = FB_W_CTRL.full;
 
-	ctx->rend.ta_GLOB_TILE_CLIP = TA_GLOB_TILE_CLIP;
+	ctx->rend.globClip.x = (TA_GLOB_TILE_CLIP.tile_x_num + 1) * 32;
+	ctx->rend.globClip.y = (TA_GLOB_TILE_CLIP.tile_y_num + 1) * 32;
 	ctx->rend.scaler_ctl = SCALER_CTL;
-	ctx->rend.fb_X_CLIP = FB_X_CLIP;
-	ctx->rend.fb_Y_CLIP = FB_Y_CLIP;
+	ctx->rend.fbClip.origin.x = FB_X_CLIP.min;
+	ctx->rend.fbClip.origin.y = FB_Y_CLIP.min;
+	ctx->rend.fbClip.size.x = FB_X_CLIP.max - FB_X_CLIP.min + 1;
+	ctx->rend.fbClip.size.y = FB_Y_CLIP.max - FB_Y_CLIP.min + 1;
 	ctx->rend.fb_W_LINESTRIDE = FB_W_LINESTRIDE.stride;
 
 	ctx->rend.fog_clamp_min = FOG_CLAMP_MIN;
@@ -412,9 +626,14 @@ void rend_start_render()
 			ctx->rend.clearFramebuffer = false;
 		}
 		ggpo::endOfFrame();
+		swapIntervalDetector.render();
+		if (!config::EmulateFramebuffer)
+			ctx->rend.swapInterval = swapIntervalDetector.swapInterval();
+		else
+			ctx->rend.swapInterval = 1;
 	}
 
-	if (QueueRender(ctx))
+	if (SetRender(ctx))
 	{
 		palette_update();
 		pend_rend = true;
@@ -447,7 +666,7 @@ int rend_end_render(int tag, int cycles, int jitter, void *arg)
 void rend_vblank()
 {
 	if (config::EmulateFramebuffer
-			|| (!render_called && fb_dirty && FB_R_CTRL.fb_enable))
+			|| (!render_called && FB_R_CTRL.fb_enable && FramebufferWatcher::Instance().isDirty()))
 	{
 		if (rend_is_enabled())
 		{
@@ -458,25 +677,18 @@ void rend_vblank()
 			if (!config::EmulateFramebuffer)
 				DEBUG_LOG(PVR, "Direct framebuffer write detected");
 		}
-		fb_dirty = false;
 	}
-	render_called = false;
-	check_framebuffer_write();
-	emu.vblank();
-}
 
-void check_framebuffer_write()
-{
-	u32 fb_size = (FB_R_SIZE.fb_y_size + 1) * (FB_R_SIZE.fb_x_size + FB_R_SIZE.fb_modulus) * 4;
-	fb_watch_addr_start = (SPG_CONTROL.interlace ? FB_R_SOF2 : FB_R_SOF1) & VRAM_MASK;
-	fb_watch_addr_end = fb_watch_addr_start + fb_size;
+	render_called = false;
+	emu.vblank();
+	swapIntervalDetector.vblank();
 }
 
 void rend_cancel_emu_wait()
 {
 	if (config::ThreadedRendering)
 	{
-		FinishRender(NULL);
+		FinishRender(false);
 		renderEnd.Set();
 		rend_allow_rollback();
 		pvrQueue.cancelEnqueue();
@@ -528,20 +740,13 @@ void rend_serialize(Serializer& ser)
 {
 	ser << fb_w_cur;
 	ser << render_called;
-	ser << fb_dirty;
-	ser << fb_watch_addr_start;
-	ser << fb_watch_addr_end;
+	FramebufferWatcher::Instance().serialize(ser);
 }
 void rend_deserialize(Deserializer& deser)
 {
 	deser >> fb_w_cur;
-	if (deser.version() >= Deserializer::V20)
-	{
-		deser >> render_called;
-		deser >> fb_dirty;
-		deser >> fb_watch_addr_start;
-		deser >> fb_watch_addr_end;
-	}
+	deser >> render_called;
+	FramebufferWatcher::Instance().deserialize(deser);
 	pend_rend = false;
 	fbAddrHistory[0] = 1;
 	fbAddrHistory[1] = 1;

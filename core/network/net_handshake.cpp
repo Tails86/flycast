@@ -44,6 +44,10 @@ public:
 class NaomiNetworkHandshake : public NetworkHandshake
 {
 public:
+	NaomiNetworkHandshake() {
+		auto max = naomiNetworkMaxNodes();
+		naomiNetwork.setMaxSlots(max.first, max.second);
+	}
 	std::future<bool> start() override {
 		return naomiNetwork.startNetworkAsync();
 	}
@@ -64,18 +68,24 @@ public:
 void NetworkHandshake::init()
 {
 	if (settings.platform.isArcade())
-		SetNaomiNetworkConfig(-1);
+		setNaomiNetworkConfig(-1, 0);
 
 	if (config::GGPOEnable) {
 		instance = new GGPONetworkHandshake();
 	}
-	else if (NaomiNetworkSupported()) {
+	else if (naomiNetworkSupported()) {
 		instance = new NaomiNetworkHandshake();
 	}
-	else if (config::BattleCableEnable && !settings.platform.isNaomi())
+	else if (config::BattleCableEnable)
 	{
 		if (settings.content.gameId == "MAXIMUM SPEED")
 			configure_maxspeed_flash(true, config::ActAsServer);
+		else if (settings.content.gameId.substr(0, 4) == "WCCF")
+#ifdef LIBRETRO
+			setNaomiNetworkConfig(0, 8);	// FIXME libretro
+#else
+			setNaomiNetworkConfig(config::loadBool("naomi", "WCCFSlave") ? 1 : 0, 8);	// FIXME node count
+#endif
 		instance = new BattleCableHandshake();
 	}
 	else {
@@ -91,4 +101,12 @@ void NetworkHandshake::term()
 		delete instance;
 		instance = nullptr;
 	}
+}
+
+bool naomiNetworkSupported() {
+	return naomiNetworkMaxNodes().first > 1;
+}
+
+u16 defaultNaomiServerPort() {
+	return NaomiNetwork::SERVER_PORT;
 }

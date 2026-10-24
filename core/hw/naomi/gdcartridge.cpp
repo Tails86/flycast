@@ -21,7 +21,9 @@
 #include "serialize.h"
 #include "hw/sh4/sh4_sched.h"
 #include "naomi.h"
+#include "oslib/i18n.h"
 #include <algorithm>
+#include <zlib.h>
 
 /*
 
@@ -116,17 +118,17 @@ SH4 IO port A bits
 
 */
 
-const u32 GDCartridge::DES_LEFTSWAP[] = {
+const u32 DES_LEFTSWAP[] = {
 	0x00000000, 0x00000001, 0x00000100, 0x00000101, 0x00010000, 0x00010001, 0x00010100, 0x00010101,
 	0x01000000, 0x01000001, 0x01000100, 0x01000101, 0x01010000, 0x01010001, 0x01010100, 0x01010101
 };
 
-const u32 GDCartridge::DES_RIGHTSWAP[] = {
+const u32 DES_RIGHTSWAP[] = {
 	0x00000000, 0x01000000, 0x00010000, 0x01010000, 0x00000100, 0x01000100, 0x00010100, 0x01010100,
 	0x00000001, 0x01000001, 0x00010001, 0x01010001, 0x00000101, 0x01000101, 0x00010101, 0x01010101,
 };
 
-const u32 GDCartridge::DES_SBOX1[] = {
+const u32 DES_SBOX1[] = {
 	0x00808200, 0x00000000, 0x00008000, 0x00808202, 0x00808002, 0x00008202, 0x00000002, 0x00008000,
 	0x00000200, 0x00808200, 0x00808202, 0x00000200, 0x00800202, 0x00808002, 0x00800000, 0x00000002,
 	0x00000202, 0x00800200, 0x00800200, 0x00008200, 0x00008200, 0x00808000, 0x00808000, 0x00800202,
@@ -137,7 +139,7 @@ const u32 GDCartridge::DES_SBOX1[] = {
 	0x00000202, 0x00800200, 0x00800200, 0x00000000, 0x00008002, 0x00008200, 0x00000000, 0x00808002
 };
 
-const u32 GDCartridge::DES_SBOX2[] = {
+const u32 DES_SBOX2[] = {
 	0x40084010, 0x40004000, 0x00004000, 0x00084010, 0x00080000, 0x00000010, 0x40080010, 0x40004010,
 	0x40000010, 0x40084010, 0x40084000, 0x40000000, 0x40004000, 0x00080000, 0x00000010, 0x40080010,
 	0x00084000, 0x00080010, 0x40004010, 0x00000000, 0x40000000, 0x00004000, 0x00084010, 0x40080000,
@@ -148,7 +150,7 @@ const u32 GDCartridge::DES_SBOX2[] = {
 	0x00084000, 0x00000000, 0x40004000, 0x00004010, 0x40000000, 0x40080010, 0x40084010, 0x00084000
 };
 
-const u32 GDCartridge::DES_SBOX3[] = {
+const u32 DES_SBOX3[] = {
 	0x00000104, 0x04010100, 0x00000000, 0x04010004, 0x04000100, 0x00000000, 0x00010104, 0x04000100,
 	0x00010004, 0x04000004, 0x04000004, 0x00010000, 0x04010104, 0x00010004, 0x04010000, 0x00000104,
 	0x04000000, 0x00000004, 0x04010100, 0x00000100, 0x00010100, 0x04010000, 0x04010004, 0x00010104,
@@ -159,7 +161,7 @@ const u32 GDCartridge::DES_SBOX3[] = {
 	0x04010000, 0x04000104, 0x00000104, 0x04010000, 0x00010104, 0x00000004, 0x04010004, 0x00010100
 };
 
-const u32 GDCartridge::DES_SBOX4[] = {
+const u32 DES_SBOX4[] = {
 	0x80401000, 0x80001040, 0x80001040, 0x00000040, 0x00401040, 0x80400040, 0x80400000, 0x80001000,
 	0x00000000, 0x00401000, 0x00401000, 0x80401040, 0x80000040, 0x00000000, 0x00400040, 0x80400000,
 	0x80000000, 0x00001000, 0x00400000, 0x80401000, 0x00000040, 0x00400000, 0x80001000, 0x00001040,
@@ -170,7 +172,7 @@ const u32 GDCartridge::DES_SBOX4[] = {
 	0x80001000, 0x00001040, 0x00400000, 0x80401000, 0x00000040, 0x00400000, 0x00001000, 0x00401040
 };
 
-const u32 GDCartridge::DES_SBOX5[] = {
+const u32 DES_SBOX5[] = {
 	0x00000080, 0x01040080, 0x01040000, 0x21000080, 0x00040000, 0x00000080, 0x20000000, 0x01040000,
 	0x20040080, 0x00040000, 0x01000080, 0x20040080, 0x21000080, 0x21040000, 0x00040080, 0x20000000,
 	0x01000000, 0x20040000, 0x20040000, 0x00000000, 0x20000080, 0x21040080, 0x21040080, 0x01000080,
@@ -181,7 +183,7 @@ const u32 GDCartridge::DES_SBOX5[] = {
 	0x00040080, 0x01000080, 0x20000080, 0x00040000, 0x00000000, 0x20040000, 0x01040080, 0x20000080
 };
 
-const u32 GDCartridge::DES_SBOX6[] = {
+const u32 DES_SBOX6[] = {
 	0x10000008, 0x10200000, 0x00002000, 0x10202008, 0x10200000, 0x00000008, 0x10202008, 0x00200000,
 	0x10002000, 0x00202008, 0x00200000, 0x10000008, 0x00200008, 0x10002000, 0x10000000, 0x00002008,
 	0x00000000, 0x00200008, 0x10002008, 0x00002000, 0x00202000, 0x10002008, 0x00000008, 0x10200008,
@@ -192,7 +194,7 @@ const u32 GDCartridge::DES_SBOX6[] = {
 	0x00002000, 0x00200008, 0x10002008, 0x00000000, 0x10202000, 0x10000000, 0x00200008, 0x10002008
 };
 
-const u32 GDCartridge::DES_SBOX7[] = {
+const u32 DES_SBOX7[] = {
 	0x00100000, 0x02100001, 0x02000401, 0x00000000, 0x00000400, 0x02000401, 0x00100401, 0x02100400,
 	0x02100401, 0x00100000, 0x00000000, 0x02000001, 0x00000001, 0x02000000, 0x02100001, 0x00000401,
 	0x02000400, 0x00100401, 0x00100001, 0x02000400, 0x02000001, 0x02100000, 0x02100400, 0x00100001,
@@ -203,7 +205,7 @@ const u32 GDCartridge::DES_SBOX7[] = {
 	0x00000000, 0x00100401, 0x02100000, 0x00000400, 0x02000001, 0x02000400, 0x00000400, 0x00100001
 };
 
-const u32 GDCartridge::DES_SBOX8[] = {
+const u32 DES_SBOX8[] = {
 	0x08000820, 0x00000800, 0x00020000, 0x08020820, 0x08000000, 0x08000820, 0x00000020, 0x08000000,
 	0x00020020, 0x08020000, 0x08020820, 0x00020800, 0x08020800, 0x00020820, 0x00000800, 0x00000020,
 	0x08020000, 0x08000020, 0x08000800, 0x00000820, 0x00020800, 0x00020020, 0x08020020, 0x08020800,
@@ -214,7 +216,7 @@ const u32 GDCartridge::DES_SBOX8[] = {
 	0x08020820, 0x00020800, 0x00020800, 0x00000820, 0x00000820, 0x00020020, 0x08000000, 0x08020800
 };
 
-const u32 GDCartridge::DES_MASK_TABLE[] = {
+const u32 DES_MASK_TABLE[] = {
 	0x24000000, 0x10000000, 0x08000000, 0x02080000, 0x01000000,
 	0x00200000, 0x00100000, 0x00040000, 0x00020000, 0x00010000,
 	0x00002000, 0x00001000, 0x00000800, 0x00000400, 0x00000200,
@@ -226,18 +228,20 @@ const u32 GDCartridge::DES_MASK_TABLE[] = {
 	0x00000020, 0x00000011, 0x00000004, 0x00000002
 };
 
-const u8 GDCartridge::DES_ROTATE_TABLE[16] = {
+const u8 DES_ROTATE_TABLE[16] = {
 	1, 1, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 1
 };
 
-void GDCartridge::permutate(u32 &a, u32 &b, u32 m, int shift)
+constexpr int FILENAME_LENGTH = 24;
+
+inline static void permutate(u32 &a, u32 &b, u32 m, int shift)
 {
 	u32 temp = ((a>>shift) ^ b) & m;
 	a ^= temp<<shift;
 	b ^= temp;
 }
 
-void GDCartridge::des_generate_subkeys(const u64 key, u32 *subkeys)
+void des_generate_subkeys(const u64 key, u32 *subkeys)
 {
 	u32 l = key >> 32;
 	u32 r = key;
@@ -322,7 +326,7 @@ void GDCartridge::des_generate_subkeys(const u64 key, u32 *subkeys)
 }
 
 template<bool decrypt>
-u64 GDCartridge::des_encrypt_decrypt(u64 src, const u32 *des_subkeys)
+u64 des_encrypt_decrypt(u64 src, const u32 *des_subkeys)
 {
 	u32 r = (src & 0x00000000ffffffffULL) >> 0;
 	u32 l = (src & 0xffffffff00000000ULL) >> 32;
@@ -384,7 +388,7 @@ u64 GDCartridge::des_encrypt_decrypt(u64 src, const u32 *des_subkeys)
 	return (u64(r) << 32) | u64(l);
 }
 
-u64 GDCartridge::rev64(u64 src)
+inline static u64 rev64(u64 src)
 {
 	u64 ret;
 
@@ -400,7 +404,7 @@ u64 GDCartridge::rev64(u64 src)
 	return ret;
 }
 
-void GDCartridge::find_file(const char *name, const u8 *dir_sector, u32 &file_start, u32 &file_size)
+static void find_file(const char *name, const u8 *dir_sector, u32 &file_start, u32 &file_size)
 {
 	file_start = 0;
 	file_size = 0;
@@ -520,7 +524,7 @@ void GDCartridge::device_start(LoadProgress *progress, std::vector<u8> *digest)
 				}
 			}
 			if (gdrom == nullptr)
-				throw NaomiCartException("Naomi GDROM: Cannot open " + gdrom_path + ".chd");
+				throw NaomiCartException(strprintf(i18n::T("Naomi GDROM: Cannot open %s.chd"), gdrom_path.c_str()));
 		}
 
 		// primary volume descriptor
@@ -536,26 +540,28 @@ void GDCartridge::device_start(LoadProgress *progress, std::vector<u8> *digest)
 
 		// directory
 		u8 dir_sector[2048];
-		// find data of file
-		u32 file_size;
 
-		if (netpic == 0) {
+		// find data of file
+		if (netpic == 0)
+		{
 			u32 dir = ((buffer[0x2 + 0] << 0) |
 				(buffer[0x2 + 1] << 8) |
 				(buffer[0x2 + 2] << 16) |
 				(buffer[0x2 + 3] << 24));
 
 			read_gdrom(gdrom.get(), dir, dir_sector);
-			find_file(name, dir_sector, file_start, file_size);
+			find_file(name, dir_sector, file_start, fileSize);
 
-			if (file_start && (file_size == 0x100)) {
+			if (file_start && fileSize == 0x100) {
 				// read file
 				read_gdrom(gdrom.get(), file_start, buffer);
 				// get "rom" file name
 				memset(name, '\0', 128);
 				memcpy(name, buffer + 0xc0, FILENAME_LENGTH - 1);
 			}
-		} else {
+		}
+		else
+		{
 			bool found = false;
 			u32 i = 0;
 			while (i < 2048 && buffer[i] != 0)
@@ -580,20 +586,20 @@ void GDCartridge::device_start(LoadProgress *progress, std::vector<u8> *digest)
 			}
 		}
 
-		find_file(name, dir_sector, file_start, file_size);
+		find_file(name, dir_sector, file_start, fileSize);
 		if (file_start == 0)
 			// mj1: filename in the pic is incorrect, probably because the disk isn't supposed to be run like this?
 			// so grab the first .BIN and load it.
-			find_file("*.BIN", dir_sector, file_start, file_size);
+			find_file("*.BIN", dir_sector, file_start, fileSize);
 
 		if (file_start != 0)
 		{
-			u32 file_rounded_size = (file_size + 2047) & ~2048;
+			u32 file_rounded_size = (fileSize + 2047) & ~2048;
 			for (dimm_data_size = 4096; dimm_data_size < file_rounded_size; dimm_data_size <<= 1)
 				;
 			dimm_data = (u8 *)malloc(dimm_data_size);
 			if (dimm_data == nullptr)
-				throw NaomiCartException("Memory allocation failed");
+				throw NaomiCartException(i18n::Ts("Memory allocation failed"));
 			if (dimm_data_size != file_rounded_size)
 				memset(dimm_data + file_rounded_size, 0, dimm_data_size - file_rounded_size);
 
@@ -602,10 +608,24 @@ void GDCartridge::device_start(LoadProgress *progress, std::vector<u8> *digest)
 					loadedSegments.end(), true);
 
 			des_generate_subkeys(rev64(key), des_subkeys);
+
+			if (fullLoad)
+			{
+				for (unsigned offset = 0; offset < fileSize; offset += SEGMENT_SIZE)
+				{
+					if (progress != nullptr)
+					{
+						if (progress->cancelled)
+							throw LoadCancelledException();
+						progress->progress = (float)offset / fileSize;
+					}
+					loadSegments(offset, SEGMENT_SIZE);
+				}
+			}
 		}
 
 		if (!dimm_data)
-			throw NaomiCartException("Naomi GDROM: Could not find the file to decrypt.");
+			throw NaomiCartException(i18n::Ts("Naomi GDROM: Could not find the file to decrypt."));
 	}
 }
 
@@ -617,13 +637,16 @@ void GDCartridge::loadSegments(u32 offset, u32 size)
 		if (loadedSegments[segment])
 			continue;
 		DEBUG_LOG(NAOMI, "Loading segment %d", segment);
+		const u32 start = segment * SEGMENT_SIZE;
 		// load data
-		read_gdrom(gdrom.get(), file_start + (segment * SEGMENT_SIZE) / 2048,
-				dimm_data + segment * SEGMENT_SIZE,
+		read_gdrom(gdrom.get(), file_start + start / 2048,
+				dimm_data + start,
 				SEGMENT_SIZE / 2048,
 				nullptr);
+		if (start < fileSize)
+			crc = crc32(crc, dimm_data + start, std::min(SEGMENT_SIZE, fileSize - start));
 		// decrypt loaded data
-		u64 *pData = (u64 *)(dimm_data + segment * SEGMENT_SIZE);
+		u64 *pData = (u64 *)(dimm_data + start);
 		for (u32 i = 0; i < SEGMENT_SIZE; i += 8, pData++)
 			*pData = des_encrypt_decrypt<true>(*pData, des_subkeys);
 		loadedSegments[segment] = true;
@@ -756,18 +779,18 @@ void GDCartridge::process()
 		break;
 	case 1: // network commands
 		WARN_LOG(NAOMI, "Network command received cmd %x. Need full NetDIMM?", cmd);
-		returnToNaomi(true, 0, -1);
+		returnToNaomi(dimm_command & 0x7e00, true, 0, -1);
 		break;
 	default:
 		WARN_LOG(NAOMI, "Unknown DIMM command group %d cmd %x", cmdGroup, cmd);
-		returnToNaomi(true, 0, -1);
+		returnToNaomi(dimm_command & 0x7e00, true, 0, -1);
 		break;
 	}
 }
 
-void GDCartridge::returnToNaomi(bool failed, u16 offsetl, u32 parameter)
+void GDCartridge::returnToNaomi(u16 cmd, bool failed, u16 offsetl, u32 parameter)
 {
-	dimm_command = ((dimm_command & 0x7e00) + 0x400) | (failed ? 0xff : 0x4);
+	dimm_command = (cmd + 0x400) | (failed ? 0xff : 0x4);
 	dimm_offsetl = offsetl;
 	dimm_parameterh = parameter >> 16;
 	dimm_parameterl = parameter;

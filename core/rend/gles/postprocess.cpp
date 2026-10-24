@@ -262,7 +262,7 @@ void PostProcessor::term()
 }
 
 
-GLuint PostProcessor::getFramebuffer(int width, int height)
+GlFramebuffer *PostProcessor::getFramebuffer(int width, int height)
 {
 	if (framebuffer != nullptr
 			&& (width != framebuffer->getWidth() || height != framebuffer->getHeight()))
@@ -271,7 +271,7 @@ GLuint PostProcessor::getFramebuffer(int width, int height)
 	if (framebuffer == nullptr)
 		init(width, height);
 
-	return framebuffer->getFramebuffer();
+	return framebuffer.get();
 }
 
 void PostProcessor::render(GLuint output_fbo)
@@ -304,7 +304,7 @@ void PostProcessor::render(GLuint output_fbo)
 			vertices[1] = vertices[11] = -1.f - gl.ofbo.shiftY * 2.f / framebuffer->getHeight();
 			vertices[6] = vertices[16] = vertices[1] + 2;
 			glcache.Disable(GL_BLEND);
-			gl.quad->draw(framebuffer->getTexture(), false, false, vertices);
+			gl.quadDrawer->draw(framebuffer->getTexture(), false, false, vertices);
 		}
 		else
 		{
@@ -322,13 +322,13 @@ void PostProcessor::render(GLuint output_fbo)
 		return;
 	}
 
-	if (_pvrrc == nullptr)
+	if (gl.rendContext == nullptr)
 		// Framebuffer render: no dithering
 		PostProcessShader::select(false,
 				SPG_CONTROL.interlace,
 				FB_R_CTRL.vclk_div == 1 && SPG_CONTROL.interlace == 0);
 	else
-		PostProcessShader::select(pvrrc.fb_W_CTRL.fb_dither == 1 && pvrrc.fb_W_CTRL.fb_packmode <= 3 && !config::EmulateFramebuffer,
+		PostProcessShader::select(gl.rendContext->fb_W_CTRL.fb_dither == 1 && gl.rendContext->fb_W_CTRL.fb_packmode <= 3 && !config::EmulateFramebuffer,
 				SPG_CONTROL.interlace,
 				FB_R_CTRL.vclk_div == 1 && SPG_CONTROL.interlace == 0);
 	vertexArray.bind(vertexBuffer.get());

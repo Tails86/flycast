@@ -1,21 +1,25 @@
-name: Windows UWP CI
+name: Xbox, UWP
 
-on: [push, pull_request]
+on:
+  push:
+    branches-ignore:
+      - 'l10n_**'
+  pull_request:
 
 jobs:
   build:
     name: UWP
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     strategy:
       matrix:
         arch: [ Win32, x64, ARM64 ]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          submodules: true
+          submodules: recursive
 
       - name: CMake
         run: |
@@ -31,15 +35,15 @@ jobs:
           cd build\AppPackages\flycast\flycast_*_Test
           mkdir tmp
           ren *.msix flycast.msix
-          makeappx.exe unpack /p .\flycast.msix /d tmp
+          makeappx unpack /p .\flycast.msix /d tmp
           copy ..\..\..\Release\*.dll tmp
           makeappx pack /d tmp /p ..\..\..\artifact\flycast.appx
 
       - name: Sign app
         run: signtool sign /f shell\uwp\sign_cert.pfx /p '${{ secrets.SIGN_CERT_PWD }}' /v /fd SHA256 build\artifact\flycast.appx
-        if: github.repository == 'flyinghead/flycast' && github.event_name == 'push'
+        if: github.repository == 'OrangeFox86/Hollycast' && github.event_name == 'push'
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: flycast-uwp-${{ matrix.arch }}
           path: build/artifact
@@ -52,4 +56,4 @@ jobs:
       - name: Upload to S3
         run: rclone copy build/artifact scaleway:flycast-builds/xbox/${GITHUB_REF#refs/}-$GITHUB_SHA
         shell: bash
-        if: github.repository == 'flyinghead/flycast' && github.event_name == 'push' && matrix.arch == 'x64'
+        if: github.repository == 'OrangeFox86/Hollycast' && github.event_name == 'push' && matrix.arch == 'x64'
