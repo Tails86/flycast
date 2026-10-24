@@ -39,6 +39,7 @@ int main(int argc, char *argv[])
 	socketInitializeDefault();
 	nxlinkStdio();
 	//appletSetFocusHandlingMode(AppletFocusHandlingMode_NoSuspend);
+	nifmInitialize(NifmServiceType_User);
 
 	LogManager::Init();
 	i18n::init();
@@ -70,6 +71,7 @@ int main(int argc, char *argv[])
 
 	flycast_term();
 
+	nifmExit();
 	socketExit();
 
 	return 0;
