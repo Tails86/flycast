@@ -32,11 +32,11 @@ jobs:
       - name: Package app
         run: |
           mkdir build\artifact
-          cd build\AppPackages\flycast\flycast_*_Test
+          cd build\AppPackages\Hollycast\Hollycast_*_Test
           mkdir tmp
-          ren *.msix flycast.msix
-          makeappx unpack /p .\flycast.msix /d tmp
+          ren *.msix Hollycast.msix
+          makeappx unpack /p .\Hollycast.msix /d tmp
           copy ..\..\..\Release\*.dll tmp
-          makeappx pack /d tmp /p ..\..\..\artifact\flycast.appx
+          makeappx pack /d tmp /p ..\..\..\artifact\Hollycast.appx
 
       # Package signing and upload steps have been removed until a proper signing certificate is obtained
