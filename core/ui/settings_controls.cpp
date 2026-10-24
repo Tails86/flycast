@@ -1414,8 +1414,11 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 
 		if (config::DreamPotatoIntegratedMode && hostfs::getDreamPotatoPath().empty())
 		{
-			ImVec4 warningColor = ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered];
-			ImGui::TextColored(warningColor, "%s", T("(!) DreamPotato executable not found. Please set DreamPotato Path in General > Custom Paths."));
+			ImGui::PushTextWrapPos();
+			ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered]);
+			ImGui::TextUnformatted(T("(!) DreamPotato executable not found. Please set DreamPotato Path in General > Custom Paths."));
+			ImGui::PopStyleColor();
+			ImGui::PopTextWrapPos();
 		}
 #endif
 		{
