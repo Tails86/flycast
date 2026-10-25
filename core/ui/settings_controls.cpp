@@ -1117,47 +1117,6 @@ void gui_settings_controls(std::array<bool, 4>& mapleDevicesChanges, std::array<
 	ImGui::Spacing();
 	header(T("Dreamcast Devices"));
 	{
-
-		// Helper lambda to get device name
-		auto maple_device_name = [](MapleDeviceType type) -> const char* {
-			switch (type)
-			{
-			case MDT_SegaController: return maple_device_types[1];
-			case MDT_LightGun: return maple_device_types[2];
-			case MDT_Keyboard: return maple_device_types[3];
-			case MDT_Mouse: return maple_device_types[4];
-			case MDT_TwinStick: return maple_device_types[5];
-			case MDT_AsciiStick: return maple_device_types[6];
-			case MDT_MaracasController: return maple_device_types[7];
-			case MDT_FishingController: return maple_device_types[8];
-			case MDT_PopnMusicController: return maple_device_types[9];
-			case MDT_RacingController: return maple_device_types[10];
-			case MDT_DenshaDeGoController: return maple_device_types[11];
-			case MDT_SegaControllerXL: return maple_device_types[12];
-			case MDT_None: default: return maple_device_types[0];
-			}
-		};
-
-		// Helper lambda for device type conversion
-		auto maple_device_type_from_index = [](int idx) -> MapleDeviceType {
-			switch (idx)
-			{
-			case 1: return MDT_SegaController;
-			case 2: return MDT_LightGun;
-			case 3: return MDT_Keyboard;
-			case 4: return MDT_Mouse;
-			case 5: return MDT_TwinStick;
-			case 6: return MDT_AsciiStick;
-			case 7: return MDT_MaracasController;
-			case 8: return MDT_FishingController;
-			case 9: return MDT_PopnMusicController;
-			case 10: return MDT_RacingController;
-			case 11: return MDT_DenshaDeGoController;
-			case 12: return MDT_SegaControllerXL;
-			case 0: default: return MDT_None;
-			}
-		};
-
 		bool is_there_any_xhair = false;
 		if (ImGui::BeginTable("dreamcastDevices", 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings,
 				ImVec2(0, 0), uiScaled(8)))
