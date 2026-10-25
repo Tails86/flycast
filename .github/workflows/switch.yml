@@ -57,11 +57,4 @@ jobs:
         run: zip -m artifact/bin/Hollycast.nro.zip artifact/bin/Hollycast.nro
         if: hashFiles('artifact/bin/Hollycast.nro') != ''
 
-      - name: Setup Rclone
-        uses: AnimMouse/setup-rclone@v1
-        with:
-          rclone_config: ${{ secrets.RCLONE_CONFIG }}
-
-      - name: Upload to S3
-        run: rclone copy artifact/bin scaleway:Hollycast-builds/${{ matrix.config.destDir }}/${GITHUB_REF#refs/}-$GITHUB_SHA
-        if: github.repository == 'OrangeFox86/Hollycast' && github.event_name == 'push' && matrix.config.destDir != ''
+      # Upload to S3 step has been removed

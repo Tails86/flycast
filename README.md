@@ -13,19 +13,9 @@ Hollycast tracks the Flycast core while providing a home for features and experi
 - Unlock functionality: We integrate community-requested features and experimental changes that Flycast chooses not to merge.
 - Developer freedom: We provide a stable sandbox for passion features and modernizations that keep the emulator evolving.
 
-## Technical Standards
+## Contribution
 
-We are committed to maintaining the high bar for speed and precision set by the Flycast core.
-
-- Performance parity: We aim to match or exceed the performance benchmarks of the current Flycast core.
-- Verified accuracy: We use the core codebase's internal test suite alongside our own growing collection of tests to prevent regressions.
-- Core integrity: New features are built on a rock-solid foundation, ensuring that fun never comes at the cost of stability.
-
-## Compatibility & Contribution
-
-Hollycast aims to support every platform and release offered by Flycast. If Flycast can do it, Hollycast will too, ideally with a newer looking and more feature rich environment while keeping the performance you have come to know and love from Flyinghead's hard work and dedication on Flycast.
-
-> **Note:** Hollycast is under active development. If you'd like to contribute, please [join our Discord](https://discord.gg/erSUx3v4YH) and open a Feature Request to discuss your plans before submitting code.
+Hollycast is under active development. If you'd like to contribute, please [join our Discord](https://discord.gg/erSUx3v4YH) and open a Feature Request to discuss your plans before submitting code.
 
 ### Build Prerequisites for Windows
 

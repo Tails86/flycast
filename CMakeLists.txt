@@ -178,6 +178,10 @@ if(WINDOWS_STORE)
 	elseif(VERSION_PARTS_LENGTH EQUAL 3)
 		string(APPEND MS_VERSION ".0")
 	endif()
+	# No usable tag (e.g. bare commit hash): use a valid placeholder
+	if(NOT MS_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$")
+		set(MS_VERSION "0.0.0.0")
+	endif()
 endif()
 
 string(TIMESTAMP BUILD_TIMESTAMP UTC)

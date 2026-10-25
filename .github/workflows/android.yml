@@ -50,7 +50,6 @@ jobs:
         working-directory: shell/android-studio
         run: ./gradlew assembleRelease bundleRelease --parallel
         env:
-          SENTRY_UPLOAD_URL: ${{ secrets.SENTRY_UPLOAD_URL }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
 
       - uses: actions/upload-artifact@v7
@@ -76,28 +75,4 @@ jobs:
             mv libHollycast.so.sym symbols/libHollycast.so/$BUILD_ID
           done
 
-      - name: Setup Rclone
-        uses: AnimMouse/setup-rclone@v1
-        with:
-          rclone_config: ${{ secrets.RCLONE_CONFIG }}
-
-      # - name: Upload to S3
-      #   run: |
-      #     cp shell/android-studio/flycast/build/outputs/bundle/release/*.aab shell/android-studio/flycast/build/outputs/apk/release/
-      #     rclone copy shell/android-studio/flycast/build/outputs/apk/release scaleway:hollycast-builds/android/${GITHUB_REF#refs/}-$GITHUB_SHA --exclude '*.json'
-      #   if: github.repository == 'OrangeFox86/Hollycast' && github.event_name == 'push'
-
-      # - uses: getsentry/action-setup-cli@v1
-
-      # - name: Upload symbols to Sentry
-      #   run: |
-      #     VERSION=$(git describe --tags --always)
-      #     sentry-cli releases new "$VERSION"
-      #     sentry-cli releases set-commits "$VERSION" --auto
-      #     sentry-cli debug-files upload symbols
-      #   shell: bash
-      #   env:
-      #     SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_TOKEN }}
-      #     SENTRY_ORG: flycast
-      #     SENTRY_PROJECT: minidump
-      #   if: ${{ env.SENTRY_AUTH_TOKEN != '' && github.event_name == 'push' }}
+      # Removed Sentry and Rclone steps until they are properly setup for Hollycast
