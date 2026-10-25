@@ -203,6 +203,7 @@ private:
 	// Note: we don't want a translated label here, it should remain stable when locale changes.
 	const char* activeLabel = nullptr;
 	const char* nextFrameActiveLabel = nullptr;
+	static constexpr float maxContentWidth = 600.f;
 
 	void EndHelper()
 	{
@@ -211,6 +212,12 @@ private:
 	}
 
 public:
+	// Width of the tab list plus the width-capped content pane
+	static float TotalWidth()
+	{
+		return uiScaled(155.f) + ImGui::GetStyle().ItemSpacing.x + uiScaled(maxContentWidth);
+	}
+
 	bool BeginTabBar(const char* id)
 	{
 		ImGui::PushID(id);
@@ -254,7 +261,8 @@ public:
 		if (isActiveTab) {
 			ImGui::EndChild(); // ##verticalTabBar
 			ImGui::SameLine();
-			ImGui::BeginChild(label, ImVec2(0, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_Borders, ImGuiWindowFlags_DragScrolling);
+			float contentWidth = ImMin(uiScaled(maxContentWidth), ImGui::GetContentRegionAvail().x);
+			ImGui::BeginChild(label, ImVec2(contentWidth, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_Borders, ImGuiWindowFlags_DragScrolling);
 		}
 
 		return isActiveTab;
@@ -342,7 +350,15 @@ void gui_display_settings()
 	static VerticalTabBar settingsTabBar;
 
 	fullScreenWindow(false);
+	// Narrow the window so its title bar spans exactly the two panes, centered on screen
+	{
+		float areaWidth = ImGui::GetIO().DisplaySize.x - insetLeft - insetRight;
+		float windowWidth = ImMin(areaWidth, VerticalTabBar::TotalWidth() + ImGui::GetStyle().WindowPadding.x * 2);
+		ImGui::SetNextWindowPos(ImVec2(insetLeft + (areaWidth - windowWidth) * 0.5f, insetTop));
+		ImGui::SetNextWindowSize(ImVec2(windowWidth, ImGui::GetIO().DisplaySize.y - insetTop - insetBottom));
+	}
 	ImguiStyleVar _(ImGuiStyleVar_WindowRounding, 0);
+	ImguiStyleVar titleAlign(ImGuiStyleVar_WindowTitleAlign, ImVec2(0.5f, 0.5f));
 
     ImGui::Begin(T("Settings"), nullptr, ImGuiWindowFlags_DragScrolling | ImGuiWindowFlags_NoResize
 			| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
