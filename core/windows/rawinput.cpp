@@ -19,6 +19,7 @@
 #include "rawinput.h"
 #ifndef TARGET_UWP
 #include <hidusage.h>
+#include <hidsdi.h>
 #include <cfgmgr32.h>
 #include <initguid.h>
 #include <devpkey.h>
@@ -347,6 +348,28 @@ extern "C" CMAPI CONFIGRET CM_Get_Device_Interface_PropertyW(
   ULONG            ulFlags);
 #endif
 
+// Returns the USB serial number string of a HID device, or empty if it has none
+static std::string getHidSerial(const std::string& devicePath)
+{
+	nowide::wstackstring wpath;
+	if (!wpath.convert(devicePath.c_str()))
+		return {};
+	// No access rights needed to query descriptor strings
+	HANDLE h = CreateFileW(wpath.get(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+	if (h == INVALID_HANDLE_VALUE)
+		return {};
+	wchar_t buf[127] {};
+	std::string serial;
+	if (HidD_GetSerialNumberString(h, buf, sizeof(buf)))
+	{
+		nowide::stackstring s;
+		if (s.convert(buf))
+			serial = s.get();
+	}
+	CloseHandle(h);
+	return serial;
+}
+
 static void findDevices()
 {
 	u32 numDevices;
@@ -406,9 +429,17 @@ static void findDevices()
 							}
 						}
 				    }
+					std::string serial = getHidSerial(deviceId);
 					if (deviceId.substr(0, 8) == "\\\\?\\HID#")
 						deviceId = deviceId.substr(8);
-					uniqueId = (device.dwType == RIM_TYPEMOUSE ? "raw_mouse_" : "raw_keyboard_") + deviceId;
+					std::string idPart = deviceId;
+					if (!serial.empty())
+					{
+						// Replace the location dependent instance id and interface guid with the serial number
+						// "VID_xxxx&PID_xxxx&MI_xx&Colxx#<instance>#{guid}" -> "VID_xxxx&PID_xxxx&MI_xx&Colxx#<serial>"
+						idPart = deviceId.substr(0, deviceId.find('#')) + "#" + serial;
+					}
+					uniqueId = (device.dwType == RIM_TYPEMOUSE ? "raw_mouse_" : "raw_keyboard_") + idPart;
 					if (name.empty())
 						name = device.dwType == RIM_TYPEMOUSE ? "Mouse" : "Keyboard";
 					size_t hash = deviceId.find('#');
