@@ -23,6 +23,7 @@
 #include "hw/mem/addrspace.h"
 #include "hw/mem/mem_watch.h"
 #include "emulator.h"
+#include "hw/sh4/sh4_if.h"
 
 #ifdef __SWITCH__
 #include <ucontext.h>
@@ -170,9 +171,10 @@ void common_linux_setup()
 	// exit cleanly on ^C
 	signal(SIGINT, sigintHandler);
 #endif
-	
-	DEBUG_LOG(BOOT, "Linux paging: sysconf %ld PAGE_SIZE %ld PAGE_MASK %lX", sysconf(_SC_PAGESIZE), (unsigned long)PAGE_SIZE, (long)PAGE_MASK);
-	verify(PAGE_MASK==(sysconf(_SC_PAGESIZE)-1));
+
+	DEBUG_LOG(BOOT, "Linux paging: sysconf %ld PAGE_SIZE %ld PAGE_MASK %lX sizeof(Sh4RCB) %zu", sysconf(_SC_PAGESIZE), (unsigned long)PAGE_SIZE, (long)PAGE_MASK, sizeof(Sh4RCB));
+	verify(PAGE_SIZE != 0);
+	verify((sizeof(Sh4RCB) % PAGE_SIZE) == 0);
 }
 
 #ifndef __APPLE__
