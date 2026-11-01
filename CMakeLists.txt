@@ -356,8 +356,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 		$<$<OR:$<BOOL:${MINGW}>,$<BOOL:${MSVC}>>:_USE_MATH_DEFINES>)
 
 if(UNIX AND NOT ANDROID AND NOT APPLE)
-	execute_process(COMMAND getconf PAGESIZE OUTPUT_VARIABLE PAGE_SIZE OUTPUT_STRIP_TRAILING_WHITESPACE)
-	target_compile_definitions(${PROJECT_NAME} PRIVATE PAGE_SIZE=${PAGE_SIZE})
+	execute_process(COMMAND getconf PAGESIZE OUTPUT_VARIABLE BUILD_PAGE_SIZE OUTPUT_STRIP_TRAILING_WHITESPACE)
+	target_compile_definitions(${PROJECT_NAME} PRIVATE BUILD_PAGE_SIZE=${BUILD_PAGE_SIZE})
 endif()
 
 if(NOT "${SENTRY_UPLOAD_URL}" STREQUAL "")
@@ -1317,7 +1317,7 @@ if(NOT LIBRETRO)
 		add_subdirectory(core/deps/gamesdk/games-frame-pacing EXCLUDE_FROM_ALL)
 		target_compile_options(swappy_static PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wno-vla-cxx-extension>)
 		target_compile_definitions(swappy_static PRIVATE ANDROIDGAMESDK_NO_BINARY_DEX_LINKAGE)
-	
+
 		target_include_directories(${PROJECT_NAME} PRIVATE core/deps/gamesdk/games-frame-pacing/include)
 		target_link_libraries(${PROJECT_NAME} PRIVATE swappy_static)
 		target_compile_definitions(${PROJECT_NAME} PRIVATE SWAPPY)

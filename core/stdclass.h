@@ -14,23 +14,21 @@
 #include <cassert>
 #include <ctime>
 
-#if defined(__ANDROID__)
-#undef PAGE_MASK
-#endif
-#if defined(__ANDROID__) && (HOST_CPU == CPU_ARM64 || HOST_CPU == CPU_X64)
-#undef PAGE_SIZE
-extern const unsigned long PAGE_SIZE;
-#define MAX_PAGE_SIZE 16384
-#elif defined(__APPLE__) && defined(__aarch64__)
-#define PAGE_SIZE 16384
-#elif !defined(PAGE_SIZE)
-#define PAGE_SIZE 4096
-#endif
+size_t get_page_size();
+
+#define PAGE_SIZE (get_page_size())
+
 #ifndef PAGE_MASK
 #define PAGE_MASK (PAGE_SIZE-1)
 #endif
-#ifndef MAX_PAGE_SIZE
-#define MAX_PAGE_SIZE PAGE_SIZE
+
+// Define BUILD_PAGE_SIZE which is only used for static assertions about the page size
+#if defined(__ANDROID__) && (HOST_CPU == CPU_ARM64 || HOST_CPU == CPU_X64)
+#define BUILD_PAGE_SIZE 16384
+#elif defined(__APPLE__) && defined(__aarch64__)
+#define BUILD_PAGE_SIZE 16384
+#elif !defined(BUILD_PAGE_SIZE)
+#define BUILD_PAGE_SIZE 4096
 #endif
 
 class cThread
